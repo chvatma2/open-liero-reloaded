@@ -31,10 +31,11 @@ there (issue #46), so placed in a level they heat as they did in it.
 
       olr-cli asset save content/reloaded/olr-level-liero-factory-reloaded --rect 778,80,29,2 --layers lamps --name "Strip light" --out content/assets/strip-light
 
-- `computer-screen/`: **Computer screen**, the office computer on its
-  wall, group `screens`.
+- `computer-screen/`: **Computer screen**, the control room's upper
+  screen on its wall, group `control` (blue-white, `Tint("#d0e0ff")`;
+  its own layer `ctrl-screen` since 2026-10-25).
 
-      olr-cli asset save content/reloaded/olr-level-liero-factory-reloaded --rect 906,83,14,14 --layers background,screens --name "Computer screen" --out content/assets/computer-screen
+      olr-cli asset save content/reloaded/olr-level-liero-factory-reloaded --rect 906,83,14,14 --layers background,ctrl-screen --name "Computer screen" --out content/assets/computer-screen
 
 - `control-desk/`: **Control desk**, the control room's console: its
   three screens (group `screens`) and lamps (group `displays`).

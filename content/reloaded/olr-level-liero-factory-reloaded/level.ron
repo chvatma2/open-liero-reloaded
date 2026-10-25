@@ -37,8 +37,8 @@
             ),
             (
                 id: "screens",
-                intensity: 150,
-                reach: Pixels(18),
+                intensity: 450,
+                reach: Pixels(48),
             ),
             (
                 id: "displays",
@@ -58,6 +58,23 @@
                     low: 30,
                     high: 100,
                 ),
+            ),
+            (
+                id: "control",
+                colour: Tint("#d0e0ff"),
+                intensity: 450,
+                reach: Pixels(48),
+            ),
+            (
+                id: "pcs",
+                intensity: 1000,
+                reach: Pixels(56),
+            ),
+            (
+                id: "headlights",
+                colour: Tint("#fff0c8"),
+                intensity: 1000,
+                reach: Pixels(120),
             ),
         ],
         materials: [
@@ -168,6 +185,7 @@
                 ),
             ),
         ],
+        haze: 50,
     ),
     distant: [
         (

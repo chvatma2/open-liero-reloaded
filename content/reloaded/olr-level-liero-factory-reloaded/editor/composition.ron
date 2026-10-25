@@ -69,7 +69,7 @@
             ),
             glass: (
                 opacity: 35,
-                frost: 5,
+                frost: 10,
             ),
             surface: "glass",
         ),
@@ -86,7 +86,7 @@
             ),
             glass: (
                 opacity: 82,
-                frost: 5,
+                frost: 10,
             ),
             surface: "glass",
         ),
@@ -104,6 +104,19 @@
             surface: "glass",
         ),
         (
+            id: "ctrl-screen",
+            name: "Control room screen",
+            locked: true,
+            kind: Drawn(
+                material: Background,
+            ),
+            glow: (
+                strength: 90,
+                group: "control",
+            ),
+            surface: "glass",
+        ),
+        (
             id: "rock-screens",
             name: "Screens in rock",
             locked: true,
@@ -113,6 +126,70 @@
             glow: (
                 strength: 90,
                 group: "screens",
+            ),
+            surface: "glass",
+        ),
+        (
+            id: "rock-pcs",
+            name: "PC screens in rock",
+            locked: true,
+            kind: Drawn(
+                material: Rock,
+            ),
+            glow: (
+                strength: 100,
+                group: "pcs",
+            ),
+            surface: "glass",
+        ),
+        (
+            id: "pcs-right",
+            name: "PC screens in rock, facing right",
+            locked: true,
+            kind: Drawn(
+                material: Rock,
+            ),
+            glow: (
+                strength: 15,
+                group: "pcs",
+                beam: (
+                    direction: 0,
+                    spread: 35,
+                ),
+            ),
+            surface: "glass",
+        ),
+        (
+            id: "pcs-left",
+            name: "PC screen in rock, facing left",
+            locked: true,
+            kind: Drawn(
+                material: Rock,
+            ),
+            glow: (
+                strength: 15,
+                group: "pcs",
+                beam: (
+                    direction: 180,
+                    spread: 35,
+                ),
+            ),
+            surface: "glass",
+        ),
+        (
+            id: "headlights",
+            name: "The truck\'s headlights",
+            locked: true,
+            kind: Drawn(
+                material: Rock,
+            ),
+            glow: (
+                strength: 100,
+                group: "headlights",
+                beam: (
+                    direction: 166,
+                    spread: 15,
+                ),
             ),
             surface: "glass",
         ),

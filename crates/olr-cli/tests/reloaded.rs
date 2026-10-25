@@ -4,7 +4,7 @@
 //! checks clean against the committed content, none shares an id with it,
 //! the game's content lists them, a bot match plays on each, Liero Factory
 //! Reloaded is OLX's Liero Factory but for its look and its distant sky's
-//! stars (issue #63), and
+//! stars (issue #63), its PCs and headlights cast glow beams, and
 //! Liero v1.0 Reloaded plays exactly as Classic (`olx-classic`) but for its
 //! name and look. On the GPU tier each plays and draws lit.
 
@@ -173,6 +173,41 @@ fn the_factory_is_the_imported_level_but_for_its_look() {
     let imported = olr_format::levels::read_level_files(&DirFs::new(&olx)).unwrap();
     assert_eq!((src.size, &src.theme, &src.objects), (imported.size, &imported.theme, &imported.objects));
     assert!(src.look.is_some() && src.glow.is_some());
+}
+
+/// The factory's PCs and headlights cast glow beams (the directional-glow
+/// design, 2026-10-25): the side PCs' screens at x 344 and 513 face right
+/// and the one at 498 left, 35° each; the truck's headlights (42-44 ×
+/// 410-414) left and a little down, 166° at 15°; the blue floor's PC stays
+/// undirected, and no backdrop pixel is directional. The haze is 50: the
+/// air and the sky in a beam glow with its own light.
+#[test]
+fn the_factorys_pcs_and_headlights_cast_beams() {
+    let src = olr_format::levels::read_level_files(&DirFs::new(reloaded_dir().join(FACTORY))).unwrap();
+    assert_eq!(src.look.as_ref().unwrap().haze, 50);
+    assert!(src.haze.is_none(), "no haze map: the haze is even");
+    let map = src.glow_beams.expect("look/glow-beam.png");
+    let (w, h) = map.world;
+    let mut beams = BTreeMap::new();
+    for y in 0..h {
+        for x in 0..w {
+            assert_eq!(map.get(true, x, y), None, "({x}, {y}): a backdrop beam");
+            if let Some(b) = map.get(false, x, y) {
+                beams.insert((x, y), b);
+            }
+        }
+    }
+    for (&(x, y), &b) in &beams {
+        let want = match (x, y) {
+            (42..=44, 410..=414) => (166, 15),
+            (344 | 513, 259..=263) => (0, 35),
+            (498, 259..=263) => (180, 35),
+            _ => panic!("({x}, {y}): an unexpected beam {b:?}"),
+        };
+        assert_eq!(b, want, "({x}, {y})");
+    }
+    // 15 headlight pixels, 5 + 4 right-facing screen pixels, 5 left.
+    assert_eq!(beams.len(), 29);
 }
 
 /// Liero v1.0 Reloaded is Classic but for its name and look (issue #21):

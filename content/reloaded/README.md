@@ -191,6 +191,33 @@ Remade OLX content is named "<Old name> Reloaded".
     opacity 82). A moon in `editor/images/sky.png` at (645.5, 184): in
     the hall window's middle for a camera at (760, 215). Made by a
     one-off script of the session (numpy), then `level bake`.
+  - **Screens, PCs and headlights** (Liero Factory, 2026-10-25, the
+    directional-glow design, `docs/superpowers/specs/2026-10-25-directional-glow-design.md`).
+    The glass's frost is 1.0 px (`frost: 10`, `glass` and `glass-rim`).
+    The control room's lower consoles shine further: `screens` 450,
+    reach 48. Its upper screen (the `screens` pixels with y < 110 and x
+    880-950) has its own Background layer `ctrl-screen` (glow 90,
+    group `control`, `Tint("#d0e0ff")`, 450, reach 48) and lights all
+    around, blue-white. The offices' PC screens (the `rock` pixels of the
+    four screen colours at x 523-533 × y 209-213, x 344, 498 and 513 × y
+    259-263) left `rock-screens` for three Rock layers in group `pcs`
+    (own colour, 1000, reach 56):
+    - `rock-pcs`: the blue floor's PC, which faces the player, glow 100,
+      undirected;
+    - `pcs-right`: the PCs at x 344 and 513, glow 15, `--glow-beam
+      0,35`;
+    - `pcs-left`: the PC at x 498, glow 15, `--glow-beam 180,35`.
+
+    The glow of 15 makes their beams 0.12 of their colour, the strength
+    the maintainer picked. Their screens are duller than at 100, which
+    the maintainer accepted. The truck's headlights (`rock` 42-44 × 410-414,
+    yellow) are `headlights`, group `headlights` (`Tint("#fff0c8")`,
+    1000, reach 120), glow 100, `--glow-beam 166,15`. The look's haze is
+    50 (`level look --haze 50`), and there is no haze map: the beams
+    show in the air and over the sky. Made with `level element
+    add-layer`/`set`, `level group add`/`set` and `level look`; the layer
+    pixels were moved by a one-off script of the session (PIL), then
+    `level bake`.
 
   ```sh
   cargo build -p olr-cli

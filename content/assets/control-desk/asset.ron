@@ -44,8 +44,8 @@
     glow_groups: [
         (
             id: "screens",
-            intensity: 150,
-            reach: Pixels(18),
+            intensity: 450,
+            reach: Pixels(48),
         ),
         (
             id: "displays",
