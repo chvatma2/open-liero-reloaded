@@ -6255,12 +6255,16 @@ haze draw byte for byte as before (the render goldens and
   (Amanatides-Woo) over every pixel the way crosses, so a one-pixel wall,
   diagonal or touching the face, stops the beam (the spike's 1-px steps
   let some through and skipped the last pixels before the source). A
-  rock patch's walk ends at its face; a backdrop patch's goes into its
-  own pixel, so dirt over it hides it until dug. A rock or dirt pixel
-  takes its beam once, walking from its open neighbour facing the source
-  (no stripes across a slanted face). A background patch is one beam: the
-  bake copies the backdrop's beam texels into the composite's there, and
-  the renderer reads the composite's on rock only.
+  rock patch's walk ends at its face, decided per pixel entered (its
+  farthest corner behind the face plane), so float drift over a long walk
+  never stops it early and leaves no stripes 300 px out; a backdrop
+  patch's goes into its own pixel, so dirt over it hides it until dug. A
+  rock or dirt pixel takes its beam once, walking from its open neighbour
+  facing the source (no stripes across a slanted face). A background
+  patch is one beam (ruling T5a): the bake writes the composite's beam
+  texels on rock only, Background and Dirt get `(0, 0)` there, so the
+  backdrop's beam lives in the back map alone and `check` counts it once;
+  the renderer still reads the composite's on rock only (older files).
 - **Strength:** `BEAM_SCALE` 0.08 × the group's cast × the patch's colour
   × its mean glow; no setting of its own. A `Flicker` group's beam
   flickers with its patch's first pixel's region, as its glow light does.

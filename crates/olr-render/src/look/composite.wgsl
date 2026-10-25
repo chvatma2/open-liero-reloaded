@@ -102,10 +102,20 @@ fn solid_px(w: vec2<i32>) -> bool {
 // Whether nothing opaque lies between `o` and source point `e` of beam
 // `b`: an exact grid walk (Amanatides-Woo) over every world pixel the
 // segment crosses (both pixels beside a corner it passes exactly through
-// too), never `o`'s own. A front source's walk ends where it falls behind
-// the source's face, so its own rock never shadows it at any angle; a
+// too), never `o`'s own. A front source's walk ends at the first pixel
+// wholly behind the source's face (`behind_face`), so its own rock never
+// shadows it at any angle, however long the walk; a
 // backdrop source's (`back`) goes into its source's pixel, so rock or dirt
 // over the patch hides it. At most BEAM_MAX_STEPS pixels, then blocked.
+// Whether world pixel `c` lies wholly behind beam `b`'s face: its farthest
+// corner along the beam (as `derive` finds the face from its patch's
+// corners) not past it. Exact for the pixel, unlike a point summed along a
+// long walk (a thousandth of a pixel of slack).
+fn behind_face(c: vec2<i32>, b: GlowBeam) -> bool {
+    let far = dot(vec2<f32>(c) - b.at, b.dir) + max(b.dir.x, 0.0) + max(b.dir.y, 0.0);
+    return far <= 1e-3;
+}
+
 fn beam_sees(o: vec2<f32>, e: vec2<f32>, b: GlowBeam, back: bool) -> bool {
     let d = e - o;
     var cell = vec2<i32>(floor(o));
@@ -132,14 +142,12 @@ fn beam_sees(o: vec2<f32>, e: vec2<f32>, b: GlowBeam, back: bool) -> bool {
         if t > 1.0 {
             return true;
         }
-        // (A thousandth of a pixel's slack: the walk's sums round.)
-        if !back && dot(o + d * t - b.at, b.dir) <= 1e-3 {
-            return true;
-        }
         if abs(next.x - next.y) < 1e-6 {
-            // Exactly through a corner: both pixels beside it, then the
-            // one across.
-            if solid_px(cell + vec2<i32>(step.x, 0)) || solid_px(cell + vec2<i32>(0, step.y)) {
+            // Exactly through a corner: both pixels beside it (but those of
+            // the source behind its face), then the one across.
+            let a = cell + vec2<i32>(step.x, 0);
+            let c = cell + vec2<i32>(0, step.y);
+            if (solid_px(a) && (back || !behind_face(a, b))) || (solid_px(c) && (back || !behind_face(c, b))) {
                 return false;
             }
             cell += step;
@@ -150,6 +158,9 @@ fn beam_sees(o: vec2<f32>, e: vec2<f32>, b: GlowBeam, back: bool) -> bool {
         } else {
             cell.y += step.y;
             next.y += delta.y;
+        }
+        if !back && behind_face(cell, b) {
+            return true;
         }
         if solid_px(cell) {
             return false;

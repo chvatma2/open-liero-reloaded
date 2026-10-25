@@ -144,8 +144,9 @@ on screen or offscreen.
   `docs/superpowers/specs/2026-10-25-directional-glow-design.md`;
   `renderer/glow_beams.rs`; STATUS.md "Directional glow"): a level's
   directional glow patches (`ColorMap::glow_beams`, `olr_look::glow_beams::derive`
-  of both layers, the composite's beam texels only on rock: on background
-  they are the backdrop's copy, as baked, so such a patch is one beam;
+  of both layers, the composite's beam texels only on rock: the bake
+  writes them on rock only, and the renderer's guard keeps older files'
+  background copies from making a second beam;
   none past `MAX_GLOW_BEAMS` 64, which `check` refuses, and then no cones
   either)
   are derived by `LookState::sync_glow_beams` at `upload_terrain` and
@@ -183,7 +184,9 @@ on screen or offscreen.
   (`beam_sees`: an exact grid walk, Amanatides-Woo, over every world pixel
   the segment crosses, both pixels beside a corner it passes exactly
   through, at most `BEAM_MAX_STEPS` 2048 then blocked; a front source's
-  walk stops where it falls behind the face, so its own rock never
+  walk stops on entering a pixel whose farthest corner is behind the
+  face plane (`behind_face`, per pixel, not the accumulated point, so a
+  long walk's float drift never stops it early), so its own rock never
   shadows it and a wall touching the face does; a backdrop source's goes
   into its source pixel, so dirt over it hides it until dug), at each
   open texel's centre in world coordinates (camera-independent, still
@@ -205,7 +208,8 @@ on screen or offscreen.
   `a_wall_touching_the_face_stops_a_beam`,
   `a_buried_backdrop_patch_casts_no_beam_until_dug`,
   `a_backdrop_patch_draws_one_beam`, `a_diagonal_wall_stops_a_beam`,
-  `an_oblique_rock_face_is_lit_evenly` (`set_glow_beam_light(false)`,
+  `an_oblique_rock_face_is_lit_evenly`, `a_long_beam_stays_smooth`
+  (`set_glow_beam_light(false)`,
   hidden: the frame without the beams, their cones kept, for tests);
   unit: `past_the_cap_a_level_has_no_beams`, `beams_pack_their_groups_cast`.
 - **World pass** (`frame.rs`, `world.wgsl`): a target covering the view

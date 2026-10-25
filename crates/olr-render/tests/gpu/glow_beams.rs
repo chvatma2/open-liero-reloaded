@@ -480,3 +480,51 @@ fn an_oblique_rock_face_is_lit_evenly() {
         assert!(hi - lo < 0.006, "({x}, 50): its texels differ, {t:?}");
     }
 }
+
+/// A long walk (the shadow march over hundreds of pixels) never steps into
+/// its source's own rock: a beam of reach 500 over open air stays smooth
+/// along its axis 300 to 460 px out, no pixel's beam below 0.9 of its two
+/// neighbours' mean.
+#[test]
+fn a_long_beam_stays_smooth() {
+    let Some(gpu) = offscreen() else { return };
+    let (w, h) = (560u32, 64u32);
+    let rock = |x: u32, y: u32| x == PATCH_X && PATCH_ROWS.contains(&y);
+    let cells =
+        (0..w * h).map(|i| if rock(i % w, i / w) { Material::Rock } else { Material::Background }).collect();
+    let t = Terrain::from_grid(&MaterialGrid::from_cells(w, h, cells).unwrap());
+    let mut art = RgbaImage::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            art.set(x, y, if rock(x, y) { Rgba::rgb(255, 255, 255) } else { Rgba::rgb(128, 128, 128) });
+        }
+    }
+    let theme = ThemeArt { holes: Vec::new(), green_mask: None, front_tile: solid(1, 1, Rgba::BLACK) };
+    let mut map = ColorMap::new(&t, &art, &art, 1, theme);
+    let mut g = olr_terrain::GlowLayers::empty((w, h), (w, h));
+    let mut b = GlowBeamMap::none((w, h));
+    for y in PATCH_ROWS.start..PATCH_ROWS.end {
+        let i = (y * w + PATCH_X) as usize;
+        (g.front[i], g.back[i], g.groups[i], g.groups_back[i]) = (255, 255, 1, 1);
+        (b.front[2 * i], b.front[2 * i + 1]) = (1, SPREAD);
+    }
+    assert!(map.set_glow(Some(g)) && map.set_glow_beams(Some(b)));
+    // Bright (cast 300), so the far beam shows in the bytes.
+    let mut look = beam_look(0);
+    look.groups[0].cast = [300.0; 3];
+    look.groups[0].reach = 500.0;
+    let mut r = renderer(&gpu, &map);
+    let draw = |r: &mut Renderer| {
+        let mut l = list(View { x: 0.0, y: 0.0, w: w as f32, h: h as f32 });
+        l.map = (w, h);
+        Frame { img: gpu.render_lit_to_image(r, &l, Some(&look), (2 * w, 2 * h)), at: (0, 0) }
+    };
+    let lit = draw(&mut r);
+    r.set_glow_beam_light(false);
+    let glow = draw(&mut r);
+    let beam: Vec<f32> = (0..w).map(|x| lit.light(x, 32) - glow.light(x, 32)).collect();
+    for x in 300..460 {
+        let mean = (beam[x - 1] + beam[x + 1]) / 2.0;
+        assert!(mean > 0.0 && beam[x] >= 0.9 * mean, "({x}, 32): {} against {mean}", beam[x]);
+    }
+}
