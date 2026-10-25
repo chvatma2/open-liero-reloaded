@@ -69,6 +69,7 @@
             ),
             glass: (
                 opacity: 35,
+                frost: 5,
             ),
             surface: "glass",
         ),
@@ -85,6 +86,7 @@
             ),
             glass: (
                 opacity: 82,
+                frost: 5,
             ),
             surface: "glass",
         ),
