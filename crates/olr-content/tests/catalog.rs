@@ -44,6 +44,7 @@ fn level(dir: &Path, id: &str, name: &str) -> DirFs {
         glow: None,
         warnings: Vec::new(),
         clear: None,
+        glass: None,
         distant: Vec::new(),
         surface: None,
         distant_surface: Vec::new(),

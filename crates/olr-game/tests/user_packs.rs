@@ -50,6 +50,7 @@ fn level(root: &Path, id: &str, name: &str) {
             glow: None,
             warnings: Vec::new(),
             clear: None,
+            glass: None,
             distant: Vec::new(),
             surface: None,
             distant_surface: Vec::new(),

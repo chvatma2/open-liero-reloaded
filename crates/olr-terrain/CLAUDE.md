@@ -49,7 +49,14 @@ and the colour image that follows it (`ColorMap`).
   distant layers at once; `stain` and `stain_image` skip alpha-0 pixels
   (blood never hangs in the sky); `replace_rect` keeps alpha; `color_at`
   stays opaque. `ColorMap::new` is unchanged: a level without distant
-  layers is drawn as before (`tests/see_through.rs`).
+  layers is drawn as before (`tests/see_through.rs`). **Glass** (the
+  background glass design): a back alpha of 1 to 254 is kept likewise
+  (carving reveals it at its alpha; `stain` and `stain_image` land only
+  on alpha 255); `set_glass(Some(GlassMap))` (`glass.rs`: RGBA per art
+  pixel, the filter and the frost, static; another art size refused) and
+  `glass()` hold the level's `look/glass.png` for the renderer
+  (`glass_keeps_its_alpha`, `digging_in_front_of_glass_shows_the_glass`,
+  `stains_skip_glass`, `replace_rect_keeps_glass`).
 - **Glow** (plan 15a, look system §Glow): `set_glow(Some(GlowLayers))` gives the map
   a glow channel (strength per art pixel, group per world pixel, of the front
   as loaded and of the backdrop); layers of another size are refused

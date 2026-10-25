@@ -175,6 +175,7 @@ impl Canvas {
             // The bake's glow and clear solids (they always fit its size).
             map.set_glow(l.glow.clone());
             map.set_clear(l.clear.clone());
+            map.set_glass(l.glass.clone());
             map
         });
     }
@@ -290,6 +291,10 @@ impl Canvas {
                 // uploads): the renderer reads them with the rectangle.
                 if map.clear() != l.clear.as_deref() {
                     map.set_clear(l.clear.clone());
+                }
+                // So does the glass map (the background glass design).
+                if map.glass() != l.glass.as_ref() {
+                    map.set_glass(l.glass.clone());
                 }
             }
         }

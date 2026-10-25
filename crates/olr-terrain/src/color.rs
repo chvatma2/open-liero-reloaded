@@ -15,6 +15,7 @@ use alloc::vec::Vec;
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 
+use crate::GlassMap;
 use crate::dirt::{Clip, flags_of};
 use crate::dirty::{Dirty, DirtyTiles};
 use crate::{GreenMask, GreenPixel, PX_EMPTY, PX_ROCK, Stamp, StampPixel, Terrain, clip};
@@ -98,6 +99,8 @@ pub struct ColorMap {
     glow: Option<Box<Glow>>,
     /// The level's clear flags per world pixel (§Clear solids), as loaded.
     clear: Option<Box<[u8]>>,
+    /// The level's glass map (the background glass design), as loaded.
+    glass: Option<Box<GlassMap>>,
 }
 
 /// A level's glow (the look system's `look/` images): strength per art pixel
@@ -215,6 +218,7 @@ impl ColorMap {
             dirty: DirtyTiles::new((width, height), Self::DIRTY_TILE * scale),
             glow: None,
             clear: None,
+            glass: None,
             see_through: false,
         }
     }
@@ -222,7 +226,8 @@ impl ColorMap {
     /// [`ColorMap::new`] for a level with distant layers (issue #11): the
     /// back art's pixels of alpha 0 stay see-through (alpha 0) in the map's
     /// back, and so in its front and composite where the material is
-    /// background; every other pixel is opaque. Carving reveals them;
+    /// background, and so does glass, alpha 1 to 254 (the background glass
+    /// design); every other pixel is opaque. Carving reveals them;
     /// stains never land on them.
     pub fn new_see_through(
         material: &Terrain,
@@ -238,15 +243,16 @@ impl ColorMap {
         let mw = map.material.width() as usize;
         for y in 0..h.min(back.height()) {
             for x in 0..w.min(back.width()) {
-                if back.get(x, y).a != 0 {
+                let a = back.get(x, y).a;
+                if a == 255 {
                     continue;
                 }
                 let i = (y as usize * w as usize + x as usize) * 4 + 3;
-                map.back[i] = 0;
+                map.back[i] = a;
                 let cell = (y / s) as usize * mw + (x / s) as usize;
                 if map.material.cells[cell] == Material::Background as u8 {
-                    map.front[i] = 0;
-                    map.pixels[i] = 0;
+                    map.front[i] = a;
+                    map.pixels[i] = a;
                 }
             }
         }
@@ -293,6 +299,25 @@ impl ColorMap {
                 true
             }
         }
+    }
+
+    /// Sets the level's glass map (the background glass design): what its
+    /// glass does to the distant layers behind it, per art pixel; a map of
+    /// another art size is refused (`false`) and the map keeps what it had.
+    /// Play never changes it.
+    pub fn set_glass(&mut self, glass: Option<GlassMap>) -> bool {
+        match glass {
+            Some(g) if !g.fits((self.width, self.height)) => false,
+            g => {
+                self.glass = g.map(Box::new);
+                true
+            }
+        }
+    }
+
+    /// The level's glass map; `None` when no glass tints or frosts.
+    pub fn glass(&self) -> Option<&GlassMap> {
+        self.glass.as_deref()
     }
 
     /// The level's clear flags per world pixel; `None` when nothing is clear.
@@ -532,7 +557,7 @@ impl ColorMap {
                 .iter_mut()
                 .chain(self.back[a..b].as_chunks_mut::<4>().0)
             {
-                p[3] = if keep && p[3] == 0 { 0 } else { 255 };
+                p[3] = if keep { p[3] } else { 255 };
             }
             self.pixels[a..b].copy_from_slice(&self.front[a..b]);
         }
@@ -662,8 +687,8 @@ impl ColorMap {
     }
 
     /// Stains world pixel `(x, y)`'s block in `c`, but its see-through
-    /// pixels (a see-through map's alpha 0: blood never hangs in the air
-    /// before the distant layers).
+    /// pixels (a see-through map's alpha 0 and its glass: blood never hangs
+    /// in the air before the distant layers, nor lands on glass).
     fn stain_block(&mut self, x: u32, y: u32, c: Rgba) {
         if !self.see_through {
             fill(&mut self.pixels, self.width, self.scale, x, y, c);
@@ -674,7 +699,7 @@ impl ColorMap {
         for row in y as usize * s..(y as usize + 1) * s {
             let start = (row * w + x as usize * s) * 4;
             for p in self.pixels[start..start + s * 4].as_chunks_mut::<4>().0 {
-                if p[3] != 0 {
+                if p[3] == 255 {
                     p.copy_from_slice(&rgba);
                 }
             }

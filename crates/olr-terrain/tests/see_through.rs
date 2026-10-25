@@ -107,3 +107,73 @@ fn replace_rect_keeps_see_through_pixels() {
     assert_eq!(alpha(&m, S), 0);
     assert_eq!(alpha(&plain, S), 255);
 }
+
+// The background glass design: a back pixel of alpha 1 to 254 is glass.
+const GLASS: Rgba = Rgba { r: 200, g: 215, b: 235, a: 90 };
+
+/// `..DD` as [`level`], but the second world pixel's back and the fourth's
+/// (under dirt) are glass.
+fn glass_level() -> (Terrain, RgbaImage, RgbaImage) {
+    let t = map("..DD");
+    let back = image(4 * S, S, |x, _| match x / S {
+        0 => WALL,
+        1 | 3 => GLASS,
+        _ => TILE,
+    });
+    let front = image(4 * S, S, |x, y| if x < 2 * S { back.get(x, y) } else { DIRT });
+    (t, front, back)
+}
+
+#[test]
+fn glass_keeps_its_alpha() {
+    let (t, front, back) = glass_level();
+    let m = ColorMap::new_see_through(&t, &front, &back, S, theme());
+    assert_eq!(&m.pixels()[(S * 4) as usize..(S * 4 + 4) as usize], [200, 215, 235, 90]);
+    // Dirt over glass is opaque.
+    assert_eq!(alpha(&m, 3 * S), 255);
+}
+
+#[test]
+fn digging_in_front_of_glass_shows_the_glass() {
+    let (t, front, back) = glass_level();
+    let mut m = ColorMap::new_see_through(&t, &front, &back, S, theme());
+    m.apply(ColorEdit::Carve { hole: 0, x: 3, y: 0 });
+    assert_eq!(&m.pixels()[(3 * S * 4) as usize..(3 * S * 4 + 4) as usize], [200, 215, 235, 90]);
+}
+
+#[test]
+fn stains_skip_glass() {
+    let (t, front, back) = glass_level();
+    let mut m = ColorMap::new_see_through(&t, &front, &back, S, theme());
+    let red = Rgba::rgb(200, 0, 0);
+    m.stain(1, 0, red);
+    let gib = image(4, 1, |_, _| red);
+    m.stain_image(0, 0, &gib, Rect { x: 0, y: 0, w: 4, h: 1 }, true);
+    assert_eq!(&m.pixels()[(S * 4) as usize..(S * 4 + 4) as usize], [200, 215, 235, 90]);
+}
+
+#[test]
+fn replace_rect_keeps_glass() {
+    let (t, front, back) = glass_level();
+    let mut m = ColorMap::new_see_through(&t, &front, &back, S, theme());
+    let cells = [Material::Background, Material::Background, Material::Dirt, Material::Dirt];
+    m.replace_rect(Rect { x: 0, y: 0, w: 4 * S, h: S }, &front, &back, &cells);
+    assert_eq!(alpha(&m, S), 90);
+}
+
+#[test]
+fn a_plain_map_keeps_glass_opaque() {
+    let (t, front, back) = glass_level();
+    let m = ColorMap::new(&t, &front, &back, S, theme());
+    assert_eq!(alpha(&m, S), 255);
+}
+
+#[test]
+fn a_misfit_glass_map_is_refused() {
+    let (t, front, back) = glass_level();
+    let mut m = ColorMap::new_see_through(&t, &front, &back, S, theme());
+    assert!(!m.set_glass(Some(olr_terrain::GlassMap::none((4 * S, S + 1)))));
+    assert!(m.glass().is_none());
+    assert!(m.set_glass(Some(olr_terrain::GlassMap::none((4 * S, S)))));
+    assert!(m.glass().is_some());
+}

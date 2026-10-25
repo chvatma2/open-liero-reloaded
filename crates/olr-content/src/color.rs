@@ -26,6 +26,7 @@ impl LoadedLevel {
         // a checked pack) are left out.
         map.set_glow(self.glow.clone());
         map.set_clear(self.clear.clone());
+        map.set_glass(self.glass.clone());
         map
     }
 }

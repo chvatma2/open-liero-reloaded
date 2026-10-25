@@ -37,6 +37,8 @@ pub struct LoadedLevel {
     pub glow: Option<olr_terrain::GlowLayers>,
     /// The level's clear flags per world pixel (`look/clear.png`).
     pub clear: Option<Vec<u8>>,
+    /// The level's glass map (`look/glass.png`, the background glass design).
+    pub glass: Option<olr_terrain::GlassMap>,
     /// The level's distant (parallax) layers, far to near (issue #11):
     /// its back art's alpha-0 pixels are see-through when it has any.
     pub distant: Vec<olr_data::level::DistantLayer>,
@@ -62,6 +64,7 @@ impl LoadedLevel {
             look,
             glow: src.glow.clone(),
             clear: src.clear.clone(),
+            glass: src.glass.clone(),
             distant: src.distant.clone(),
             surface: src.surface.clone(),
             distant_surface: olr_format::levels::distant_surface_values(src),
@@ -70,7 +73,7 @@ impl LoadedLevel {
     }
 
     fn from_level(l: Level, extras: Extras, warnings: Vec<String>) -> anyhow::Result<LoadedLevel> {
-        let Extras { look, glow, clear, distant, surface, distant_surface } = extras;
+        let Extras { look, glow, clear, glass, distant, surface, distant_surface } = extras;
         check_art_size(l.material.width(), l.material.height(), l.def.art_scale)?;
         Ok(LoadedLevel {
             name: l.def.name,
@@ -83,6 +86,7 @@ impl LoadedLevel {
             look,
             glow,
             clear,
+            glass,
             distant,
             surface,
             distant_surface,
@@ -119,6 +123,7 @@ struct Extras {
     look: Option<olr_look::LevelLook>,
     glow: Option<olr_terrain::GlowLayers>,
     clear: Option<Vec<u8>>,
+    glass: Option<olr_terrain::GlassMap>,
     distant: Vec<olr_data::level::DistantLayer>,
     surface: Option<olr_look::SurfaceMaps>,
     distant_surface: Vec<u8>,
@@ -207,6 +212,7 @@ impl Content {
             look: pack.look,
             glow: pack.glow,
             clear: pack.clear,
+            glass: pack.glass,
             distant: pack.distant,
             surface: pack.surface,
             distant_surface: pack.distant_surface,

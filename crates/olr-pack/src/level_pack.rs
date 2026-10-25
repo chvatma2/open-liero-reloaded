@@ -36,6 +36,8 @@ pub struct LevelPack {
     pub glow: Option<olr_format::levels::GlowLayers>,
     /// The level's clear flags (`look/clear.png`).
     pub clear: Option<Vec<u8>>,
+    /// The level's glass map (`look/glass.png`, the background glass design).
+    pub glass: Option<olr_format::levels::GlassMap>,
     /// The level's distant (parallax) layers (`distant/<i>.png`, issue
     /// #11), far to near; empty for most levels.
     pub distant: Vec<olr_data::level::DistantLayer>,
@@ -147,6 +149,7 @@ pub fn read_level(src: &dyn ContentSource) -> Result<LevelPack, PackError> {
         look,
         glow: src.glow,
         clear: src.clear,
+        glass: src.glass,
         distant: src.distant,
         surface: src.surface,
         distant_surface,
@@ -189,6 +192,7 @@ pub(crate) mod tests {
             look: None,
             glow: None,
             clear: None,
+            glass: None,
             distant: Vec::new(),
             surface: None,
             distant_surface: Vec::new(),
