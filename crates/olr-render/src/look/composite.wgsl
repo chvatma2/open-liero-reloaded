@@ -43,7 +43,8 @@ struct WormBoxes {
 // packs them): its source is a segment across it, `half` world pixels each
 // side of `at`, facing `dir`; it widens by `tan_spread` and reaches `reach`
 // world pixels. `light` is its strength (linear), `group` its glow group's
-// value, `region` its patch's flicker region.
+// value, negative for a backdrop patch's beam, `region` its patch's
+// flicker region.
 struct GlowBeam {
     at: vec2<f32>,
     dir: vec2<f32>,
@@ -69,6 +70,10 @@ struct GlowBeams {
 const BEAM_PENUMBRA: f32 = 0.03;
 // The points across a beam's source a pixel looks for (soft shadows).
 const BEAM_SHADOW_POINTS: i32 = 8;
+// The most pixels a shadow march visits: four times the longest reach (512,
+// `renderer/glow_beams.rs`), so a beam of that reach and a spread up to
+// about 60° is walked whole; a walk that runs out counts as blocked.
+const BEAM_MAX_STEPS: i32 = 2048;
 
 @vertex
 fn vs_full(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
@@ -94,16 +99,104 @@ fn solid_px(w: vec2<i32>) -> bool {
     return textureLoad(solid_tex, w, 0).r != 1u;
 }
 
-// The glow beams' light at world point `p` (the directional-glow design;
-// the spike's `beams_at`): each a crisp wedge as wide as its source where
-// it starts, `half + along tan(spread)`, its edge a smoothstep over a
-// penumbra of `0.5 + along BEAM_PENUMBRA`, fading as `(1 - along/reach)^3`,
-// flickering with its patch's region, shadowed by the share of
-// BEAM_SHADOW_POINTS points across its source (half a pixel behind its
-// face) that `p` sees past opaque rock and dirt (the live solid map).
-// Cheapest rejects first: `along` outside (0, reach], then the wedge; the
-// shadow march last.
-fn glow_beams_at(p: vec2<f32>) -> vec3<f32> {
+// Whether nothing opaque lies between `o` and source point `e` of beam
+// `b`: an exact grid walk (Amanatides-Woo) over every world pixel the
+// segment crosses (both pixels beside a corner it passes exactly through
+// too), never `o`'s own. A front source's walk ends where it falls behind
+// the source's face, so its own rock never shadows it at any angle; a
+// backdrop source's (`back`) goes into its source's pixel, so rock or dirt
+// over the patch hides it. At most BEAM_MAX_STEPS pixels, then blocked.
+fn beam_sees(o: vec2<f32>, e: vec2<f32>, b: GlowBeam, back: bool) -> bool {
+    let d = e - o;
+    var cell = vec2<i32>(floor(o));
+    let end = vec2<i32>(floor(e));
+    let step = vec2<i32>(select(-1, 1, d.x > 0.0), select(-1, 1, d.y > 0.0));
+    let far = 1e30;
+    let delta = vec2<f32>(
+        select(far, abs(1.0 / d.x), d.x != 0.0),
+        select(far, abs(1.0 / d.y), d.y != 0.0),
+    );
+    let edge = vec2<f32>(
+        select(f32(cell.x), f32(cell.x + 1), d.x > 0.0),
+        select(f32(cell.y), f32(cell.y + 1), d.y > 0.0),
+    );
+    var next = vec2<f32>(
+        select(far, (edge.x - o.x) / d.x, d.x != 0.0),
+        select(far, (edge.y - o.y) / d.y, d.y != 0.0),
+    );
+    for (var n = 0; n < BEAM_MAX_STEPS; n++) {
+        if all(cell == end) {
+            return true;
+        }
+        let t = min(next.x, next.y);
+        if t > 1.0 {
+            return true;
+        }
+        // (A thousandth of a pixel's slack: the walk's sums round.)
+        if !back && dot(o + d * t - b.at, b.dir) <= 1e-3 {
+            return true;
+        }
+        if abs(next.x - next.y) < 1e-6 {
+            // Exactly through a corner: both pixels beside it, then the
+            // one across.
+            if solid_px(cell + vec2<i32>(step.x, 0)) || solid_px(cell + vec2<i32>(0, step.y)) {
+                return false;
+            }
+            cell += step;
+            next += delta;
+        } else if next.x < next.y {
+            cell.x += step.x;
+            next.x += delta.x;
+        } else {
+            cell.y += step.y;
+            next.y += delta.y;
+        }
+        if solid_px(cell) {
+            return false;
+        }
+    }
+    return false;
+}
+
+// Where a solid world pixel `w` (its centre `c`) looks for beam source
+// point `to` from: its open 4-neighbour's centre that faces the source
+// most; `found` false when no open one faces it (it shows no face to the
+// beam).
+struct Start {
+    at: vec2<f32>,
+    found: bool,
+};
+
+fn face_start(w: vec2<i32>, c: vec2<f32>, to: vec2<f32>) -> Start {
+    var s: Start;
+    s.at = c;
+    s.found = false;
+    var best = 0.0;
+    var sides = array<vec2<i32>, 4>(vec2<i32>(1, 0), vec2<i32>(-1, 0), vec2<i32>(0, 1), vec2<i32>(0, -1));
+    for (var k = 0; k < 4; k++) {
+        let n = sides[k];
+        let facing = dot(vec2<f32>(n), to - c);
+        if facing > best && !solid_px(w + n) {
+            best = facing;
+            s.at = c + vec2<f32>(n);
+            s.found = true;
+        }
+    }
+    return s;
+}
+
+// The glow beams' light at world point `p` of world pixel `w` (the
+// directional-glow design; the spike's `beams_at`): each a crisp wedge as
+// wide as its source where it starts, `half + along tan(spread)`, its edge
+// a smoothstep over a penumbra of `0.5 + along BEAM_PENUMBRA`, fading as
+// `(1 - along/reach)^3`, flickering with its patch's region, shadowed by
+// the share of BEAM_SHADOW_POINTS points across its source (half a pixel
+// behind its face) that `p` sees past opaque rock and dirt (the live solid
+// map, `beam_sees`). A `solid` pixel (`p` its centre: every texel alike)
+// looks from its open neighbour facing the source, never from inside its
+// own rock. Cheapest rejects first: `along` outside (0, reach], then the
+// wedge; the shadow march last.
+fn glow_beams_at(p: vec2<f32>, w: vec2<i32>, solid: bool) -> vec3<f32> {
     var acc = vec3<f32>(0.0);
     let n = min(i32(look.beams.x), MAX_GLOW_BEAMS);
     for (var i = 0; i < n; i++) {
@@ -123,25 +216,26 @@ fn glow_beams_at(p: vec2<f32>) -> vec3<f32> {
         let edge = 1.0 - smoothstep(width - pen * 0.5, width + pen, side);
         let f = 1.0 - along / b.reach;
         var light = b.light * (edge * f * f * f);
-        let g = u32(b.group);
+        let back = b.group < 0.0;
+        let g = u32(abs(b.group));
         if g >= 1u && g <= u32(look.mode.y) {
             light = light * region_flicker(look.groups[g - 1u].flicker, u32(b.region));
+        }
+        var origin = p;
+        if solid {
+            let start = face_start(w, p, b.at);
+            if !start.found {
+                continue;
+            }
+            origin = start.at;
         }
         var seen = 0.0;
         for (var k = 0; k < BEAM_SHADOW_POINTS; k++) {
             let u = (f32(k) + 0.5) / f32(BEAM_SHADOW_POINTS) * 2.0 - 1.0;
             let src = b.at + perp * (u * b.half) - b.dir * 0.5;
-            let back = src - p;
-            let d = length(back);
-            var open = 1.0;
-            let steps = i32(d);
-            for (var s = 1; s < steps - 1; s++) {
-                if solid_px(vec2<i32>(floor(p + back / d * f32(s)))) {
-                    open = 0.0;
-                    break;
-                }
+            if beam_sees(origin, src, b, back) {
+                seen += 1.0;
             }
-            seen += open;
         }
         acc += light * (seen / f32(BEAM_SHADOW_POINTS));
     }
@@ -291,7 +385,9 @@ fn fs_composite(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     let in_level = all(w >= vec2<i32>(0)) && all(w < vec2<i32>(look.level.xy));
     let beams_on = look.beams.x > 0.5;
     if beams_on && in_level && (shade.x <= 0.0 || sky) {
-        beam = glow_beams_at(look.frame.xy + (vec2<f32>(t) + vec2<f32>(0.5)) / look.frame.z);
+        // A solid pixel's beam once for the world pixel (its centre).
+        let texel = look.frame.xy + (vec2<f32>(t) + vec2<f32>(0.5)) / look.frame.z;
+        beam = glow_beams_at(select(texel, vec2<f32>(w) + vec2<f32>(0.5), solid), w, solid);
     }
     if sky {
         let d = 1.0 - shade.w;

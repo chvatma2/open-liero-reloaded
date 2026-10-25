@@ -6251,6 +6251,16 @@ haze draw byte for byte as before (the render goldens and
   `cos(spread)`: no light behind it), and each patch draws a crisp,
   soft-shadowed beam in the composite (the spike's `beams_at`: 8 shadow
   points, penumbra `0.5 + 0.03 along`, falloff cubed).
+- **Shadows, past the spike:** each shadow point is an exact grid walk
+  (Amanatides-Woo) over every pixel the way crosses, so a one-pixel wall,
+  diagonal or touching the face, stops the beam (the spike's 1-px steps
+  let some through and skipped the last pixels before the source). A
+  rock patch's walk ends at its face; a backdrop patch's goes into its
+  own pixel, so dirt over it hides it until dug. A rock or dirt pixel
+  takes its beam once, walking from its open neighbour facing the source
+  (no stripes across a slanted face). A background patch is one beam: the
+  bake copies the backdrop's beam texels into the composite's there, and
+  the renderer reads the composite's on rock only.
 - **Strength:** `BEAM_SCALE` 0.08 × the group's cast × the patch's colour
   × its mean glow; no setting of its own. A `Flicker` group's beam
   flickers with its patch's first pixel's region, as its glow light does.
@@ -6264,7 +6274,8 @@ haze draw byte for byte as before (the render goldens and
   refused; the beam map the cascades read is composed from the live
   material (the backdrop's texel where a pixel is background), so digging
   dirt reveals a backdrop patch's cone; a beam whose group's reach is
-  unlimited (which `check` refuses) is not drawn; the beams are derived
+  unlimited (which `check` refuses) is not drawn, and a reach is drawn to
+  512 at most (the shadow walk is bounded by four times it); the beams are derived
   again, and the maps uploaded, when the editor sets new maps
   (`ColorMap::beams_generation`).
 - **Cost:** per pixel and beam whose wedge holds the pixel, 8 shadow

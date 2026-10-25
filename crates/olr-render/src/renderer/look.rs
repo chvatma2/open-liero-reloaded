@@ -291,6 +291,9 @@ pub(super) struct LookState {
     /// The packed beams, reused every frame, and how many.
     packed_beams: Vec<f32>,
     beam_count: u32,
+    /// Whether the beams are drawn (tests turn them off, keeping the
+    /// cascades' cones: `Renderer::set_glow_beam_light`).
+    beam_light: bool,
     /// The composite's group 1 before a level's exists: no beam, no haze map.
     no_beams: super::glow_beams::GlowBeams,
 }
@@ -747,6 +750,7 @@ impl LookState {
                 olr_look::glow_beams::MAX_GLOW_BEAMS * super::glow_beams::BEAM_FLOATS,
             ),
             beam_count: 0,
+            beam_light: true,
             no_beams,
         }
     }
@@ -1016,8 +1020,8 @@ impl LookState {
     /// design): none without a level.
     pub(super) fn pack_glow_beams(&mut self, queue: &super::uploads::Queue, look: &LookFrame) {
         self.beam_count = match &self.textures {
-            Some(t) => t.glow_beams.pack(look, &t.regions.ids, &mut self.packed_beams),
-            None => 0,
+            Some(t) if self.beam_light => t.glow_beams.pack(look, &t.regions.ids, &mut self.packed_beams),
+            _ => 0,
         };
         if self.beam_count > 0 {
             queue.write_buffer(&self.beams, 0, bytemuck::cast_slice(&self.packed_beams));
@@ -1271,6 +1275,15 @@ impl Renderer {
     pub fn set_bloom(&mut self, on: bool) {
         if let Some(l) = self.look.as_mut() {
             l.bloom = on;
+        }
+    }
+
+    /// Turns the glow beams' light off or on (the directional-glow design;
+    /// tests: the frame without the beams, their cones kept).
+    #[doc(hidden)]
+    pub fn set_glow_beam_light(&mut self, on: bool) {
+        if let Some(l) = self.look.as_mut() {
+            l.beam_light = on;
         }
     }
 

@@ -144,7 +144,10 @@ on screen or offscreen.
   `docs/superpowers/specs/2026-10-25-directional-glow-design.md`;
   `renderer/glow_beams.rs`; STATUS.md "Directional glow"): a level's
   directional glow patches (`ColorMap::glow_beams`, `olr_look::glow_beams::derive`
-  of both layers, none past `MAX_GLOW_BEAMS` 64, which `check` refuses)
+  of both layers, the composite's beam texels only on rock: on background
+  they are the backdrop's copy, as baked, so such a patch is one beam;
+  none past `MAX_GLOW_BEAMS` 64, which `check` refuses, and then no cones
+  either)
   are derived by `LookState::sync_glow_beams` at `upload_terrain` and
   whenever `ColorMap::beams_generation` changes (`update_terrain`: the
   editor sets maps anew; the glow light is then made again).
@@ -156,7 +159,8 @@ on screen or offscreen.
   haze map (`R8Unorm`, `ColorMap::haze`, else 1 × 1 at 1). Each frame
   `pack_glow_beams` packs the beams into one uniform shared by every
   view (`GlowBeam` in `composite.wgsl`, 12 floats: at, dir, half,
-  tan(spread), reach, group, light, region; a uniform rather than a
+  tan(spread), reach (at most `MAX_BEAM_REACH` 512: hostile content),
+  group (negative for a backdrop patch's beam), light, region; a uniform rather than a
   storage buffer, so no device without fragment storage buffers is
   refused): only those whose group the frame has, with a reach in world
   pixels and some light, `light` being `BEAM_SCALE` (0.08) × the group's
@@ -176,8 +180,16 @@ on screen or offscreen.
   width + pen, |side|)`, `pen = 0.5 + 0.03 along`, falloff `(1 −
   along/reach)³`, × `region_flicker`, then the share of 8 points across
   the source (half a pixel behind its face) each pixel sees past `solid_px`
-  (the spike's march), at each texel's centre in world coordinates
-  (camera-independent, still scenes steady). **Where it shows** (the
+  (`beam_sees`: an exact grid walk, Amanatides-Woo, over every world pixel
+  the segment crosses, both pixels beside a corner it passes exactly
+  through, at most `BEAM_MAX_STEPS` 2048 then blocked; a front source's
+  walk stops where it falls behind the face, so its own rock never
+  shadows it and a wall touching the face does; a backdrop source's goes
+  into its source pixel, so dirt over it hides it until dug), at each
+  open texel's centre in world coordinates (camera-independent, still
+  scenes steady); a solid pixel takes its beam once for the world pixel,
+  at its centre, walking from its open 4-neighbour that faces the source
+  most (none: no beam), so a slanted face shows no sub-pixel stripes. **Where it shows** (the
   proposal Task 6 tunes): the surface term adds it to the light before
   the cap and `light × art` on every in-level pixel that does not glow and
   is not a distant layer's (sky or glass); the air term adds `beam × haze
@@ -189,7 +201,12 @@ on screen or offscreen.
   `a_beam_lights_ahead_and_not_behind`, `a_beam_starts_as_wide_as_its_source`,
   `a_wall_stops_a_beam`, `shadow_edges_are_smooth`, `digging_opens_a_shadow`,
   `still_glow_draws_steady_bytes`, `beams_are_camera_independent`,
-  `haze_shows_a_beam_over_the_sky`, `no_glow_beams_no_haze_changes_no_byte`;
+  `haze_shows_a_beam_over_the_sky`, `no_glow_beams_no_haze_changes_no_byte`,
+  `a_wall_touching_the_face_stops_a_beam`,
+  `a_buried_backdrop_patch_casts_no_beam_until_dug`,
+  `a_backdrop_patch_draws_one_beam`, `a_diagonal_wall_stops_a_beam`,
+  `an_oblique_rock_face_is_lit_evenly` (`set_glow_beam_light(false)`,
+  hidden: the frame without the beams, their cones kept, for tests);
   unit: `past_the_cap_a_level_has_no_beams`, `beams_pack_their_groups_cast`.
 - **World pass** (`frame.rs`, `world.wgsl`): a target covering the view
   plus `MARGIN` world pixels, at `scale()` texels per world pixel

@@ -174,6 +174,13 @@ fn a_beam_lights_ahead_and_not_behind() {
     let (ahead, behind) = (f.light(41, 32), f.light(15, 32));
     assert!(ahead > 3.0 * amb, "ahead: {ahead} against {amb}");
     assert!(behind < 1.1 * amb, "behind: {behind} against {amb}");
+    // The beam itself lights all the way along its axis (until its falloff
+    // drops below a byte; no point of its own source shadows it).
+    r.set_glow_beam_light(false);
+    let glow = frame(&gpu, &mut r, &look);
+    for x in 22..64 {
+        assert!(f.light(x, 32) > glow.light(x, 32), "({x}, 32): the beam adds light");
+    }
     // Undirected, the patch lights behind it: the cone darkens it.
     let mut r = renderer(&gpu, &beam_level(|_, _| None, false));
     let f = frame(&gpu, &mut r, &look);
@@ -317,4 +324,159 @@ fn no_glow_beams_no_haze_changes_no_byte() {
         (f.img, gpu.read_light(&r).unwrap())
     };
     assert_eq!(draw(true), draw(false));
+}
+
+/// A `W` × `H` level of `cell(x, y)` (grey art, white on a patch) whose
+/// pixels where `front(x, y)` glow in the composite and where `back(x, y)`
+/// in the backdrop, group 1 at full strength, facing beam byte `dir`
+/// (direction / 2 + 1) at [`SPREAD`], laid out as the bake writes them: on
+/// background the composite's glow and beam are the backdrop's, on dirt
+/// there are none.
+fn patch_level(
+    cell: impl Fn(u32, u32) -> Material,
+    front: impl Fn(u32, u32) -> bool,
+    back: impl Fn(u32, u32) -> bool,
+    dir: u8,
+) -> ColorMap {
+    let cells = (0..W * H).map(|i| cell(i % W, i / W)).collect();
+    let t = Terrain::from_grid(&MaterialGrid::from_cells(W, H, cells).unwrap());
+    let art = |x: u32, y: u32| {
+        if front(x, y) || back(x, y) { Rgba::rgb(255, 255, 255) } else { Rgba::rgb(128, 128, 128) }
+    };
+    let mut img = RgbaImage::new(W, H);
+    for y in 0..H {
+        for x in 0..W {
+            img.set(x, y, art(x, y));
+        }
+    }
+    let holes = vec![Stamp::from_image(&solid(9, 9, Rgba::MAGENTA))];
+    let theme = ThemeArt { holes, green_mask: None, front_tile: solid(1, 1, Rgba::BLACK) };
+    let mut map = ColorMap::new(&t, &img, &img, 1, theme);
+    let mut g = olr_terrain::GlowLayers::empty((W, H), (W, H));
+    let mut b = GlowBeamMap::none((W, H));
+    for y in 0..H {
+        for x in 0..W {
+            let i = (y * W + x) as usize;
+            if back(x, y) {
+                (g.back[i], g.groups_back[i], b.back[2 * i], b.back[2 * i + 1]) = (255, 1, dir, SPREAD);
+            }
+            let lit = match cell(x, y) {
+                Material::Background => back(x, y),
+                Material::Rock => front(x, y),
+                Material::Dirt => false,
+            };
+            if lit {
+                (g.front[i], g.groups[i], b.front[2 * i], b.front[2 * i + 1]) = (255, 1, dir, SPREAD);
+            }
+        }
+    }
+    assert!(map.set_glow(Some(g)) && map.set_glow_beams(Some(b)));
+    map
+}
+
+/// Important 1: a one-pixel wall right against the face stops the beam
+/// (the march reaches the face).
+#[test]
+fn a_wall_touching_the_face_stops_a_beam() {
+    let Some(gpu) = offscreen() else { return };
+    let mut r = renderer(&gpu, &beam_level(|x, _| (x == PATCH_X + 1).then_some(Material::Rock), true));
+    let f = frame(&gpu, &mut r, &beam_look(0));
+    for (x, y) in [(30, 32), (45, 32), (60, 40)] {
+        assert_eq!(f.texels(x, y), f.texels(FAR.0, FAR.1), "({x}, {y}) behind the wall: the ambient");
+    }
+}
+
+/// Important 1: a backdrop patch under a pixel of dirt casts no beam; dug
+/// out, it does.
+#[test]
+fn a_buried_backdrop_patch_casts_no_beam_until_dug() {
+    let Some(gpu) = offscreen() else { return };
+    let cell = |x, y| if in_patch(x, y) { Material::Dirt } else { Material::Background };
+    let mut map = patch_level(cell, |_, _| false, in_patch, 1);
+    let mut r = renderer(&gpu, &map);
+    let look = beam_look(0);
+    let f = frame(&gpu, &mut r, &look);
+    for (x, y) in [(23, 32), (30, 32), (45, 32)] {
+        assert_eq!(f.texels(x, y), f.texels(FAR.0, FAR.1), "({x}, {y}) before a buried patch: the ambient");
+    }
+    map.apply(ColorEdit::Carve { hole: 0, x: PATCH_X as i32, y: 32 });
+    assert!(
+        (PATCH_ROWS.start..PATCH_ROWS.end)
+            .all(|y| map.material().material(i64::from(PATCH_X), i64::from(y)) == Some(Material::Background))
+    );
+    r.update_terrain(&mut map);
+    let f = frame(&gpu, &mut r, &look);
+    assert!(f.light(30, 32) > 3.0 * ambient(&f), "dug out, it shines: {}", f.light(30, 32));
+}
+
+/// A backdrop patch in the open (its composite's maps are the backdrop's,
+/// as baked) draws one beam, not two.
+#[test]
+fn a_backdrop_patch_draws_one_beam() {
+    let Some(gpu) = offscreen() else { return };
+    let look = beam_look(0);
+    let draw = |map: &ColorMap| {
+        let mut r = renderer(&gpu, map);
+        frame(&gpu, &mut r, &look)
+    };
+    let open = |_, _| Material::Background;
+    let baked = draw(&patch_level(open, |_, _| false, in_patch, 1));
+    // The same with the composite's beam texels cleared: the backdrop's
+    // beam alone.
+    let mut map = patch_level(open, |_, _| false, in_patch, 1);
+    let mut b = map.glow_beams().unwrap().clone();
+    b.front.iter_mut().for_each(|v| *v = 0);
+    assert!(map.set_glow_beams(Some(b)));
+    let alone = draw(&map);
+    assert!(baked.light(30, 32) > 3.0 * ambient(&baked));
+    for x in 22..60 {
+        assert_eq!(baked.texels(x, 32), alone.texels(x, 32), "({x}, 32)");
+    }
+}
+
+/// Important 2: an 8-connected diagonal wall one pixel thin, across a beam
+/// at about 45°, stops it.
+#[test]
+fn a_diagonal_wall_stops_a_beam() {
+    let Some(gpu) = offscreen() else { return };
+    let cell = |x: u32, y: u32| {
+        if in_patch(x, y) || x + y == 70 { Material::Rock } else { Material::Background }
+    };
+    // Byte 23: 44°, down and to the right.
+    let mut r = renderer(&gpu, &patch_level(cell, in_patch, |_, _| false, 23));
+    let f = frame(&gpu, &mut r, &beam_look(0));
+    assert!(f.light(28, 38) > 3.0 * ambient(&f), "before the wall: lit");
+    // The beam adds nothing past it (the glow light's own byte of leak
+    // there is the cascades').
+    r.set_glow_beam_light(false);
+    let glow = frame(&gpu, &mut r, &beam_look(0));
+    for (x, y) in [(40, 40), (45, 38), (38, 45), (42, 44), (36, 40), (50, 50)] {
+        assert_eq!(f.texels(x, y), glow.texels(x, y), "({x}, {y}) past the wall: no beam");
+    }
+}
+
+/// Important 3: a rock floor lit at a slant takes the beam alike on every
+/// texel of a face pixel (no sub-pixel stripes), and a face pixel the beam
+/// falls on is lit.
+#[test]
+fn an_oblique_rock_face_is_lit_evenly() {
+    let Some(gpu) = offscreen() else { return };
+    let cell = |x: u32, y: u32| if in_patch(x, y) || y >= 50 { Material::Rock } else { Material::Background };
+    let map = patch_level(cell, in_patch, |_, _| false, 23);
+    let look = beam_look(0);
+    let mut r = renderer(&gpu, &map);
+    let lit = frame(&gpu, &mut r, &look);
+    r.set_glow_beam_light(false);
+    let dark = frame(&gpu, &mut r, &look);
+    // The beam's share of each texel (the glow light is the same in both).
+    let beam = |x: u32, y: u32| -> [f32; 4] {
+        let (a, b) = (lit.texels(x, y), dark.texels(x, y));
+        std::array::from_fn(|i| srgb(a[i].r) - srgb(b[i].r))
+    };
+    let face: Vec<[f32; 4]> = (32..46).map(|x| beam(x, 50)).collect();
+    assert!(face.iter().any(|t| t[0] > 0.02), "the beam lights the face: {face:?}");
+    for (x, t) in (32..).zip(&face) {
+        let (lo, hi) = t.iter().fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+        assert!(hi - lo < 0.006, "({x}, 50): its texels differ, {t:?}");
+    }
 }

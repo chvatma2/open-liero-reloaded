@@ -19,11 +19,17 @@ use olr_terrain::{ColorMap, Rect};
 pub(super) const BEAM_SCALE: f32 = 0.08;
 
 /// Floats a beam takes in the uniform (`GlowBeam` in `composite.wgsl`):
-/// at, dir, half, tan(spread), reach, group, light, region.
+/// at, dir, half, tan(spread), reach, group (negative for a backdrop
+/// patch's), light, region.
 pub(super) const BEAM_FLOATS: usize = 12;
 
 /// The beams uniform's bytes: [`MAX_GLOW_BEAMS`] beams.
 pub(super) const BEAMS_BYTES: u64 = (MAX_GLOW_BEAMS * BEAM_FLOATS * 4) as u64;
+
+/// The longest reach a beam is drawn to, world pixels (hostile content:
+/// the composite's shadow march is bounded by four times it,
+/// `BEAM_MAX_STEPS` in `composite.wgsl`); `check` allows reaches to 65 535.
+pub(super) const MAX_BEAM_REACH: f32 = 512.0;
 
 /// The widest spread a beam is drawn at, radians (a half-angle of 90° is a
 /// half-plane: its tangent stays finite).
@@ -121,13 +127,22 @@ fn sources(map: &ColorMap) -> Vec<GlowBeamSource> {
         return Vec::new();
     };
     let (front, back) = map.art_layers();
+    // The composite's beams only on rock: on background they are the
+    // backdrop's (as baked), whose own beam that is.
+    let cells = map.material().cells();
+    let mut on_rock = beams.front.clone();
+    for (texel, cell) in on_rock.as_chunks_mut::<2>().0.iter_mut().zip(cells) {
+        if *cell != Material::Rock as u8 {
+            *texel = [0, 0];
+        }
+    }
     let layer = |is_back: bool| BeamLayer {
         world,
         art_scale: map.art_scale(),
         groups: if is_back { &glow.groups_back } else { &glow.groups },
         glow: if is_back { &glow.back } else { &glow.front },
         art: if is_back { back } else { front },
-        beams: if is_back { &beams.back } else { &beams.front },
+        beams: if is_back { &beams.back } else { &on_rock },
     };
     let all = derive(&layer(false), &layer(true));
     if all.len() > MAX_GLOW_BEAMS { Vec::new() } else { all }
@@ -203,7 +218,8 @@ impl GlowBeams {
         self.generation = Some(map.beams_generation());
         self.sources = sources(map);
         let level = (map.material().width(), map.material().height());
-        let has_beams = map.glow_beams().is_some_and(|m| m.fits(level));
+        // A beam map counts only with beams kept (none past the cap: no cones).
+        let has_beams = map.glow_beams().is_some_and(|m| m.fits(level)) && !self.sources.is_empty();
         let haze = map.haze().filter(|h| h.len() as u64 == u64::from(level.0) * u64::from(level.1));
         let size = |on: bool| if on { world } else { (1, 1) };
         let sized = |t: &wgpu::Texture, s: (u32, u32)| (t.width(), t.height()) == (s.0.max(1), s.1.max(1));
@@ -242,7 +258,7 @@ impl GlowBeams {
     pub(super) fn write(&mut self, queue: &super::uploads::Queue, map: &ColorMap, r: Rect) {
         let level = (map.material().width(), map.material().height());
         let Some(beams) = map.glow_beams().filter(|b| b.fits(level)) else { return };
-        if !self.has_map() {
+        if !self.mapped {
             return;
         }
         let (x0, y0) = (r.x.min(self.map.width()), r.y.min(self.map.height()));
@@ -295,8 +311,9 @@ fn pack(sources: &[GlowBeamSource], look: &LookFrame, regions: &[u16], out: &mut
             None => 0,
         };
         let tan = s.spread.clamp(0.0, MAX_SPREAD).tan();
+        let group = if s.back { -f32::from(s.group) } else { f32::from(s.group) };
         let at = out.len();
-        out.extend([s.at[0], s.at[1], s.dir[0], s.dir[1], s.half, tan, g.reach, f32::from(s.group)]);
+        out.extend([s.at[0], s.at[1], s.dir[0], s.dir[1], s.half, tan, g.reach.min(MAX_BEAM_REACH), group]);
         out.extend([light[0], light[1], light[2], f32::from(region)]);
         // A NaN never reaches a shader.
         if !out[at..].iter().all(|v| v.is_finite()) {
@@ -313,8 +330,9 @@ mod tests {
     use olr_data::level::MaterialGrid;
     use olr_terrain::{GlowBeamMap, GlowLayers, Terrain, ThemeArt};
 
-    /// A 128 × 4 open level whose top row glows in group 1, every
-    /// `every`-th pixel directional (a patch each).
+    /// A 128 × 4 open level whose rows 0 and 2 glow in group 1, every
+    /// `every`-th pixel directional (a patch each) in the backdrop, the
+    /// composite's maps the backdrop's on background (as baked).
     fn map(every: u32) -> ColorMap {
         let (w, h) = (128, 4);
         let cells = vec![Material::Background; (w * h) as usize];
@@ -322,16 +340,19 @@ mod tests {
         let mut art = RgbaImage::new(w, h);
         for x in 0..w {
             art.set(x, 0, Rgba::rgb(255, 128, 0));
+            art.set(x, 2, Rgba::rgb(255, 128, 0));
         }
         let theme = ThemeArt { holes: Vec::new(), green_mask: None, front_tile: art.clone() };
         let mut m = ColorMap::new(&t, &art, &art, 1, theme);
         let mut g = GlowLayers::empty((w, h), (w, h));
         let mut b = GlowBeamMap::none((w, h));
-        for x in (0..w).step_by(every as usize) {
-            let i = x as usize;
-            (g.front[i], g.back[i], g.groups[i], g.groups_back[i]) = (255, 255, 1, 1);
-            (b.back[2 * i], b.back[2 * i + 1]) = (46, 30);
-            (b.front[2 * i], b.front[2 * i + 1]) = (46, 30);
+        for y in [0, 2] {
+            for x in (0..w).step_by(every as usize) {
+                let i = (y * w + x) as usize;
+                (g.front[i], g.back[i], g.groups[i], g.groups_back[i]) = (255, 255, 1, 1);
+                (b.back[2 * i], b.back[2 * i + 1]) = (46, 30);
+                (b.front[2 * i], b.front[2 * i + 1]) = (46, 30);
+            }
         }
         assert!(m.set_glow(Some(g)) && m.set_glow_beams(Some(b)));
         m
@@ -343,18 +364,22 @@ mod tests {
         l
     }
 
-    /// Both layers' patches, the cap: past [`MAX_GLOW_BEAMS`] a level has
-    /// none (`check` refuses it).
+    /// Past [`MAX_GLOW_BEAMS`] a level has none (`check` refuses it); a
+    /// background patch is one beam, the backdrop's (the composite's maps
+    /// there are its copy).
     #[test]
     fn past_the_cap_a_level_has_no_beams() {
-        // 32 patches a layer: 64 beams.
-        assert_eq!(sources(&map(4)).len(), MAX_GLOW_BEAMS);
-        // 43 a layer: none.
+        // 32 patches a row: 64 beams, all the backdrop's.
+        let s = sources(&map(4));
+        assert_eq!(s.len(), MAX_GLOW_BEAMS);
+        assert!(s.iter().all(|s| s.back));
+        // 43 a row: none.
         assert!(sources(&map(3)).is_empty());
     }
 
     /// The light is BEAM_SCALE × cast × colour × glow; a group the frame
-    /// lacks, an unlimited reach or no light packs none.
+    /// lacks, an unlimited reach or no light packs none; a reach past
+    /// MAX_BEAM_REACH is clamped; a backdrop beam's group is negative.
     #[test]
     fn beams_pack_their_groups_cast() {
         let mut sources = sources(&map(4));
@@ -364,7 +389,10 @@ mod tests {
         // Own colour: the art (255, 128, 0) normalised, × 0.8.
         let orange = olr_look::srgb_to_linear(128);
         assert!((first[8] - 0.8).abs() < 1e-5 && (first[9] - 0.8 * orange).abs() < 1e-5 && first[10] == 0.0);
-        assert!((first[5] - 30f32.to_radians().tan()).abs() < 1e-5 && first[6] == 60.0 && first[7] == 1.0);
+        assert!((first[5] - 30f32.to_radians().tan()).abs() < 1e-5 && first[6] == 60.0 && first[7] == -1.0);
+        // Hostile content: a reach of 65 535 is drawn to 512.
+        pack(&sources, &look(10.0, 65535.0, true), &[], &mut out);
+        assert_eq!(out[6], MAX_BEAM_REACH);
         // A tint: white × the cast.
         pack(&sources, &look(10.0, 60.0, false), &[], &mut out);
         assert!(out[8..11].iter().all(|v| (v - 0.8).abs() < 1e-5));
@@ -372,17 +400,21 @@ mod tests {
         assert_eq!(pack(&sources, &look(0.0, 60.0, true), &[], &mut out), 0);
         assert_eq!(pack(&sources, &LookFrame::default(), &[], &mut out), 0);
         // A NaN source packs none.
-        sources.truncate(1);
-        sources[0].at[0] = f32::NAN;
-        assert_eq!(pack(&sources, &look(10.0, 60.0, true), &[], &mut out), 0);
+        let mut one = sources.clone();
+        one.truncate(1);
+        one[0].at[0] = f32::NAN;
+        assert_eq!(pack(&one, &look(10.0, 60.0, true), &[], &mut out), 0);
         assert!(out.is_empty());
         // A flickering group's beam takes its first pixel's region.
         let mut flicker = look(10.0, 60.0, true);
         flicker.groups[0].flicker = Some((5.0, 50.0));
-        let sources = super::sources(&map(4));
         let mut regions = vec![0u16; 512];
         regions[4] = 77;
         pack(&sources, &flicker, &regions, &mut out);
         assert_eq!((out[11], out[BEAM_FLOATS + 11]), (0.0, 77.0));
+        // A front source's group is positive.
+        sources[0].back = false;
+        pack(&sources, &look(10.0, 60.0, true), &[], &mut out);
+        assert_eq!(out[7], 1.0);
     }
 }
