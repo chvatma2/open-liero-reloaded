@@ -96,7 +96,9 @@ fn the_bundled_content_lists_the_reloaded_levels() {
 /// material byte for byte, and its front and back pixel for pixel but
 /// where the sky is see-through (issue #63): there the distant sky
 /// (`distant/0.png`, level-sized at its reference placement) shows the
-/// imported sky, but for its stars. Only the look and the stars are added.
+/// imported sky, but for its stars, and behind the roof garden (the old
+/// sky the flowers hid, see-through since 2026-10-25) within 2 a channel
+/// of it. Only the look and the stars are added.
 #[test]
 fn the_factory_is_the_imported_level_but_for_its_look() {
     use olr_format::image_io::decode_rgba;
@@ -121,8 +123,12 @@ fn the_factory_is_the_imported_level_but_for_its_look() {
                 through += 1;
                 let s = sky.get(x, y);
                 assert!(p.same_rgb(s), "{file} ({x}, {y}): the distant sky's colour");
-                // A star is pale; the sky is blue.
-                if !s.same_rgb(old) {
+                // A star is pale; the sky is blue. The gradient the
+                // distant sky continues behind the roof garden is
+                // within 2 a channel of OLX's.
+                let near =
+                    [(s.r, old.r), (s.g, old.g), (s.b, old.b)].iter().all(|&(a, b)| a.abs_diff(b) <= 2);
+                if !near {
                     assert!(s.r >= 0x90, "{file} ({x}, {y}): only a star differs from OLX's sky");
                     stars += 1;
                 }

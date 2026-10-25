@@ -172,6 +172,13 @@ Remade OLX content is named "<Old name> Reloaded".
     with it and show only where the sky shows; at the reference
     placement 1293 sky pixels became stars (the light grid's hashes did
     not change).
+  - **The roof garden** (Liero Factory, 2026-10-25): the old sky the
+    flowers on the left roof hid (the cut-out above took the sky layer's
+    pixels, which the dirt flowers covered) showed as fixed blue
+    flower shapes once the dirt was shot away. Erased from `background`
+    with `level element erase --mask` (its 966 pixels within 8 a channel
+    of the sky's art, in x 380-639, y 120-175), then `level bake`: they
+    show the distant sky now, within 2 a channel of OLX's colour.
 
   ```sh
   cargo build -p olr-cli
