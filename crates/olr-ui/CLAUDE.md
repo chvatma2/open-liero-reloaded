@@ -209,7 +209,7 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   `take_warnings`). **The loadout editor** (`screens/loadouts.rs`, a modal
   window, `MenuData`'s): the mod's loadouts (the read-only ones marked),
   New (a copy of `Default`), Copy, Rename ("New name", OK; refused names
-  said in red) and Delete (confirmed; own ones only); the selected one's
+  said in red) and Delete (at once, unasked since 2026-10-25; own ones only); the selected one's
   weapon checkboxes, All on, All off, "Loading time", "Unique weapons"
   (`UNIQUE_HINT`), greyed for a read-only one (`READ_ONLY`); every valid
   change is saved at once (`SetLoadouts`), one with no weapon on is shown
@@ -336,9 +336,11 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   Discard), New level (a form: Name, Width and Height 1..=4096, default
   504 × 350, Theme from `Catalog::sources`' themes, `olx-theme-dirt` by
   default; Create disabled until valid; a form closes once sent), and every catalog level with Edit
-  (`MenuData::editable`, the data directory's packs) or Edit a copy (a
+  and Delete (`MenuData::editable`, the data directory's packs; Delete
+  asks in its row, "Delete?" with "Yes, delete" and No, the
+  user's request 2026-10-25) or Edit a copy (a
   form: Name, "<Name> copy", Copy). They emit `UiAction::{EditLevel,
-  CopyLevel, NewLevel, Recover, DiscardRecovery}`, which `update` turns
+  CopyLevel, NewLevel, Recover, DiscardRecovery, DeleteLevel}`, which `update` turns
   into the `AppCommand`s of the same names only on the Editor screen with
   nothing playing. The app fills `MenuData::set_editor_packs(editable,
   recoveries)` and `editor_message` (a failure, in red); it opens the

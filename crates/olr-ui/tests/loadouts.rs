@@ -137,9 +137,9 @@ fn the_editor_makes_and_changes_own_loadouts() {
     assert_eq!(names, ["Mine", "Rifle only copy"]);
     assert_eq!(own(&h)[1].loading_time, 20);
 
-    // Delete, confirmed.
+    // Delete, at once: nothing asks.
     click(&mut h, "Delete");
-    click(&mut h, "Yes, delete");
+    assert!(h.query_by_label("Yes, delete").is_none());
     assert_eq!(own(&h).len(), 1);
 
     // Done selects the loadout shown.

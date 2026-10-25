@@ -42,8 +42,6 @@ pub(super) struct Editor {
     error: Option<String>,
     /// The selected own loadout as edited to no weapon: shown, not saved.
     draft: Option<MatchLoadout>,
-    /// "Delete <name>?" is asking.
-    confirm_delete: bool,
 }
 
 impl Editor {
@@ -55,7 +53,6 @@ impl Editor {
             rename: None,
             error: None,
             draft: None,
-            confirm_delete: false,
         }
     }
 }
@@ -236,22 +233,12 @@ fn list(ui: &mut Ui, m: &ModInfo, mine: &mut OwnLoadouts, ed: &mut Editor) {
             ed.rename = Some(ed.selected.clone());
         }
         let delete = ui.add_enabled(own_one, Button::new("Delete")).on_disabled_hover_text(READ_ONLY);
+        // At once, unasked (the user's request, 2026-10-25).
         if delete.clicked() {
-            ed.confirm_delete = true;
+            mine.of_mut(&m.id).retain(|l| l.name != ed.selected);
+            *ed = Editor::new(&ed.mod_id, olr_content::DEFAULT_LOADOUT);
         }
     });
-    if ed.confirm_delete && own_one {
-        ui.horizontal_wrapped(|ui| {
-            ui.label(format!("Delete {}?", ed.selected));
-            if ui.button("Yes, delete").clicked() {
-                mine.of_mut(&m.id).retain(|l| l.name != ed.selected);
-                *ed = Editor::new(&ed.mod_id, olr_content::DEFAULT_LOADOUT);
-            }
-            if ui.button("Keep it").clicked() {
-                ed.confirm_delete = false;
-            }
-        });
-    }
     if let Some(mut text) = ed.rename.take() {
         ed.rename = ui
             .horizontal_wrapped(|ui| {
