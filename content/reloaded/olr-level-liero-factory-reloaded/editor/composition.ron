@@ -64,8 +64,27 @@
                 material: Background,
             ),
             glow: (
-                strength: 45,
+                strength: 67,
                 group: "glass",
+            ),
+            glass: (
+                opacity: 35,
+            ),
+            surface: "glass",
+        ),
+        (
+            id: "glass-rim",
+            name: "Broken glass\'s rim",
+            locked: true,
+            kind: Drawn(
+                material: Background,
+            ),
+            glow: (
+                strength: 67,
+                group: "glass",
+            ),
+            glass: (
+                opacity: 82,
             ),
             surface: "glass",
         ),

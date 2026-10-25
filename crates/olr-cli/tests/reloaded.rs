@@ -98,7 +98,11 @@ fn the_bundled_content_lists_the_reloaded_levels() {
 /// (`distant/0.png`, level-sized at its reference placement) shows the
 /// imported sky, but for its stars, and behind the roof garden (the old
 /// sky the flowers hid, see-through since 2026-10-25) within 2 a channel
-/// of it. Only the look and the stars are added.
+/// of it. The windows are glass (the background glass design): each pane
+/// OLX's colour halfway to pale blue at 35 % (alpha 89), the hall
+/// window's broken corner (in its fifth pane, x 799-817, y 151-172) open
+/// to the sky, ringed by paler glass at 82 % (alpha 209). Only the look,
+/// the stars, the moon and the glass are added.
 #[test]
 fn the_factory_is_the_imported_level_but_for_its_look() {
     use olr_format::image_io::decode_rgba;
@@ -112,12 +116,32 @@ fn the_factory_is_the_imported_level_but_for_its_look() {
         let (a, b) = (read(ours.join(file)), read(olx.join(file)));
         assert_eq!((a.width(), a.height()), (b.width(), b.height()), "{file}");
         assert_eq!((sky.width(), sky.height()), (a.width(), a.height()), "the sky is level-sized");
-        let (mut through, mut stars) = (0, 0);
+        let (mut through, mut stars, mut panes, mut rim, mut hole) = (0, 0, 0, 0, 0);
+        let broken = |x: u32, y: u32| (799..=817).contains(&x) && (151..=172).contains(&y);
         for y in 0..a.height() {
             for x in 0..a.width() {
                 let (p, old) = (a.get(x, y), b.get(x, y));
+                if p.a == 89 {
+                    // Halfway, a half rounded either way.
+                    let half =
+                        |v: u8, o: u8, g: u8| (2 * i16::from(v) - i16::from(o) - i16::from(g)).abs() <= 1;
+                    let pane = half(p.r, old.r, 200) && half(p.g, old.g, 215) && half(p.b, old.b, 235);
+                    assert!(pane, "{file} ({x}, {y}): a pane {p:?} of {old:?}");
+                    panes += 1;
+                    continue;
+                }
+                if p.a == 209 {
+                    assert!(broken(x, y) && (p.r, p.g, p.b) == (215, 225, 240), "{file} ({x}, {y}): the rim");
+                    rim += 1;
+                    continue;
+                }
                 if p.a != 0 {
                     assert_eq!(p, old, "{file} ({x}, {y})");
+                    continue;
+                }
+                if broken(x, y) && old.a == 255 && !p.same_rgb(old) {
+                    assert!(p.same_rgb(sky.get(x, y)), "{file} ({x}, {y}): the hole shows the sky");
+                    hole += 1;
                     continue;
                 }
                 through += 1;
@@ -138,6 +162,7 @@ fn the_factory_is_the_imported_level_but_for_its_look() {
             through > 100_000 && stars > 0 && stars * 100 < through,
             "{file}: {through} see-through, {stars} stars"
         );
+        assert_eq!((panes, rim, hole), (4328, 40, 94), "{file}: the glass");
     }
     let (a, b) = (
         olr_pack::read_manifest(&DirFs::new(&ours)).unwrap(),

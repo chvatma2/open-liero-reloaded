@@ -31,9 +31,9 @@
             ),
             (
                 id: "glass",
-                colour: Tint("#a0c0ff"),
-                intensity: 80,
-                reach: Pixels(24),
+                colour: Tint("#c8d4f0"),
+                intensity: 220,
+                reach: Pixels(160),
             ),
             (
                 id: "screens",

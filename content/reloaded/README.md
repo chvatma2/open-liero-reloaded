@@ -179,6 +179,18 @@ Remade OLX content is named "<Old name> Reloaded".
     with `level element erase --mask` (its 966 pixels within 8 a channel
     of the sky's art, in x 380-639, y 120-175), then `level bake`: they
     show the distant sky now, within 2 a channel of OLX's colour.
+  - **The windows are glass** (Liero Factory, 2026-10-25, the background
+    glass design): the `glass` element's pixels mixed halfway to
+    `(200, 215, 235)`, `glass: (opacity: 35)`, its glow 67 in the group
+    `glass` (`Tint("#c8d4f0")`, intensity 220, reach 160: the window's
+    moonlight); the `background` pixels under them erased, so the sky
+    shows through. The hall window's fifth pane (x 799-817, y 151-172)
+    is broken: the jagged hole `(y − 160) > (x − 799) × 0.9 + 2 sin(1.7
+    x)` erased from the glass, ringed by the new element `glass-rim`
+    (the hole's 3 × 3 neighbours within the glass, `(215, 225, 240)`,
+    opacity 82). A moon in `editor/images/sky.png` at (645.5, 184): in
+    the hall window's middle for a camera at (760, 215). Made by a
+    one-off script of the session (numpy), then `level bake`.
 
   ```sh
   cargo build -p olr-cli

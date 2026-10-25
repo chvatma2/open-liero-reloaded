@@ -6191,6 +6191,51 @@ and every match golden are unchanged. As built:
   dug edges hot, then cooling). `lit-hashes.ron` and the other goldens
   are unchanged (their matches fire no beam).
 
+## Background glass
+
+No OLX counterpart. Spec
+`docs/superpowers/specs/2026-10-25-background-glass-design.md`, plan
+`docs/superpowers/plans/2026-10-25-background-glass.md`; chosen by the
+maintainer from spike renders (clear glass; frost as an option; tint as
+a filter, not a hue). Presentation only: the simulation, the oracle and
+every match golden are unchanged; levels without glass draw byte for
+byte as before (the render goldens and `lit-hashes.ron` held without a
+bless). As built:
+
+- **Glass** is a see-through level's back pixel of alpha 1 to 254, from
+  a Background image or drawn element's `glass: (opacity, tint, frost)`
+  (not distant; not in assets). `ColorMap::new_see_through` keeps that
+  alpha; carving reveals it; stains land only on alpha 255.
+- **Planning calls:** tint and frost are baked into `look/glass.png`
+  (RGBA at the level's art size: the filter `mix(255, colour, tint)`,
+  the frost in tenths of a world pixel), written only when some glass
+  tints or frosts; both show only in lit frames (the unlit renderer and
+  thumbnails draw the plain blend); a level without distant layers
+  draws glass opaque in its own colour, and the editor says so with a
+  hint rather than a check warning.
+- **Light:** glass leaves the shade to the distant layer behind it, so
+  it is lit as that layer (a tenth of the light beyond the ambient at
+  depth 90), shows no glow of its own (its glow casts: the window's
+  moonlight) and still glows hot. A distant layer's own glow is baked
+  only where the back is alpha 0: it never passes through glass.
+- **Filter and frost** are applied in `fs_distant_lit`, at the art pixel
+  under the fragment. The world pass's per-view globals carry the view's
+  world frame for it (the look's globals hold the first view's only).
+  Frost offsets the layer texel by the world pixel's hash times the
+  frost, rounded to whole layer texels: fixed to the glass, moving only
+  with the parallax. The renderer uploads the glass map whole only when
+  `ColorMap::glass_generation` changes.
+- **`Filtered(colour)`** glow groups cast the colour × the pixel's art
+  scaled to a full brightest channel (`olr_look::engine::filtered`, the
+  renderer's emission and the thumbnail alike): a stained pane lights
+  the room in its own hue.
+- **Editor:** a Glass switch and Opacity, Tint and Frost sliders under
+  "What is it?"; the group colour switch Own / Tint / Filtered.
+- **Liero Factory Reloaded:** its windows are glass at 35 % over the
+  sky, a broken pane in the hall window, a moon (`content/reloaded/README.md`).
+- **Cost:** a see-through level binds one more texture; the distant pass
+  reads it per fragment. Unmeasured.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`
