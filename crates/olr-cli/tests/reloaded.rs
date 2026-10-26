@@ -5,7 +5,8 @@
 //! the game's content lists them, a bot match plays on each, Liero Factory
 //! After Dark (Liero Factory Reloaded until issue #70) is OLX's Liero
 //! Factory but for its look and its distant sky's stars (issue #63), its
-//! PCs and headlights cast glow beams, and
+//! PCs and headlights cast glow beams, both levels bake as before the
+//! renames of issue #70, and
 //! Liero v1.0 Reloaded plays exactly as Classic (`olx-classic`) but for its
 //! name and look. On the GPU tier each plays and draws lit.
 
@@ -212,6 +213,76 @@ fn the_factorys_pcs_and_headlights_cast_beams() {
     }
     // 15 headlight pixels, 5 + 4 right-facing screen pixels, 5 left.
     assert_eq!(beams.len(), 29);
+}
+
+/// The SHA-256 of each baked file of a Reloaded level (`material.png`,
+/// `front.png`, `back.png` and every `look/` file), against `want`.
+fn assert_bakes_as(level: &str, want: &[(&str, &str)]) {
+    use sha2::{Digest, Sha256};
+    let dir = reloaded_dir().join(level);
+    let mut look: Vec<String> = std::fs::read_dir(dir.join("look"))
+        .unwrap()
+        .map(|e| format!("look/{}", e.unwrap().file_name().to_str().unwrap()))
+        .collect();
+    look.sort();
+    let mut files = vec!["material.png".to_string(), "front.png".into(), "back.png".into()];
+    files.extend(look);
+    let got: Vec<(String, String)> = files
+        .into_iter()
+        .map(|f| {
+            let hash = Sha256::digest(std::fs::read(dir.join(&f)).unwrap());
+            let hex = hash.iter().map(|b| format!("{b:02x}")).collect();
+            (f, hex)
+        })
+        .collect();
+    let want: Vec<(String, String)> = want.iter().map(|&(f, h)| (f.into(), h.into())).collect();
+    assert_eq!(got, want, "{level}'s bake changed");
+}
+
+/// Issue #70 renamed Liero Factory Reloaded to Liero Factory After Dark
+/// and shortened five element ids (`rock-scr`, `rock-disp`, `rock-bcn`,
+/// `ctrl-scr`, `backdrop`): ids name files only, so the bake is the old
+/// factory's byte for byte, the hashes taken before the renames. Issue
+/// #74's conversion to the placement format is proven against them too.
+#[test]
+fn after_dark_bakes_as_the_old_factory() {
+    assert_bakes_as(
+        FACTORY,
+        &[
+            ("material.png", "cc750fbac345973c858b238fd1352756d34854e8f54373aaf6ff63963ce33d2e"),
+            ("front.png", "24fed3d690832539f89a784b271b8b7ec93c1dc404784f988892decb791bd99a"),
+            ("back.png", "171a5f472d4482113c10433ffa6ce1f18202f5c87f307161fda13b271146e9a5"),
+            ("look/glass.png", "3e639c76211d57a841c4af6ec7ac860c5b9775d6f206786ccc8fbe4515c4692f"),
+            ("look/glow-back.png", "82174a094512f9ea5d62432dfd1e677d60f1683a3addad13c872114175e35f0c"),
+            ("look/glow-beam-back.png", "439810bec0c41ff2c7ba94a727cde1898de9c3951b235be5bd5df0e99e876639"),
+            ("look/glow-beam.png", "9bc44d7515b50750dda74ce4f30e19935101dc774e09184ad0c841bf9109d021"),
+            ("look/glow.png", "8984a92588edd73e8315921341341da4592ce482181a9c8a2c7ae11a5657be81"),
+            ("look/groups-back.png", "a8251f8ac65250246cb59f8fe1f0d9883ac894c104d5449f623d62a118974264"),
+            ("look/groups.png", "6812b9f26d06cbeb0db6adc8e363285b79c28ecf22e0c9d691a9ed9d3f8e1ef2"),
+            ("look/surface-back.png", "d62d18d863f007df97a207209e498a3bc59d22b82e0104689dc2a4c86b0fc328"),
+            ("look/surface.png", "4300d424ad86e3510259413262611e33fb35c90b0b1d73ce321c898bcbafa4be"),
+        ],
+    );
+}
+
+/// Castle Strike Reloaded's bake as it was at issue #70, before issue
+/// #74 converts it to the placement format (and is proven against this).
+#[test]
+fn castle_strike_bakes_as_before() {
+    assert_bakes_as(
+        CASTLE,
+        &[
+            ("material.png", "bd301fa29701decd0d66b385e8a96a33620eee72f59e7f85c842cf7b7aa9be02"),
+            ("front.png", "90bbbbb3f65586124b346483221f3f48c1ec605bfe0a7b210391134a93aea609"),
+            ("back.png", "0e609fd6eb6658d96fcb8bc4461b0488ae78accf7fc4d108cb67c0d8775459e3"),
+            ("look/glow-back.png", "5cf13fc21b32cdf2e3b8f3a47afc729aab90c958a0d57b396d3e4e92e8642f51"),
+            ("look/glow.png", "e99ae6477f420441760c4ada103990d141649abd481b4d3bf8a1ebc78879fb9a"),
+            ("look/groups-back.png", "bc98848ede8fd115dcc26e9ed35368aedcca514ce8bee455c2bb49a8ec10cd8a"),
+            ("look/groups.png", "06725d389e25170570a4576a2de875cb80f5bf5af30153b30685a744a7d778ea"),
+            ("look/surface-back.png", "fa8637083513270731b4ea8b6ddbe354c2b26827d70a04417fa52a99eedac8ce"),
+            ("look/surface.png", "552b9ecd0b324b08e9bbeeedaaf7b8f8620ad62ddf6ade23d573fd590dddf761"),
+        ],
+    );
 }
 
 /// Liero v1.0 Reloaded is Classic but for its name and look (issue #21):
