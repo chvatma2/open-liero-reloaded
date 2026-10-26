@@ -149,6 +149,7 @@ fn place(dir: &Path, asset_dir: &Path, at: (i32, i32), content: &Path) -> anyhow
     if placed.materials.added_look && !placed.groups.added_look {
         messages.push("added a look to hold the asset's materials (the level plays lit)".to_string());
     }
+    messages.extend(placed.note);
     save_and_print(dir, &pack, &messages)
 }
 
@@ -164,8 +165,13 @@ fn check(dirs: &[PathBuf]) -> bool {
                         a.materials.iter().map(|m| m.id.as_str()).collect::<Vec<_>>().join(", ")
                     ),
                 };
+                // Issue #71: a stateless asset's line is as before.
+                let states = match a.states.len() {
+                    1 => String::new(),
+                    n => format!(", {n} states"),
+                };
                 println!(
-                    "{}: {:?}, {} × {}, {}{materials}",
+                    "{}: {:?}, {} × {}, {}{states}{materials}",
                     dir.display(),
                     a.name,
                     a.size.0,

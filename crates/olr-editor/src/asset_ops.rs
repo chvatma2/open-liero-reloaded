@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use olr_edit::asset::{
-    Asset, LevelPieces, PieceRef, cut_rect, from_elements, land_surfaces, piece_name, with_groups,
-    with_materials,
+    Asset, LevelPieces, PieceRef, cut_rect, from_elements, land_surfaces, landed_pieces, left_behind,
+    piece_name, with_groups, with_materials,
 };
 use olr_edit::compose::Rect;
 use olr_format::levels::{Element, ElementKind, surface_back_file, surface_file};
@@ -113,10 +113,14 @@ impl Document {
     /// it (new ids and names, resampled to the level's art scale, masks
     /// kept), with its surfaces and painted maps (`land_surfaces`); two
     /// pieces or more then go into a new folder named after the asset
-    /// (issue #60, as `olr_edit::asset::place_in_pack`). A refusal undoes
+    /// (issue #60, as `olr_edit::asset::place_in_pack`). Issue #71: the
+    /// asset lands in its starting state posed with its defaults
+    /// (`landed_pieces`); its states, values, sounds and script stay
+    /// behind, and the status bar says so (`left_behind`). A refusal undoes
     /// what it did.
     pub fn place_asset(&mut self, asset: &Asset, at: (i32, i32)) -> Result<Placed, DocError> {
-        let change = with_groups(self.level.look.as_ref(), &asset.groups);
+        let (pieces, groups) = landed_pieces(asset).map_err(|e| DocError::Bad(e.to_string()))?;
+        let change = with_groups(self.level.look.as_ref(), &groups);
         let look = if change.changes() { Some(&change.look) } else { self.level.look.as_ref() };
         let materials = with_materials(look, &asset.materials);
         let mut edits = Vec::new();
@@ -132,7 +136,7 @@ impl Document {
             }
         }
         let mut ids = Vec::new();
-        for piece in &asset.pieces {
+        for piece in &pieces {
             let name = piece_name(asset, piece);
             let done = self.landed(piece.as_ref(), asset.art_scale, at, Some(&name)).and_then(|p| {
                 let id = p.element.id.clone();
@@ -163,7 +167,13 @@ impl Document {
                 }
             }
         }
-        let note = change.added_look.then(|| ADDED_LIGHTING.to_string());
+        let notes: Vec<String> = change
+            .added_look
+            .then(|| ADDED_LIGHTING.to_string())
+            .into_iter()
+            .chain(left_behind(asset))
+            .collect();
+        let note = (!notes.is_empty()).then(|| notes.join("; "));
         Ok(Placed { edits, ids, folder, note })
     }
 

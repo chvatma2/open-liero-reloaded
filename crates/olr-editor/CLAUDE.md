@@ -289,7 +289,10 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     shared with `paste_one`: new ids and names, the asset's name for one
     piece, "<asset> <piece>" for several, resampled to the level's art
     scale, masks kept); the new elements are selected. A placed asset is
-    ordinary elements.
+    ordinary elements. Issue #71: the pieces are the asset's starting
+    state posed with its defaults (`olr_edit::asset::landed_pieces`); its
+    states, values, sounds and script stay behind, and the status bar
+    says so (`left_behind`, after `ADDED_LIGHTING` when both).
   - **The tab** (`ui/elements.rs`): thumbnails grouped `BUILT_IN` and
     `YOURS`, each button named by the asset (`relabel`), its name and tag
     under it ("rock, background, glows"); Import asset… (`Browse(

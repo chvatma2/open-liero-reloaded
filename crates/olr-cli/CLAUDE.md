@@ -214,15 +214,20 @@ The headless command-line tool. Its commands:
   `added folder <id>`: issue #59, an asset of two pieces or more lands
   in a folder named after it) and, for a level
   that had no look, `ADDED_LIGHTING` (or, with materials and no glow,
-  `added a look to hold the asset's materials …`). `check` reads each
+  `added a look to hold the asset's materials …`); issue #71: an asset
+  lands in its starting state with its defaults, and one with states,
+  values, sounds, health or a script prints `<name>'s states, values,
+  sounds and script stay in the asset` (`Placement::note`). `check` reads each
   folder whole (`load_dir`), prints `<dir>: "<name>", W × H, N
-  elements[, materials …]` or `<dir>: error: …`, and exits 1
+  elements[, N states][, materials …]` (`N states` only past one, issue
+  #71) or `<dir>: error: …`, and exits 1
   if any fails. The built-in assets (`content/assets/`) are made with
   `save` from `content/reloaded/` (their commands in its README). Tests:
   `tests/asset.rs` (every built-in asset checks and is what its README
   command makes, the torch carries `flames` and not `sky`, save and place
   round trip, bad folders and arguments refused; issue #59's
-  `cli_places_a_multi_piece_asset_in_a_folder`).
+  `cli_places_a_multi_piece_asset_in_a_folder`; issue #71's
+  `asset_check_counts_states`).
 - `olr-cli skin new <out-dir> [--from <skin>] [--double] --name <name>
   [--id ID]`, `skin double <skin> --out <dir> [--name N] [--id ID]`,
   `skin check <dir>…` and `skin preview <skin> --colour RRGGBB --out

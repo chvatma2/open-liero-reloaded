@@ -260,3 +260,23 @@ fn cli_refuses_bad_assets_and_arguments() {
     ]);
     assert!(!o.status.success() && text(&o).contains("no pixels"), "{}", text(&o));
 }
+
+/// Issue #71: `asset check` says how many states an asset has after its
+/// elements, and nothing more for a stateless one.
+#[test]
+fn asset_check_counts_states() {
+    let t = tempfile::tempdir().unwrap();
+    let mut torch = olr_edit::asset::load_dir(&assets_dir().join("torch")).unwrap();
+    let dir = t.path().join("torch");
+    let check = || {
+        let o = cli(&["asset", "check", dir.to_str().unwrap()]);
+        assert!(o.status.success(), "{}", text(&o));
+        String::from_utf8_lossy(&o.stdout).replace(dir.to_str().unwrap(), "torch")
+    };
+    olr_edit::asset::save_dir(&dir, &olr_edit::asset::encode(&torch).unwrap()).unwrap();
+    assert_eq!(check(), "torch: \"Torch\", 14 × 16, 1 element, materials stone, wood\n");
+    torch.states.push(olr_edit::asset::State::new("Out"));
+    torch.states.push(olr_edit::asset::State::new("Burnt"));
+    olr_edit::asset::save_dir(&dir, &olr_edit::asset::encode(&torch).unwrap()).unwrap();
+    assert_eq!(check(), "torch: \"Torch\", 14 × 16, 1 element, 3 states, materials stone, wood\n");
+}
