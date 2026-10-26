@@ -6216,7 +6216,7 @@ bless). As built:
 
 - **Glass** is a see-through level's back pixel of alpha 1 to 254, from
   a Background image or drawn element's `glass: (opacity, tint, frost)`
-  (not distant; not in assets). `ColorMap::new_see_through` keeps that
+  (not distant; in assets since issue #71). `ColorMap::new_see_through` keeps that
   alpha; carving reveals it; stains land only on alpha 255.
 - **Planning calls:** tint and frost are baked into `look/glass.png`
   (RGBA at the level's art size: the filter `mix(255, colour, tint)`,
@@ -6390,6 +6390,59 @@ The renderer, as built (`olr-render`'s `renderer/glow_beams.rs`):
     `BEAM_MAX_STEPS`), so a wide beam fades rather than ends in a dark cut.
   - **M3:** the editor's Direction field steps by 2 degrees (the map's
     step); the CLI and the format still take whole degrees.
+
+## Asset-based levels: the asset format (issue #71)
+
+No OLX counterpart. The design
+`docs/superpowers/specs/2026-10-26-asset-based-levels-design.md` ("The
+asset tab", calls 2, 3, 5, 10, 11, 18, 19 and 21); the format's page is
+`docs/formats/asset.md`. Nothing plays yet (#85-#94); this is the format,
+its checks and the decoded model (`olr_edit::asset`).
+
+- **A superset of the old format.** An asset folder written before is a
+  valid asset: one implicit state (`Normal`), nothing exposed, no sounds,
+  no health, no script. Every new `asset.ron` field is left out at its
+  default, so a stateless asset writes byte for byte as before
+  (`a_stateless_asset_writes_as_before` reads and writes every built-in
+  asset); converting today's assets (call 18), the built-in ones and each
+  user's library, is reading and writing them again, with no conversion
+  code and no shim. Folders and glass, refused in assets until now, are
+  allowed (a piece cut from a level still drops the level's folders).
+- **A state's pictures stack in the layer's own files.** There are no
+  files per state: a layer owned by n states has `layers/<id>.png` (and
+  its material, back art and glow mask) `1 + n` pictures tall, the
+  starting state's on top, then each owner's in `states` order; surface
+  maps and image masks are the start's in every state. Shipped paths stay
+  within 80 characters (issue #64), and a level pack holds copies of its
+  assets under a long prefix (#73), so a `states/<name>/…` tree would not
+  fit. Every stacked picture counts in `MAX_COMPOSED_PIXELS`, checked
+  from `asset.ron` and the headers before anything is decoded.
+- **A state needs no exposure.** Every asset can be put in any of its
+  states by name (#88's API), so "expose just its states" is automatic:
+  `PropertySource` has no `State`.
+- **A state is a complete look** (`olr_edit::asset::posed`, and #86 when
+  a state is entered in a match): each property takes the state's own
+  value, else the copy's value (exposed properties only), else the
+  exposed default, else the layer's own setting. Entering a state resets
+  whatever another state set and this one does not: a lamp's On need not
+  repeat "glow 100" to undo Off's "glow 0". A script's `.set` (#88)
+  changes one value until the next state change (call 11).
+- **Glow strength is mask × value.** `GlowStrength` replaces
+  `ElementGlow::strength` and keeps the painted mask, so each pixel glows
+  at its mask × the value; 0 is dark (the glow removed).
+- **An exposed default is optional** (a deliberate reading of the issue,
+  whose struct shows it required while its rules need "a `GlowColour` on
+  an `Own` group without a default" to be an error): none means the
+  layer's own setting; an `Own` group's colour has none, so exposing it
+  needs one.
+- **Landing an asset** (`land`, `place_in_pack`, the editor's placing,
+  until #75 and #82): the starting state posed with its defaults, as
+  ordinary elements in one folder, its own folders flattened; its states,
+  values, sounds, health and script stay behind and the status line says
+  so. An `Opacity` below 100 is not expressible in a level's elements and
+  is not landed (0 drops the piece), and an image piece mirrored by
+  `Facing` lands unmirrored (a landed image is processed again from its
+  original).
 
 ## Kept OLX quirks
 

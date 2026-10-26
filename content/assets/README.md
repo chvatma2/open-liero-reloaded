@@ -8,6 +8,8 @@ programs find this directory beside the content directory
 `cargo xtask dist` copies it into the Windows zip and the Flatpak (this
 README stays behind). `cargo xtask check` reads every one whole
 (`olr-cli asset check`, in `olr-cli`'s `tests/asset.rs`).
+They are in the 0.3 asset format (issue #71) and stateless: one state,
+nothing exposed, no sounds, health or script.
 
 Each was cut from OLR's own Reloaded levels (`content/reloaded/`) with
 `olr-cli asset save`; to make one again, run its command from the
