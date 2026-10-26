@@ -188,7 +188,10 @@ Remade OLX content is named "<Old name> Reloaded".
     is broken: the jagged hole `(y − 160) > (x − 799) × 0.9 + 2 sin(1.7
     x)` erased from the glass, ringed by the new element `glass-rim`
     (the hole's 3 × 3 neighbours within the glass, `(215, 225, 240)`,
-    opacity 82). A moon in `editor/images/sky.png` at (645.5, 184): in
+    opacity 82). Since 2026-10-26 the second and sixth panes are broken
+    too (the maintainer's ask): OLX's darker shade there (`(100, 165,
+    232)` in `glass`, x 739-757 and 819-838) erased, ringed alike (534
+    pixels open, 55 of rim). A moon in `editor/images/sky.png` at (645.5, 184): in
     the hall window's middle for a camera at (760, 215). Made by a
     one-off script of the session (numpy), then `level bake`.
   - **Screens, PCs and headlights** (Liero Factory, 2026-10-25, the
