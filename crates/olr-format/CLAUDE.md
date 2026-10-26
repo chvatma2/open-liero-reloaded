@@ -360,7 +360,8 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   Directional glow (spec `docs/superpowers/specs/2026-10-25-directional-glow-design.md`):
   `ElementGlow::beam: Option<GlowBeam { direction 0-359, spread 1-90 }>`
   (`check_elements`: none on Dirt or a distant element, the cap on
-  beams is Task 2's, counted on patches; `check_glow_groups`: its group's reach `Pixels`,
+  beams is Task 2's, counted on patches, `glow_beam_count(src)` the count,
+  public for the editor's diagnostics; `check_glow_groups`: its group's reach `Pixels`,
   the error names the element). `LevelSource::glow_beams` (`GlowBeamMap`,
   `olr-terrain`'s: `look/glow-beam.png` and `look/glow-beam-back.png`,
   grey-alpha at the world size, both or none; `image_io::encode_grey_alpha`

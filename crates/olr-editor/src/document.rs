@@ -618,11 +618,25 @@ impl Document {
     }
 
     /// Ruling R6's live checks: the composition's metadata
-    /// (`check_elements`), spawns outside the level, a level without spawns.
+    /// (`check_elements`), the bake's glow beams past
+    /// [`MAX_GLOW_BEAMS`](olr_look::glow_beams::MAX_GLOW_BEAMS) (final
+    /// review I3: the renderer then draws none, and Save refuses), spawns
+    /// outside the level, a level without spawns.
     pub fn diagnostics(&self) -> Vec<Problem> {
+        use olr_look::glow_beams::MAX_GLOW_BEAMS;
         let mut out = Vec::new();
         if let Err(e) = check_elements(&self.composition(), self.level.size, self.level.art_scale) {
             out.push(Problem { severity: Severity::Error, text: e.to_string() });
+        }
+        let beams = olr_format::levels::glow_beam_count(&self.level);
+        if beams > MAX_GLOW_BEAMS {
+            out.push(Problem {
+                severity: Severity::Error,
+                text: format!(
+                    "{beams} glow beams, above {MAX_GLOW_BEAMS}: none shines until fewer directional patches \
+                     glow"
+                ),
+            });
         }
         let (w, h) = self.level.size;
         let mut spawns = 0;

@@ -212,7 +212,11 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     to `round(s * 255 / 100)`) paints `LevelSource::haze`; the first stroke
     makes a map of 255 (ruling T6a). `Edit::Haze` holds the touched
     rectangle's bytes (and `created`, so undo drops the map): one step a
-    stroke, none when nothing changed.
+    stroke, none when nothing changed. Past `MAX_GLOW_BEAMS` (64) the
+    renderer draws no beams and Save refuses, so `diagnostics` shows the
+    Error "N glow beams, above 64: …" (final review I3:
+    `olr_format::levels::glow_beam_count` of the bake;
+    `diagnostics_count_the_glow_beams`).
   - **Glow on selected pixels** (the user's playtest, 2026-10-19): Select
     pixels' "By colour" (`SelectByColour`) picks the connected pixels of
     the selected element alike in colour (`colour_pixels`, the tool's

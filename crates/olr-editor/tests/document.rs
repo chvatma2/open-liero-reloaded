@@ -606,3 +606,33 @@ fn a_look_shows_in_the_saved_thumbnail() {
     doc.set_look(Some(dark)).unwrap();
     assert_ne!(crate::common::files(&doc)["thumb.png"], before);
 }
+
+/// Final review I3: past `MAX_GLOW_BEAMS` the renderer draws no beams (and
+/// Save refuses the level), so the live diagnostics say so: 65 separate
+/// directional dots are 65 beams, an error; 64 are none.
+#[test]
+fn diagnostics_count_the_glow_beams() {
+    use olr_edit::level::Shape;
+    let Some(root) = content() else { return };
+    let (_tmp, mut doc) = open_fixture(&root);
+    let beam = Some(olr_format::levels::GlowBeam { direction: 0, spread: 35 });
+    let glow = olr_format::levels::ElementGlow { strength: 100, group: String::new(), mask: false, beam };
+    doc.set_glow("tiny", Some(glow)).unwrap();
+    // The picture at (40, 30), 60 × 45: no glow but 13 × 5 dots two pixels apart.
+    doc.paint_glow("tiny", &Shape::Rect { x: 40, y: 30, w: 60, h: 45 }, 0).unwrap();
+    let dots: Vec<(i32, i32)> = (0..5).flat_map(|j| (0..13).map(move |i| (40 + 2 * i, 30 + 2 * j))).collect();
+    for &(x, y) in &dots[..64] {
+        doc.paint_glow("tiny", &Shape::Rect { x, y, w: 1, h: 1 }, 100).unwrap();
+    }
+    let beams = |doc: &Document| {
+        doc.diagnostics().into_iter().filter(|p| p.text.contains("glow beams")).collect::<Vec<_>>()
+    };
+    assert!(beams(&doc).is_empty(), "64: {:?}", beams(&doc));
+    let (x, y) = dots[64];
+    doc.paint_glow("tiny", &Shape::Rect { x, y, w: 1, h: 1 }, 100).unwrap();
+    let p = beams(&doc);
+    assert!(
+        matches!(&p[..], [p] if p.severity == Severity::Error && p.text.contains("65 glow beams, above 64")),
+        "65: {p:?}"
+    );
+}
