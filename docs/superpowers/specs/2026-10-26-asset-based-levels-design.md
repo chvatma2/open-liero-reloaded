@@ -235,9 +235,10 @@ This is the first and strongest focus of 0.3. It prepares the 0.4 campaign
     assets (every OLX level, After Dark, Castle Strike Reloaded), so every
     existing level stays editable.
 17. **A level pack always holds a copy of every asset it uses** (the
-    editable asset, not only its baked result). So a downloaded or shared
-    level is fully editable, and the export archive is essentially the
-    pack. Opening a level compares its copies with the library: changed
+    editable asset, not only its baked result), in its editable source. A
+    level shared by export is fully editable; online downloads carry only
+    the baked, playable level, as today (amended while cutting the
+    issues: the export archive is the editable form). Opening a level compares its copies with the library: changed
     library assets are announced (call 7); an asset missing from the
     library is offered to be added from the level's copy.
 18. **Built-in assets** (`content/assets/`, shipped) are a read-only
