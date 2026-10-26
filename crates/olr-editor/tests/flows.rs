@@ -1665,7 +1665,7 @@ fn a_group_casts_filtered() {
 
 /// The directional-glow design: "Directional" on a glowing rock or
 /// background layer gives it a beam (0 degrees, spread 35) in one step;
-/// Direction and Spread change it, a step each, and the bake carries it. A
+/// Direction (by 2 degrees) and Spread change it, a step each, and the bake carries it. A
 /// dirt layer has no such switch, only a hint.
 #[test]
 fn make_a_glow_directional() {
@@ -1684,6 +1684,11 @@ fn make_a_glow_directional() {
     h.run();
     let at = |direction, spread| Some(olr_format::levels::GlowBeam { direction, spread });
     assert_eq!(beam(&h, "tunnels"), at(0, 35));
+    // Final review M3: the direction steps by 2 (the map's step): 167 is
+    // 166, and 167 again or 166 change nothing (no step).
+    type_number(&mut h, labels::DIRECTION, "167");
+    assert_eq!(beam(&h, "tunnels"), at(166, 35));
+    type_number(&mut h, labels::DIRECTION, "167");
     type_number(&mut h, labels::DIRECTION, "166");
     assert_eq!(beam(&h, "tunnels"), at(166, 35));
     type_number(&mut h, labels::SPREAD, "15");

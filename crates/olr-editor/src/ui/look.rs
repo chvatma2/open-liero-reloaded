@@ -15,7 +15,7 @@ use olr_format::look::{
     OcclusionSource, PulseShape, ReachSource, SolidFloorSource,
 };
 
-use super::{EditorData, labels, number, text};
+use super::{EditorData, labels, number, number_by, text};
 use crate::state::{EditorAction, EditorState};
 use crate::tools::Tool;
 
@@ -472,9 +472,10 @@ fn directional(
     }
     let Some(b) = g.beam else { return };
     let key = format!("{}/glow-beam", e.id);
-    if let Some(v) =
-        number(ui, data, &format!("{key}/direction"), labels::DIRECTION, b.direction.into(), 0..=359)
-    {
+    // In the beam map's 2° steps (ruling P3): an odd degree draws as the
+    // even one below it.
+    let direction = (format!("{key}/direction"), labels::DIRECTION);
+    if let Some(v) = number_by(ui, data, (&direction.0, direction.1), b.direction.into(), 0..=359, 2) {
         set_glow(out, Some(ElementGlow { beam: Some(GlowBeam { direction: v as u16, ..b }), ..g.clone() }));
     }
     if let Some(v) = number(ui, data, &format!("{key}/spread"), labels::SPREAD, b.spread.into(), 1..=90) {

@@ -443,6 +443,24 @@ pub(crate) fn number(
     current: i64,
     range: std::ops::RangeInclusive<i64>,
 ) -> Option<i64> {
+    number_by(ui, data, (key, label), current, range, 1)
+}
+
+/// [`number`] in steps of `step` (at least 1): a value commits as the
+/// step at or below it (from the range's start), and only when that step
+/// is not `current`'s (final review M3: a glow beam's direction is stored
+/// in 2° steps, so an odd degree adds no step of history).
+pub(crate) fn number_by(
+    ui: &mut Ui,
+    data: &mut EditorData,
+    (key, label): (&str, &str),
+    current: i64,
+    range: std::ops::RangeInclusive<i64>,
+    step: i64,
+) -> Option<i64> {
+    let step = step.max(1);
+    let lo = *range.start();
+    let snap = |v: i64| lo + (v - lo).div_euclid(step) * step;
     data.drawn.insert(key.into());
     ui.horizontal(|ui| {
         let l = ui.label(label);
@@ -451,7 +469,7 @@ pub(crate) fn number(
             .add(
                 egui::DragValue::new(&mut v)
                     .range(*range.start() as f64..=*range.end() as f64)
-                    .speed(0.25)
+                    .speed(0.25 * step as f64)
                     .max_decimals(0)
                     .update_while_editing(false),
             )
@@ -461,8 +479,8 @@ pub(crate) fn number(
             return None;
         }
         data.drafts.remove(key);
-        let v = (v.round() as i64).clamp(*range.start(), *range.end());
-        (v != current).then_some(v)
+        let v = snap((v.round() as i64).clamp(*range.start(), *range.end()));
+        (v != snap(current)).then_some(v)
     })
     .inner
 }
