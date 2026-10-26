@@ -69,7 +69,11 @@ and the colour image that follows it (`ColorMap`).
   size refused) and `haze()` hold the level's maps as loaded for the
   renderer (static: play never changes them); `beams_generation()`
   changes with each map either takes, so the renderer derives the beams
-  and uploads the maps only anew (`glow_beams_and_haze_are_set_as_loaded`).
+  and uploads the maps only anew (`glow_beams_and_haze_are_set_as_loaded`),
+  and, on a level with beams, with each `replace_glow_rect` and
+  `replace_rect` (final review I1: the editor's uploads change a beam's
+  strength, group or colour, not its map;
+  `uploads_on_a_beam_level_are_a_new_beams_generation`).
   `glow_layers()` (the glow as loaded) and `art_layers()` (front and back
   art) are the derivation's inputs.
 - **Glow** (plan 15a, look system §Glow): `set_glow(Some(GlowLayers))` gives the map

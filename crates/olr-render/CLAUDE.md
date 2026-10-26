@@ -151,7 +151,8 @@ on screen or offscreen.
   either)
   are derived by `LookState::sync_glow_beams` at `upload_terrain` and
   whenever `ColorMap::beams_generation` changes (`update_terrain`: the
-  editor sets maps anew; the glow light is then made again).
+  editor sets maps anew or uploads glow or art over a level with beams;
+  the glow light is then made again).
   `LookTextures::glow_beams` (`GlowBeams`) holds the beam map (`Rg8Uint`,
   direction / 2 + 1 and the spread, at the look's world size with a map,
   else 1 × 1 none; each world pixel the backdrop's texel where it is

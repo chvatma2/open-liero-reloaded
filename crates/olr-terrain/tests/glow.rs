@@ -289,3 +289,38 @@ fn glow_beams_and_haze_are_set_as_loaded() {
     assert_ne!(m.beams_generation(), g);
     assert_eq!((m.glow_beams(), m.haze()), (None, None));
 }
+
+/// Final review I1: the editor's glow and art uploads change what the
+/// beams are derived from (a directional element's strength, its group,
+/// its art) though the beam map stays: on a level with beams each one is a
+/// new beams generation; on a level without, none is.
+#[test]
+fn uploads_on_a_beam_level_are_a_new_beams_generation() {
+    let t = map(&["RRRR", "RR.."]);
+    let r = Rect { x: 0, y: 0, w: 2, h: 2 };
+    let (w, h) = (4 * S, 2 * S);
+    let (front, back) = (image(w, h, |_, _| Rgba::rgb(5, 6, 7)), image(w, h, |_, _| Rgba::rgb(8, 9, 1)));
+    let cells: Vec<Material> = (0..8).map(|i| t.material(i % 4, i / 4).unwrap()).collect();
+    let mut plain = glowing(&t);
+    let g = plain.beams_generation();
+    plain.replace_glow_rect(r, &layers(&t));
+    plain.replace_rect(r, &front, &back, &cells);
+    assert_eq!(plain.beams_generation(), g, "no beams: no new generation");
+    let mut c = glowing(&t);
+    let mut beams = olr_terrain::GlowBeamMap::none((4, 2));
+    (beams.front[0], beams.front[1]) = (46, 30);
+    assert!(c.set_glow_beams(Some(beams)));
+    let g = c.beams_generation();
+    let mut stronger = layers(&t);
+    stronger.front.iter_mut().for_each(|v| *v = 200);
+    c.replace_glow_rect(r, &stronger);
+    let g1 = c.beams_generation();
+    assert_ne!(g1, g, "a glow upload");
+    c.replace_rect(r, &front, &back, &cells);
+    assert_ne!(c.beams_generation(), g1, "an art upload");
+    // A rectangle off the map changes nothing: no new generation.
+    let g2 = c.beams_generation();
+    c.replace_glow_rect(Rect { x: 50, y: 50, w: 2, h: 2 }, &stronger);
+    c.replace_rect(Rect { x: 50, y: 50, w: 2, h: 2 }, &front, &back, &cells);
+    assert_eq!(c.beams_generation(), g2);
+}

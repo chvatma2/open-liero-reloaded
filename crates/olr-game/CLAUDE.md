@@ -976,7 +976,10 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   carries the bake's glow and clear solids (`ColorMap::set_glow`,
   `set_clear`; a dab's rectangle also `replace_glow_rect`, and the clear
   flags when they changed; a glow that came or went rebuilds the map,
-  `fits`). `Canvas::lit(doc)` is true for a look, glow or
+  `fits`; the glow beam and haze maps when they changed, and any upload
+  over a level with beams is a new `beams_generation`, so a directional
+  element's strength, group or art re-derives the beams:
+  `a_beam_strength_edit_derives_the_beams_again`). `Canvas::lit(doc)` is true for a look, glow or
   clear solids, never in the material view; the app sets the renderer's
   lighting to it, uploading the canvas whole on a change.
   **Distant layers** (issue #11): a see-through bake makes the map

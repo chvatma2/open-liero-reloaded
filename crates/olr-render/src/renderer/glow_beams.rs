@@ -6,7 +6,8 @@
 //! No OLX counterpart.
 //!
 //! The sources are derived ([`olr_look::glow_beams::derive`]) when a level
-//! is uploaded or its maps are set anew (`ColorMap::beams_generation`);
+//! is uploaded, its maps are set anew or the editor uploads glow or art over
+//! it (`ColorMap::beams_generation`);
 //! each frame packs them with their groups' cast into a uniform.
 
 use olr_data::level::Material;

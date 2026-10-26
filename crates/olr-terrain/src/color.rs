@@ -383,7 +383,10 @@ impl ColorMap {
 
     /// Changes with each glow beam or haze map
     /// [`set_glow_beams`](Self::set_glow_beams) and
-    /// [`set_haze`](Self::set_haze) take.
+    /// [`set_haze`](Self::set_haze) take, and on a level with glow beams
+    /// with each [`replace_glow_rect`](Self::replace_glow_rect) and
+    /// [`replace_rect`](Self::replace_rect) (the editor's uploads change the
+    /// beams' strength, group and colour).
     pub fn beams_generation(&self) -> u32 {
         self.beams_generation
     }
@@ -446,6 +449,18 @@ impl ColorMap {
             }
         }
         self.push_dirty(Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+        self.beams_changed();
+    }
+
+    /// The beams' inputs changed (the editor's upload of glow or art: a
+    /// directional element's strength, group or colour, which leave the
+    /// beam map as it is): a new beams generation when the level has beams,
+    /// so the renderer derives them again (final review I1). Without beams
+    /// nothing changes.
+    fn beams_changed(&mut self) {
+        if self.glow_beams.is_some() {
+            self.beams_generation = self.beams_generation.wrapping_add(1);
+        }
     }
 
     /// Width of the colour image in art pixels.
@@ -650,6 +665,7 @@ impl ColorMap {
             }
         }
         self.push_dirty(Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+        self.beams_changed();
     }
 
     /// OLX `CMap::CarveHole` (`CMap.cpp:1005-1105`), hi-res branch: under a

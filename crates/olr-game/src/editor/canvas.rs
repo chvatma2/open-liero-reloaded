@@ -662,4 +662,29 @@ mod tests {
         assert_eq!(map.glow(), d.level().glow.as_ref().map(|g| &g.front[..]), "the glow follows");
         assert!(map.take_dirty().next().is_some());
     }
+
+    /// Final review I1: a directional element's glow strength (the beam's
+    /// only strength control) leaves the beam map as it is, yet its upload
+    /// is a new beams generation: the renderer derives the beams again.
+    #[test]
+    fn a_beam_strength_edit_derives_the_beams_again() {
+        let Some((_tmp, mut d)) = doc() else { return };
+        let beam = Some(olr_format::levels::GlowBeam { direction: 0, spread: 35 });
+        let glow =
+            |strength| olr_format::levels::ElementGlow { strength, group: String::new(), mask: false, beam };
+        d.set_glow("tunnels", Some(glow(100))).unwrap();
+        let mut c = Canvas::new();
+        c.rebuild(&d, CanvasView::Bake);
+        assert!(c.map_mut().unwrap().glow_beams().is_some(), "the bake has beams");
+        let (beams, g) = {
+            let m = c.map_mut().unwrap();
+            (m.glow_beams().cloned(), m.beams_generation())
+        };
+        let (_, r) = d.set_glow("tunnels", Some(glow(40))).unwrap();
+        assert!(c.fits(&d));
+        c.upload(&d, r);
+        let m = c.map_mut().unwrap();
+        assert_eq!(m.glow_beams().cloned(), beams, "the same beam map");
+        assert_ne!(m.beams_generation(), g, "a new generation");
+    }
 }
