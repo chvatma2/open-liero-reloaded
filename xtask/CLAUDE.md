@@ -15,7 +15,8 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   → T", "T (optional)", a link to a named type's section; a hand-serialized
   type such as `Colour` is a section of its doc comment), default
   (`required`; a `default = "d::…"` value from `defaults.rs`' macros or a
-  local function; a type's zero, an `impl Default` literal or an enum's
+  local function, or (issue #71) one whose body is no literal by its
+  doc comment's ``Written `<value>` `` (`written_value`); a type's zero, an `impl Default` literal or an enum's
   `#[default]`; "none" for an `Option`) and doc comment, which states the
   unit, limits and OLX source. Enums list their variants, struct variants
   in a sub-table; `#[serde(from = "W")]` documents `W`'s fields with the
