@@ -306,7 +306,7 @@ operations.
   never passes through glass (only alpha 0 takes it). `level::resize`
   re-lays the map (the new area none); `stale` lists `look/glass.png`
   after a tint or frost change (`stale_lists_the_glass_map_after_a_tint_change`);
-  `asset::plain` drops glass (assets carry none). `element::Property::Glass` (a raster `WrongKind`; the
+  `asset::plain` keeps glass (issue #71: assets carry it). `element::Property::Glass` (a raster `WrongKind`; the
   composition check refuses the rest). Tests: `tests/glass.rs`.
 - **Issue #9, the asset library** (`asset`; the format is
   `olr_format::assets`; STATUS.md "Level editor asset library (issue
@@ -337,6 +337,45 @@ operations.
   `list_library`, `add_to_library` (a new folder named after it, or over
   `replace`), `import_into_library` (read and checked whole, written
   anew, a name clash numbered), `remove_from_library`.
+  Issue #71 (the format is `olr_format::assets`' states; STATUS.md
+  "Asset-based levels: the asset format (issue #71)"; `asset/posed.rs`):
+  `Asset` gains `folders`, `states` (`State { name, own: BTreeMap<id,
+  OwnPicture { decoded, glow_mask }>, values, loop_sound, enter_sound }`),
+  `start` (an index), `exposed`, `sounds` (by name), `script` and
+  `health`; `Asset::new` is one state and nothing else, `Asset::state`
+  finds one by name. `pieces` stay the starting state's layers; `encode`
+  stacks each owned layer's pictures (art, cells, back art, glow mask)
+  below the start's in state order and `decode` unstacks them (a tall
+  element, `decode_element`, then cut), and checks each sound as a mod's
+  (`olr_pack::sounds::is_sound` and `check_sound`). `posed(asset, state,
+  copy_values)` (`Posed { pieces: Vec<PosedPiece { piece, opacity }>,
+  groups, materials }`) is a static copy's look: a state is a complete
+  look, each property taking the state's value, else the copy's (exposed
+  only; an unknown name or bad value an error), else the exposed
+  default, else the layer's own; the state's pictures replace the
+  start's, then the values apply (offsets, `LayerVisible`/`Opacity` 0
+  drop a piece, `Opacity` otherwise carried, glow strength replacing the
+  strength with the mask kept, group colour/intensity/reach/animation,
+  beam and glass), then `Facing` mirrors every piece within the box (a
+  beam `d` to `(180 − d) mod 360`), `X`/`Y` move all and `Visible` false
+  leaves none. `offers(asset)` (`Offer { property, kind, range, sharing
+  }`: the format's `property_type` over every candidate, a group
+  property's other layers in `sharing`) is the list #72's commands and
+  #80's tree share. `live_refusal(asset)` (`LiveRefusal::NothingToDrive`
+  first, then `Dirt`: a plain Dirt layer or a mixed layer's dirt cell in
+  any state, then `RasterOrDistant`; `Display` texts). `Summary` gains
+  `states` and `may_be_live` (from `asset.ron` and whether `script.rhai`
+  exists). Landing until #75/#82: `landed_pieces` (the start posed with
+  its defaults; `place_in_pack`, the editor's `place_asset` and the
+  thumbnail use it) and `left_behind` (`Placement::note`: "<name>'s
+  states, values, sounds and script stay in the asset"). `plain` keeps
+  glass. Tests: `asset.rs`' `decode_and_encode_round_trip_states`,
+  `posed_takes_the_state_then_the_copy_then_the_default`,
+  `a_state_is_a_complete_look`, `posed_mirrors_offsets_hides_and_tints`,
+  `the_starting_state_poses_as_the_pieces`, `live_refusal_says_why`,
+  `offers_follow_the_design`, `asset_sound_limit_is_the_mods`,
+  `landing_a_stated_asset_lands_its_start`; `glass.rs`'
+  `an_asset_of_glass_keeps_its_glass`.
 - **Issue #16, the mod operations** (`mods`; `olr-cli mod`; STATUS.md
   "Mod editing operations (issue #16)"), on a loaded mod `Pack`
   (`source(pack)`, else `ModError::NotAMod`):

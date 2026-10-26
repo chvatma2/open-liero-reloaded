@@ -193,14 +193,15 @@ fn resize_re_lays_the_glass_map() {
 }
 
 #[test]
-fn an_asset_of_glass_carries_no_glass() {
-    // An asset carries no glass (`check_asset`): saving a pane as one
-    // keeps its pixels and drops the glass.
+fn an_asset_of_glass_keeps_its_glass() {
+    // Issue #71: an asset carries glass (its opacity and tint are
+    // properties): saving a pane as one keeps its pixels and its glass.
     let p = window(clear(35));
     let decoded = olr_edit::asset::DecodedLevel::of_pack(&p).unwrap();
     let asset = olr_edit::asset::from_elements(&decoded.level(), &["pane".to_string()], "Pane").unwrap();
-    assert!(asset.pieces.iter().all(|piece| piece.element.glass.is_none()));
-    olr_edit::asset::encode(&asset).unwrap();
+    assert!(asset.pieces.iter().all(|piece| piece.element.glass == Some(clear(35))));
+    let src = olr_edit::asset::encode(&asset).unwrap();
+    assert_eq!(olr_edit::asset::decode(&src).unwrap().pieces[0].element.glass, Some(clear(35)));
 }
 
 /// A tint or frost changed in the composition leaves `look/glass.png`

@@ -551,3 +551,441 @@ fn an_asset_without_materials_is_as_before() {
     assert!(!placed.materials.changes());
     assert_eq!(level(&target).look, None);
 }
+
+// Issue #71: states, exposed properties, sounds, health and a script.
+
+use olr_format::Colour;
+use olr_format::assets::{ExposedSource, PropertySource as P, StateValue, ValueKind, ValueSource as V};
+use olr_format::look::GlowColourSource;
+
+/// A WAV of `data` bytes at `byte_rate` bytes a second.
+fn wav(byte_rate: u32, data: u32) -> Vec<u8> {
+    let mut b = b"RIFF\0\0\0\0WAVEfmt ".to_vec();
+    b.extend_from_slice(&16u32.to_le_bytes());
+    b.extend_from_slice(&[1, 0, 1, 0]);
+    b.extend_from_slice(&8000u32.to_le_bytes());
+    b.extend_from_slice(&byte_rate.to_le_bytes());
+    b.extend_from_slice(&[1, 0, 8, 0]);
+    b.extend_from_slice(b"data");
+    b.extend_from_slice(&data.to_le_bytes());
+    b.resize(b.len() + data.min(1000) as usize, 0);
+    b
+}
+
+fn filled(w: u32, h: u32, c: Rgba) -> RgbaImage {
+    let mut i = RgbaImage::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            i.set(x, y, c);
+        }
+    }
+    i
+}
+
+/// A drawn layer `id` of `material` at `at`, `size` world pixels, filled
+/// with `c` at art scale 2, glowing in `glow` (strength 80, a mask of 200
+/// everywhere) when given.
+fn layer(
+    id: &str,
+    material: ElementMaterial,
+    at: (i32, i32),
+    size: (u32, u32),
+    c: Rgba,
+    glow: Option<&str>,
+) -> Piece {
+    let element = olr_format::levels::Element {
+        id: id.into(),
+        name: String::new(),
+        visible: true,
+        locked: false,
+        folder: None,
+        kind: ElementKind::Drawn { material, at, size: Some(size), mixed: false, back: false },
+        glow: glow.map(|g| ElementGlow { strength: 80, group: g.into(), mask: true, beam: None }),
+        clear: false,
+        glass: None,
+        distant: None,
+        surface: None,
+        back_surface: None,
+        surface_map: false,
+        back_surface_map: false,
+    };
+    let cells = (size.0 * 2 * size.1 * 2) as usize;
+    Piece {
+        element,
+        decoded: Decoded::Drawn { art: filled(size.0 * 2, size.1 * 2, c), cells: None, back: None },
+        original: None,
+        glow_mask: glow.map(|_| std::sync::Arc::new(vec![200; cells])),
+        surface_map: None,
+        back_surface_map: None,
+    }
+}
+
+fn colour(hex: &str) -> Colour {
+    Colour::parse(hex).unwrap()
+}
+
+/// A 4 × 3 lamp at art scale 2: `shade` (rock, green, the top row) over
+/// `lamp` (background, blue, glowing in `light`, a white `Tint`), one
+/// state.
+fn lamp() -> Asset {
+    let mut light = group("light", 300);
+    light.colour = GlowColourSource::Tint(colour("#ffffff"));
+    Asset::new(
+        "Lamp",
+        2,
+        (4, 3),
+        vec![
+            layer("lamp", ElementMaterial::Background, (0, 0), (4, 3), BLUE, Some("light")),
+            layer("shade", ElementMaterial::Rock, (0, 0), (4, 1), GREEN, None),
+        ],
+        vec![light],
+        Vec::new(),
+    )
+}
+
+fn state(
+    name: &str,
+    values: Vec<(olr_format::assets::PropertySource, olr_format::assets::ValueSource)>,
+) -> State {
+    State {
+        values: values.into_iter().map(|(property, value)| StateValue { property, value }).collect(),
+        ..State::new(name)
+    }
+}
+
+fn own(piece: &Piece, c: Rgba, mask: u8) -> OwnPicture {
+    let Decoded::Drawn { art, .. } = &piece.decoded else { panic!() };
+    OwnPicture {
+        decoded: Decoded::Drawn { art: filled(art.width(), art.height(), c), cells: None, back: None },
+        glow_mask: piece.glow_mask.as_ref().map(|m| std::sync::Arc::new(vec![mask; m.len()])),
+    }
+}
+
+fn expose(
+    name: &str,
+    property: olr_format::assets::PropertySource,
+    default: Option<olr_format::assets::ValueSource>,
+) -> ExposedSource {
+    ExposedSource { name: name.into(), property, default, min: None, max: None }
+}
+
+/// The lamp with states Normal, Alarm (its own red lamp at mask 50, a red
+/// glow, both sounds) and Broken (its own lamp and shade, dark), an
+/// exposed glow strength, a script and health.
+fn alarm_lamp() -> Asset {
+    let mut a = lamp();
+    let mut alarm = state("Alarm", vec![(P::GlowColour("lamp".into()), V::Colour(colour("#ff2020")))]);
+    alarm.own.insert("lamp".into(), own(&a.pieces[0], RED, 50));
+    alarm.loop_sound = Some("alarm.wav".into());
+    alarm.enter_sound = Some("tick.wav".into());
+    let mut broken = state("Broken", vec![(P::GlowStrength("lamp".into()), V::Int(0))]);
+    broken.own.insert("lamp".into(), own(&a.pieces[0], Rgba::rgb(10, 10, 10), 0));
+    broken.own.insert("shade".into(), own(&a.pieces[1], Rgba::rgb(20, 20, 20), 0));
+    a.states = vec![State::new("Normal"), alarm, broken];
+    a.exposed = vec![expose("glow", P::GlowStrength("lamp".into()), Some(V::Int(60)))];
+    a.sounds = [("alarm.wav", wav(8000, 100)), ("tick.wav", wav(8000, 10))]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), std::sync::Arc::new(v)))
+        .collect();
+    a.script = Some("fn on_hit() {}\n".into());
+    a.health = Some(olr_format::assets::HealthSource { points: 50, at_zero: "Broken".into() });
+    a
+}
+
+fn piece<'a>(p: &'a Posed, id: &str) -> Option<&'a PosedPiece> {
+    p.pieces.iter().find(|x| x.piece.element.id == id)
+}
+
+fn strength(p: &Posed) -> Option<u8> {
+    piece(p, "lamp").and_then(|x| x.piece.element.glow.as_ref()).map(|g| g.strength)
+}
+
+#[test]
+fn decode_and_encode_round_trip_states() {
+    let a = alarm_lamp();
+    let src = encode(&a).unwrap();
+    let sheet = olr_format::image_io::png_size(&src.files["layers/lamp.png"]).unwrap();
+    assert_eq!(sheet, (8, 6 * 3), "the lamp stacks three pictures");
+    assert_eq!(olr_format::image_io::png_size(&src.files["layers/shade.png"]), Some((8, 2 * 2)));
+    assert_eq!(src.file.states[2].own, ["lamp", "shade"]);
+    let back = through_folder(&a);
+    for (x, y) in a.states.iter().zip(&back.states) {
+        assert_eq!(x.own, y.own, "{}", x.name);
+    }
+    assert_eq!(back, a);
+}
+
+#[test]
+fn posed_takes_the_state_then_the_copy_then_the_default() {
+    let mut a = alarm_lamp();
+    a.states.push(state("Dim", vec![(P::GlowStrength("lamp".into()), V::Int(10))]));
+    let none = BTreeMap::new();
+    let copy: BTreeMap<String, olr_format::assets::ValueSource> = [("glow".to_string(), V::Int(70))].into();
+    let dim = a.state("Dim").unwrap();
+    // 1: the state's own value, whatever the copy says.
+    assert_eq!(strength(&posed(&a, dim, &copy).unwrap()), Some(10));
+    // 2: the copy's value.
+    assert_eq!(strength(&posed(&a, 0, &copy).unwrap()), Some(70));
+    // 3: the exposed default.
+    assert_eq!(strength(&posed(&a, 0, &none).unwrap()), Some(60));
+    // 4: the layer's own setting.
+    a.exposed.clear();
+    assert_eq!(strength(&posed(&a, 0, &none).unwrap()), Some(80));
+    // A copy's unknown name or wrong value is an error.
+    let a = alarm_lamp();
+    assert!(posed(&a, 0, &[("nope".to_string(), V::Int(1))].into()).is_err());
+    assert!(posed(&a, 0, &[("glow".to_string(), V::Bool(true))].into()).is_err());
+    assert!(posed(&a, 0, &[("glow".to_string(), V::Int(101))].into()).is_err());
+    assert!(posed(&a, 9, &none).is_err());
+}
+
+#[test]
+fn a_state_is_a_complete_look() {
+    // Off sets the glow to 0 and On nothing: On glows at the layer's own.
+    let mut a = lamp();
+    a.states = vec![State::new("On"), state("Off", vec![(P::GlowStrength("lamp".into()), V::Int(0))])];
+    let none = BTreeMap::new();
+    assert_eq!(strength(&posed(&a, 1, &none).unwrap()), None);
+    assert_eq!(strength(&posed(&a, 0, &none).unwrap()), Some(80));
+    // Alarm sets a colour and Normal does not: Normal has the copy's
+    // colour, else the default.
+    let mut a = lamp();
+    a.states = vec![
+        State::new("Normal"),
+        state("Alarm", vec![(P::GlowColour("lamp".into()), V::Colour(colour("#ff2020")))]),
+    ];
+    a.exposed = vec![expose("tint", P::GlowColour("lamp".into()), Some(V::Colour(colour("#40ff80"))))];
+    let tint = |p: Posed| p.groups[0].colour;
+    let blue: BTreeMap<String, olr_format::assets::ValueSource> =
+        [("tint".to_string(), V::Colour(colour("#0000ff")))].into();
+    assert_eq!(tint(posed(&a, 0, &none).unwrap()), GlowColourSource::Tint(colour("#40ff80")));
+    assert_eq!(tint(posed(&a, 0, &blue).unwrap()), GlowColourSource::Tint(colour("#0000ff")));
+    assert_eq!(tint(posed(&a, 1, &blue).unwrap()), GlowColourSource::Tint(colour("#ff2020")));
+}
+
+#[test]
+fn posed_mirrors_offsets_hides_and_tints() {
+    let none = BTreeMap::new();
+    let with = |values: Vec<(olr_format::assets::PropertySource, olr_format::assets::ValueSource)>| {
+        let mut a = lamp();
+        a.states = vec![state("S", values)];
+        a
+    };
+    // Facing mirrors the art within the asset's box and turns a beam.
+    let mut a = with(vec![(P::Facing, V::Bool(true))]);
+    let mut half = layer("half", ElementMaterial::Rock, (0, 1), (2, 1), RED, Some("light"));
+    if let Decoded::Drawn { art, .. } = &mut half.decoded {
+        art.set(0, 0, BLUE);
+    }
+    half.element.glow.as_mut().unwrap().beam =
+        Some(olr_format::levels::GlowBeam { direction: 0, spread: 20 });
+    a.pieces.push(half);
+    let p = posed(&a, 0, &none).unwrap();
+    let h = &piece(&p, "half").unwrap().piece;
+    let ElementKind::Drawn { at, .. } = h.element.kind else { panic!() };
+    assert_eq!(at, (2, 1));
+    let Decoded::Drawn { art, .. } = &h.decoded else { panic!() };
+    assert_eq!((art.get(3, 0), art.get(0, 0)), (BLUE, RED));
+    assert_eq!(h.element.glow.as_ref().unwrap().beam.unwrap().direction, 180);
+    // OffsetX moves one piece.
+    let p = posed(&with(vec![(P::OffsetX("shade".into()), V::Int(2))]), 0, &none).unwrap();
+    let at = |id: &str| match piece(&p, id).unwrap().piece.element.kind {
+        ElementKind::Drawn { at, .. } => at,
+        _ => panic!(),
+    };
+    assert_eq!((at("shade"), at("lamp")), ((2, 0), (0, 0)));
+    // LayerVisible false drops it.
+    let p = posed(&with(vec![(P::LayerVisible("shade".into()), V::Bool(false))]), 0, &none).unwrap();
+    assert!(piece(&p, "shade").is_none() && piece(&p, "lamp").is_some());
+    assert!(posed(&with(vec![(P::Visible, V::Bool(false))]), 0, &none).unwrap().pieces.is_empty());
+    // GlowStrength 0 unglows; 50 keeps the mask (each pixel mask × 50).
+    let p = posed(&with(vec![(P::GlowStrength("lamp".into()), V::Int(0))]), 0, &none).unwrap();
+    let l = &piece(&p, "lamp").unwrap().piece;
+    assert!(l.element.glow.is_none() && l.glow_mask.is_none());
+    let p = posed(&with(vec![(P::GlowStrength("lamp".into()), V::Int(50))]), 0, &none).unwrap();
+    let l = &piece(&p, "lamp").unwrap().piece;
+    assert_eq!(l.element.glow.as_ref().unwrap().strength, 50);
+    assert_eq!(l.glow_mask, lamp().pieces[0].glow_mask);
+    // GlowColour sets a Tint, and keeps a Filtered group Filtered.
+    let red = V::Colour(colour("#ff2020"));
+    let p = posed(&with(vec![(P::GlowColour("lamp".into()), red.clone())]), 0, &none).unwrap();
+    assert_eq!(p.groups[0].colour, GlowColourSource::Tint(colour("#ff2020")));
+    let mut a = with(vec![(P::GlowColour("lamp".into()), red)]);
+    a.groups[0].colour = GlowColourSource::Filtered(colour("#ffffff"));
+    assert_eq!(posed(&a, 0, &none).unwrap().groups[0].colour, GlowColourSource::Filtered(colour("#ff2020")));
+    // Opacity 50 is carried, the art untouched.
+    let p = posed(&with(vec![(P::Opacity("lamp".into()), V::Int(50))]), 0, &none).unwrap();
+    let l = piece(&p, "lamp").unwrap();
+    assert_eq!(l.opacity, 50);
+    assert_eq!(l.piece.decoded, lamp().pieces[0].decoded);
+    assert_eq!(piece(&p, "shade").unwrap().opacity, 100);
+}
+
+#[test]
+fn the_starting_state_poses_as_the_pieces() {
+    for a in [lamp(), alarm_lamp()] {
+        let mut a = a;
+        a.exposed.clear();
+        let p = posed(&a, a.start, &BTreeMap::new()).unwrap();
+        let pieces: Vec<Piece> = p.pieces.iter().map(|x| x.piece.clone()).collect();
+        assert_eq!(pieces, a.pieces);
+        assert!(p.pieces.iter().all(|x| x.opacity == 100));
+        assert_eq!((p.groups, p.materials), (a.groups.clone(), a.materials.clone()));
+    }
+}
+
+#[test]
+fn live_refusal_says_why() {
+    let a = lamp();
+    assert_eq!(live_refusal(&a), Some(LiveRefusal::NothingToDrive));
+    assert_eq!(
+        LiveRefusal::NothingToDrive.to_string(),
+        "it has a single state, no exposed values, no sounds and no script"
+    );
+    // A live-able lamp: two states.
+    let mut a = lamp();
+    a.states.push(State::new("Off"));
+    assert_eq!(live_refusal(&a), None);
+    // Nothing to drive comes first.
+    let mut d = lamp();
+    d.pieces.push(layer("mud", ElementMaterial::Dirt, (0, 2), (4, 1), RED, None));
+    assert_eq!(live_refusal(&d), Some(LiveRefusal::NothingToDrive));
+    d.script = Some(String::new());
+    assert_eq!(live_refusal(&d), Some(LiveRefusal::Dirt));
+    assert_eq!(LiveRefusal::Dirt.to_string(), "it holds dirt");
+    // A mixed layer with a dirt cell.
+    let mut m = a.clone();
+    let mut mixed = layer("mix", ElementMaterial::Rock, (0, 2), (4, 1), RED, None);
+    if let ElementKind::Drawn { mixed: on, .. } = &mut mixed.element.kind {
+        *on = true;
+    }
+    if let Decoded::Drawn { cells, .. } = &mut mixed.decoded {
+        *cells = Some(vec![Material::Rock; 4]);
+    }
+    m.pieces.push(mixed.clone());
+    assert_eq!(live_refusal(&m), None);
+    if let Decoded::Drawn { cells: Some(c), .. } = &mut m.pieces[2].decoded {
+        c[3] = Material::Dirt;
+    }
+    assert_eq!(live_refusal(&m), Some(LiveRefusal::Dirt));
+    // A raster.
+    let mut r = a.clone();
+    r.pieces.insert(
+        0,
+        Piece {
+            element: olr_format::levels::Element {
+                kind: ElementKind::Raster,
+                glow: None,
+                ..layer("base", ElementMaterial::Rock, (0, 0), (4, 3), RED, None).element
+            },
+            decoded: Decoded::Raster {
+                material: vec![Material::Background; 12],
+                front: RgbaImage::new(8, 6),
+                back: RgbaImage::new(8, 6),
+            },
+            original: None,
+            glow_mask: None,
+            surface_map: None,
+            back_surface_map: None,
+        },
+    );
+    assert_eq!(live_refusal(&r), Some(LiveRefusal::RasterOrDistant));
+    assert_eq!(LiveRefusal::RasterOrDistant.to_string(), "it holds a raster or distant layer");
+}
+
+#[test]
+fn offers_follow_the_design() {
+    let mut a = lamp();
+    a.pieces.push(layer("mud", ElementMaterial::Dirt, (0, 2), (4, 1), RED, None));
+    a.pieces.push(layer("button", ElementMaterial::Rock, (1, 1), (1, 1), RED, Some("light")));
+    let offers = offers(&a);
+    let of = |id: &str| {
+        offers
+            .iter()
+            .filter(|o| o.property.layer() == Some(id))
+            .map(|o| o.property.clone())
+            .collect::<Vec<_>>()
+    };
+    // The asset's own: no health without health.
+    let own: Vec<_> =
+        offers.iter().filter(|o| o.property.layer().is_none()).map(|o| o.property.clone()).collect();
+    assert_eq!(own, [P::X, P::Y, P::Visible, P::Facing]);
+    // A rock layer: its place and visibility, no opacity.
+    assert_eq!(
+        of("shade"),
+        [P::OffsetX("shade".into()), P::OffsetY("shade".into()), P::LayerVisible("shade".into())]
+    );
+    // A dirt layer: none.
+    assert!(of("mud").is_empty());
+    // A glowing background layer: opacity and its glow too.
+    assert_eq!(
+        of("lamp"),
+        [
+            P::OffsetX("lamp".into()),
+            P::OffsetY("lamp".into()),
+            P::LayerVisible("lamp".into()),
+            P::Opacity("lamp".into()),
+            P::GlowStrength("lamp".into()),
+            P::GlowColour("lamp".into()),
+            P::LightIntensity("lamp".into()),
+            P::LightReach("lamp".into()),
+            P::GlowAnimation("lamp".into()),
+        ]
+    );
+    let offer =
+        |p: olr_format::assets::PropertySource| offers.iter().find(|o| o.property == p).unwrap().clone();
+    let o = offer(P::GlowColour("lamp".into()));
+    assert_eq!((o.kind, o.range, o.sharing), (ValueKind::Colour, None, vec!["button".to_string()]));
+    assert_eq!(offer(P::GlowColour("button".into())).sharing, ["lamp"]);
+    assert_eq!(offer(P::LightIntensity("button".into())).sharing, ["lamp"]);
+    assert!(offer(P::GlowStrength("button".into())).sharing.is_empty());
+    assert_eq!(offer(P::LightReach("lamp".into())).range, Some((1, 4096)));
+    assert_eq!(offer(P::X).range, Some((-4096, 4096)));
+    a.health = Some(olr_format::assets::HealthSource { points: 30, at_zero: "Normal".into() });
+    assert!(olr_edit::asset::offers(&a).iter().any(|o| o.property == P::Health && o.range == Some((0, 30))));
+}
+
+#[test]
+fn asset_sound_limit_is_the_mods() {
+    assert_eq!(olr_format::assets::MAX_ASSET_SOUND_BYTES, olr_pack::sounds::MAX_SOUND_BYTES as u64);
+    let mut src = encode(&alarm_lamp()).unwrap();
+    decode(&src).unwrap();
+    // A WAV a thousand seconds long by its header.
+    let long = wav(1, 1000);
+    assert!(olr_pack::sounds::check_sound(&long).is_err());
+    src.sounds.insert("tick.wav".into(), long);
+    let e = decode(&src).unwrap_err().to_string();
+    assert!(e.contains("sounds/tick.wav"), "{e}");
+    src.sounds.insert("tick.wav".into(), b"not a sound".to_vec());
+    assert!(decode(&src).unwrap_err().to_string().contains("WAV or Ogg"));
+}
+
+#[test]
+fn landing_a_stated_asset_lands_its_start() {
+    // Off (dark, unlit) first; the start, On, owns nothing.
+    let mut a = lamp();
+    let mut off = state("Off", vec![(P::GlowStrength("lamp".into()), V::Int(0))]);
+    off.own.insert("lamp".into(), own(&a.pieces[0], RED, 0));
+    a.states = vec![off, State::new("On")];
+    a.start = 1;
+    let a = through_folder(&a);
+    assert_eq!(a.start, 1);
+    let mut p = pack(12, 8, 2, None);
+    let placed = place_in_pack(&mut p, &a, (3, 2)).unwrap();
+    assert!(
+        placed
+            .note
+            .as_deref()
+            .is_some_and(|n| n.contains("Lamp's states") && n.contains("stay in the asset"))
+    );
+    let l = baked(&p);
+    // The lamp's start, blue and glowing, not Off's red.
+    let (_, front, _) = cell(&l, 4, 4);
+    assert!(front.iter().all(|c| *c == BLUE), "{front:?}");
+    let src = p.composition.as_ref().unwrap();
+    let landed = src.composition.elements.iter().find(|e| e.name.ends_with("lamp")).unwrap();
+    assert_eq!(landed.glow.as_ref().map(|g| g.strength), Some(80));
+    // A stateless asset says nothing.
+    let mut p = pack(12, 8, 2, None);
+    assert_eq!(place_in_pack(&mut p, &lamp(), (0, 0)).unwrap().note, None);
+}

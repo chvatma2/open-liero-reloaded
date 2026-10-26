@@ -8,7 +8,10 @@
 //! [`with_materials`]); an asset encoded to
 //! its folder with a lit thumbnail ([`encode`]) and decoded from one
 //! ([`decode`]), and the folder read and written ([`load_dir`],
-//! [`save_dir`], [`summary`]).
+//! [`save_dir`], [`summary`]). Issue #71: an asset's states, exposed
+//! properties, sounds, health and script ([`Asset`]), the asset posed in
+//! a state ([`posed`]), what it offers ([`offers`]) and why a copy cannot
+//! be Live ([`live_refusal`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -19,15 +22,20 @@ use olr_data::level::Material;
 use olr_format::Colour;
 use olr_format::FormatError;
 use olr_format::assets::{
-    ASSET_FILE, AssetFile, AssetSource, as_composition, check_asset, read_asset_files, write_asset_files,
+    ASSET_FILE, AssetFile, AssetSource, ExposedSource, HealthSource, NORMAL_STATE, SCRIPT_FILE,
+    as_composition, check_asset, owners, read_asset_files, start_index, write_asset_files,
 };
 use olr_format::levels::{
-    Element, ElementGlow, ElementKind, ElementMaterial, LevelSource, MAX_ART_SCALE, element_box,
+    Element, ElementGlow, ElementKind, ElementMaterial, Folder, LevelSource, MAX_ART_SCALE, element_box,
     level_thumbnail, surface_back_file, surface_file, surface_map_size,
 };
 use olr_format::look::{AmbientSource, GlowGroupSource, LookSource};
 use olr_format::materials::MaterialSource;
 use olr_vfs::DirFs;
+
+mod posed;
+
+pub use posed::*;
 
 use crate::compose::{
     ComposeError, Decoded, GlowMasks, ImageCache, PaintedSurfaces, Rect, bake_elements_with, decode_element,
@@ -86,16 +94,60 @@ impl Piece {
 
 /// An asset decoded: its name, the art scale it was made at, its size in
 /// world pixels, its pieces bottom to top (placed relative to its
-/// top-left), the glow groups they name and the surface materials they
-/// name (issue #38; their painted maps' values index these).
+/// top-left: the starting state's layers), its folders, the glow groups
+/// they name and the surface materials they name (issue #38; their
+/// painted maps' values index these); issue #71: its states (each one's
+/// own pictures decoded) and the starting one's index, its exposed
+/// properties, its sounds by name, its default script and its health.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Asset {
     pub name: String,
     pub art_scale: u32,
     pub size: (u32, u32),
     pub pieces: Vec<Piece>,
+    pub folders: Vec<Folder>,
     pub groups: Vec<GlowGroupSource>,
     pub materials: Vec<MaterialSource>,
+    pub states: Vec<State>,
+    pub start: usize,
+    pub exposed: Vec<ExposedSource>,
+    pub sounds: BTreeMap<String, Arc<Vec<u8>>>,
+    pub script: Option<String>,
+    pub health: Option<HealthSource>,
+}
+
+impl Asset {
+    /// An asset of `pieces` with one state, nothing exposed, no folders,
+    /// sounds, script or health.
+    pub fn new(
+        name: &str,
+        art_scale: u32,
+        size: (u32, u32),
+        pieces: Vec<Piece>,
+        groups: Vec<GlowGroupSource>,
+        materials: Vec<MaterialSource>,
+    ) -> Asset {
+        Asset {
+            name: name.into(),
+            art_scale,
+            size,
+            pieces,
+            folders: Vec::new(),
+            groups,
+            materials,
+            states: vec![State::new(NORMAL_STATE)],
+            start: 0,
+            exposed: Vec::new(),
+            sounds: BTreeMap::new(),
+            script: None,
+            health: None,
+        }
+    }
+
+    /// The index of its state `name`.
+    pub fn state(&self, name: &str) -> Option<usize> {
+        self.states.iter().position(|s| s.name == name)
+    }
 }
 
 /// Why an asset could not be made, read, written or placed.
@@ -121,11 +173,11 @@ pub struct LevelPieces<'a> {
     pub look: Option<&'a LookSource>,
 }
 
-/// An element as an asset holds it: shown, unlocked and in no folder
-/// (asset files carry none, issue #59).
+/// An element as an asset holds it: shown, unlocked and in no folder (a
+/// piece cut from a level does not carry the level's folders); its glass
+/// kept (issue #71).
 pub fn plain(e: &Element) -> Element {
-    // An asset carries no glass (the background glass design).
-    Element { visible: true, locked: false, folder: None, glass: None, ..e.clone() }
+    Element { visible: true, locked: false, folder: None, ..e.clone() }
 }
 
 /// An element's painted surface maps, its pixels' and its back art's.
@@ -399,7 +451,7 @@ pub fn from_elements(level: &LevelPieces, ids: &[String], name: &str) -> Result<
     drop_dangling(&mut pieces, &groups);
     let materials = carried_materials(&mut pieces, level.look, size);
     let size = (side(x1 - x0), side(y1 - y0));
-    Ok(Asset { name: name.into(), art_scale: s, size, pieces, groups, materials })
+    Ok(Asset::new(name, s, size, pieces, groups, materials))
 }
 
 /// An asset cut out of world rectangle `rect` of `level` (the editor's
@@ -467,7 +519,7 @@ pub fn cut_rect(
     let groups = named_groups(&pieces, level.look);
     drop_dangling(&mut pieces, &groups);
     let materials = carried_materials(&mut pieces, level.look, size);
-    Ok(Asset { name: name.into(), art_scale: s, size: (rect.w, rect.h), pieces, groups, materials })
+    Ok(Asset::new(name, s, (rect.w, rect.h), pieces, groups, materials))
 }
 
 /// `r` within a level of `size`.
@@ -731,9 +783,12 @@ pub fn preview_look(groups: &[GlowGroupSource]) -> LookSource {
 }
 
 /// The asset's folder in memory: `asset.ron` (each glow's mask flag
-/// following its mask), the pieces' files and a thumbnail drawn lit under
-/// [`preview_look`]; checked (`check_asset`) and decoded again, so what is
-/// written reads back.
+/// following its mask; issue #71: its folders, states, exposed properties,
+/// sounds and health, `start` left out when it is the first state), the
+/// pieces' files (a layer owned by states its pictures stacked below the
+/// starting state's, in state order), its sounds and script, and a
+/// thumbnail drawn lit under [`preview_look`]; checked (`check_asset`) and
+/// decoded again, so what is written reads back.
 pub fn encode(asset: &Asset) -> Result<AssetSource, AssetError> {
     let s = asset.art_scale;
     let mut files = BTreeMap::new();
@@ -743,20 +798,33 @@ pub fn encode(asset: &Asset) -> Result<AssetSource, AssetError> {
         if let (ElementKind::Image { source, .. }, Some((_, bytes))) = (&e.kind, &p.original) {
             files.insert(format!("images/{source}"), bytes.as_ref().clone());
         }
-        for (path, bytes) in encode_decoded(&e, &p.decoded, asset.size) {
+        // The pictures of the states owning it, in state order.
+        let own: Vec<&OwnPicture> = asset.states.iter().filter_map(|st| st.own.get(&e.id)).collect();
+        let n = 1 + own.len() as u32;
+        let (tall, decoded) = match own.is_empty() {
+            true => (e.clone(), p.decoded.clone()),
+            false => stack(&e, &p.decoded, &own, asset.size)?,
+        };
+        for (path, bytes) in encode_decoded(&tall, &decoded, asset.size) {
             files.insert(strip(&path), bytes);
         }
+        let cells = |b: (u32, u32)| u64::from(b.0 * s) * u64::from(b.1 * s);
         let fits = |m: &Arc<Vec<u8>>| {
-            element_box(&e.kind, asset.size)
-                .is_some_and(|(_, b)| m.len() as u64 == u64::from(b.0 * s) * u64::from(b.1 * s))
+            element_box(&e.kind, asset.size).is_some_and(|(_, b)| m.len() as u64 == cells(b))
         };
         if let Some(g) = e.glow.as_mut() {
             match p.glow_mask.as_ref().filter(|m| g.mask && fits(m)) {
                 Some(m) => {
                     let (_, b) = element_box(&e.kind, asset.size).unwrap_or(((0, 0), (0, 0)));
+                    // Each owner's mask below the start's (the start's when
+                    // a picture has none of its size).
+                    let mut values = m.as_ref().clone();
+                    for o in &own {
+                        values.extend_from_slice(o.glow_mask.as_ref().filter(|m| fits(m)).unwrap_or(m));
+                    }
                     files.insert(
                         format!("glow/{}.png", e.id),
-                        olr_format::image_io::encode_grey(b.0 * s, b.1 * s, m),
+                        olr_format::image_io::encode_grey(b.0 * s, b.1 * s * n, &values),
                     );
                 }
                 None => g.mask = false,
@@ -773,16 +841,89 @@ pub fn encode(asset: &Asset) -> Result<AssetSource, AssetError> {
         }
         elements.push(e);
     }
-    let file = AssetFile {
-        art_scale: s,
-        glow_groups: asset.groups.clone(),
-        materials: asset.materials.clone(),
-        ..AssetFile::new(&asset.name, asset.size, elements)
+    let mut file = posed::header(asset);
+    file.elements = elements;
+    let mut src = AssetSource {
+        sounds: asset.sounds.iter().map(|(k, v)| (k.clone(), v.as_ref().clone())).collect(),
+        script: asset.script.clone(),
+        ..AssetSource::new(file, files)
     };
-    let mut src = AssetSource::new(file, files);
     let decoded = decode(&src)?;
     src.thumb = Some(olr_format::image_io::encode_rgba(&thumbnail(&decoded)));
     Ok(src)
+}
+
+/// Drawn element `e` as its stacked files hold it: its box `1 + n`
+/// pictures tall (`n` = `own.len()`), at the same place.
+fn tall_element(e: &Element, n: u32, size: (u32, u32)) -> Element {
+    let mut e = e.clone();
+    if let Some((_, (w, h))) = olr_format::levels::drawn_box(&e.kind, size)
+        && let ElementKind::Drawn { size: boxed, .. } = &mut e.kind
+    {
+        *boxed = Some((w, h.saturating_mul(n)));
+    }
+    e
+}
+
+/// Drawn element `e`'s starting picture `start` and its owners' pictures
+/// `own` stacked into one tall picture (the element its files make, and
+/// the data): each picture of the start's size and kind.
+fn stack(
+    e: &Element,
+    start: &Decoded,
+    own: &[&OwnPicture],
+    size: (u32, u32),
+) -> Result<(Element, Decoded), AssetError> {
+    let bad = || AssetError::Bad(format!("{:?}: a state's picture does not match the layer", e.id));
+    let Decoded::Drawn { art, cells, back } = start else { return Err(bad()) };
+    let mut art_raw = art.as_raw().to_vec();
+    let mut all_cells = cells.clone();
+    let mut back_raw = back.as_ref().map(|b| b.as_raw().to_vec());
+    for o in own {
+        let Decoded::Drawn { art: a, cells: c, back: b } = &o.decoded else { return Err(bad()) };
+        if (a.width(), a.height()) != (art.width(), art.height()) || c.is_some() != cells.is_some() {
+            return Err(bad());
+        }
+        art_raw.extend_from_slice(a.as_raw());
+        match (&mut all_cells, c) {
+            (Some(all), Some(c)) if c.len() == cells.as_ref().map_or(0, Vec::len) => all.extend_from_slice(c),
+            (None, None) => {}
+            _ => return Err(bad()),
+        }
+        match (&mut back_raw, b, back) {
+            (Some(all), Some(b), Some(first)) if b.as_raw().len() == first.as_raw().len() => {
+                all.extend_from_slice(b.as_raw())
+            }
+            (None, None, _) => {}
+            _ => return Err(bad()),
+        }
+    }
+    let n = 1 + own.len() as u32;
+    let tall = |raw: Vec<u8>| RgbaImage::from_raw(art.width(), art.height() * n, raw).ok_or_else(bad);
+    let back = match back_raw {
+        Some(raw) => Some(tall(raw)?),
+        None => None,
+    };
+    Ok((tall_element(e, n, size), Decoded::Drawn { art: tall(art_raw)?, cells: all_cells, back }))
+}
+
+/// Picture `k` of the `n` stacked in tall drawn data `d` (its box `width`
+/// world pixels wide); none for other data or cells that do not divide.
+fn picture(d: &Decoded, k: u32, n: u32, width: u32) -> Option<Decoded> {
+    let Decoded::Drawn { art, cells, back } = d else { return None };
+    let rows = art.height() / n.max(1);
+    let cut = |i: &RgbaImage| i.crop(0, k * rows, i.width(), rows);
+    let cells = match cells {
+        Some(c) => {
+            let per = c.len() / n.max(1) as usize;
+            if !per.is_multiple_of(width.max(1) as usize) {
+                return None;
+            }
+            Some(c[k as usize * per..(k as usize + 1) * per].to_vec())
+        }
+        None => None,
+    };
+    Some(Decoded::Drawn { art: cut(art), cells, back: back.as_ref().map(cut) })
 }
 
 fn strip(path: &str) -> String {
@@ -805,7 +946,7 @@ pub fn thumbnail(asset: &Asset) -> RgbaImage {
         front: RgbaImage::new(w * s, h * s),
         back: RgbaImage::new(w * s, h * s),
         thumb: None,
-        look: Some(preview_look(&asset.groups)),
+        look: None,
         glow: None,
         clear: None,
         glass: None,
@@ -815,9 +956,14 @@ pub fn thumbnail(asset: &Asset) -> RgbaImage {
         surface: None,
         distant_surfaces: Vec::new(),
     };
+    // The asset in its starting state with its defaults (its pieces when
+    // nothing sets a value).
+    let (pieces, groups) =
+        landed_pieces(asset).unwrap_or_else(|_| (asset.pieces.clone(), asset.groups.clone()));
+    level.look = Some(preview_look(&groups));
     let masks: GlowMasks =
-        asset.pieces.iter().filter_map(|p| Some((p.element.id.clone(), p.glow_mask.clone()?))).collect();
-    let items: Vec<(&Element, &Decoded)> = asset.pieces.iter().map(|p| (&p.element, &p.decoded)).collect();
+        pieces.iter().filter_map(|p| Some((p.element.id.clone(), p.glow_mask.clone()?))).collect();
+    let items: Vec<(&Element, &Decoded)> = pieces.iter().map(|p| (&p.element, &p.decoded)).collect();
     bake_elements_with(
         &mut level,
         &items,
@@ -831,17 +977,66 @@ pub fn thumbnail(asset: &Asset) -> RgbaImage {
 
 /// An asset folder's contents decoded: checked first (`check_asset`), every
 /// element decoded (a truncated or misfit file refused), images processed
-/// at the asset's art scale, glow masks of their boxes.
+/// at the asset's art scale, glow masks of their boxes; issue #71: a
+/// layer's stacked pictures unstacked into the states owning it, each
+/// sound checked as a mod's (`olr_pack::sounds`: WAV or Ogg, within its
+/// length).
 pub fn decode(src: &AssetSource) -> Result<Asset, AssetError> {
     check_asset(src)?;
     let f = &src.file;
     let comp = as_composition(src);
+    // The composition as its files are: a stacked layer's box as tall as
+    // its sheet.
+    let owned = owners(f);
+    let pictures = |e: &Element| 1 + owned.get(e.id.as_str()).copied().unwrap_or(0);
+    let mut tall = comp.clone();
+    for e in &mut tall.composition.elements {
+        if pictures(e) > 1 {
+            *e = tall_element(e, pictures(e), f.size);
+        }
+    }
     let mut cache = ImageCache::new();
-    let masks = decode_glow_masks(&comp, f.size, f.art_scale)?;
+    let masks = decode_glow_masks(&tall, f.size, f.art_scale)?;
     let maps = decode_surface_maps(&comp, f.size)?;
     let mut pieces = Vec::new();
-    for e in &f.elements {
-        let decoded = decode_element(&comp, e, f.size, f.art_scale, &mut cache)?;
+    let mut states: Vec<State> = f
+        .states
+        .iter()
+        .map(|st| State {
+            name: st.name.clone(),
+            own: BTreeMap::new(),
+            values: st.values.clone(),
+            loop_sound: st.loop_sound.clone(),
+            enter_sound: st.enter_sound.clone(),
+        })
+        .collect();
+    for (e, t) in f.elements.iter().zip(&tall.composition.elements) {
+        let mut decoded = decode_element(&tall, t, f.size, f.art_scale, &mut cache)?;
+        let mut glow_mask = masks.get(&e.id).cloned();
+        let n = pictures(e);
+        if n > 1 {
+            let (_, (w, _)) = element_box(&e.kind, f.size).unwrap_or(((0, 0), f.size));
+            let bad = || AssetError::Bad(format!("layers/{}.png: its pictures do not unstack", e.id));
+            let mask_part = |k: u32| {
+                glow_mask.as_ref().map(|m| {
+                    let per = m.len() / n as usize;
+                    Arc::new(m[k as usize * per..(k as usize + 1) * per].to_vec())
+                })
+            };
+            let mut k = 0;
+            for (i, st) in f.states.iter().enumerate() {
+                if st.own.contains(&e.id) {
+                    k += 1;
+                    let own = OwnPicture {
+                        decoded: picture(&decoded, k, n, w).ok_or_else(bad)?,
+                        glow_mask: mask_part(k),
+                    };
+                    states[i].own.insert(e.id.clone(), own);
+                }
+            }
+            decoded = picture(&decoded, 0, n, w).ok_or_else(bad)?;
+            glow_mask = mask_part(0);
+        }
         let original = match &e.kind {
             ElementKind::Image { source, .. } => {
                 let bytes = src
@@ -856,18 +1051,37 @@ pub fn decode(src: &AssetSource) -> Result<Asset, AssetError> {
             element: e.clone(),
             decoded,
             original,
-            glow_mask: masks.get(&e.id).cloned(),
+            glow_mask,
             surface_map: maps.get(&surface_file(&e.id)).cloned(),
             back_surface_map: maps.get(&surface_back_file(&e.id)).cloned(),
         });
+    }
+    let mut sounds = BTreeMap::new();
+    for (name, bytes) in &src.sounds {
+        let why = if olr_pack::sounds::is_sound(bytes) {
+            olr_pack::sounds::check_sound(bytes).err()
+        } else {
+            Some("not a WAV or Ogg sound".to_string())
+        };
+        if let Some(why) = why {
+            return Err(AssetError::Bad(format!("{}: {why}", olr_format::assets::sound_file(name))));
+        }
+        sounds.insert(name.clone(), Arc::new(bytes.clone()));
     }
     Ok(Asset {
         name: f.name.clone(),
         art_scale: f.art_scale,
         size: f.size,
         pieces,
+        folders: f.folders.clone(),
         groups: f.glow_groups.clone(),
         materials: f.materials.clone(),
+        states,
+        start: start_index(f).unwrap_or(0),
+        exposed: f.exposed.clone(),
+        sounds,
+        script: src.script.clone(),
+        health: f.health.clone(),
     })
 }
 
@@ -897,7 +1111,11 @@ pub fn save_dir(dir: &Path, src: &AssetSource) -> Result<Vec<String>, AssetError
 
 /// What the Assets tab shows of an asset: its name, its size, what its
 /// elements are (rock, dirt, background; a mixed layer "mixed"), whether
-/// it glows, and its thumbnail (none when absent or bad).
+/// it glows, its thumbnail (none when absent or bad); issue #71: how many
+/// states it has and whether a copy of it may be Live (no plain Dirt
+/// element, no raster or distant layer, and more than one state,
+/// exposed values, sounds or a script; a mixed layer counts as possibly
+/// dirt-free, [`live_refusal`] decides).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Summary {
     pub name: String,
@@ -905,6 +1123,8 @@ pub struct Summary {
     pub tags: Vec<&'static str>,
     pub glows: bool,
     pub thumb: Option<RgbaImage>,
+    pub states: usize,
+    pub may_be_live: bool,
 }
 
 /// The [`Summary`] of asset folder `dir`: `asset.ron` and the thumbnail
@@ -935,12 +1155,20 @@ pub fn summary(dir: &Path) -> Result<Summary, AssetError> {
         .thumb
         .as_deref()
         .and_then(|t| olr_format::image_io::decode_rgba_within(t, olr_format::image_io::IMAGES).ok());
+    let script = dir.join(SCRIPT_FILE).is_file();
+    let drives = f.states.len() > 1 || !f.exposed.is_empty() || !f.sounds.is_empty() || script;
+    let blocked = f
+        .elements
+        .iter()
+        .any(|e| posed::plain_dirt(e) || matches!(e.kind, ElementKind::Raster) || e.is_distant());
     Ok(Summary {
         name: f.name.clone(),
         size: f.size,
         tags,
         glows: f.elements.iter().any(|e| e.glow.is_some()),
         thumb,
+        states: f.states.len(),
+        may_be_live: drives && !blocked,
     })
 }
 
@@ -1044,6 +1272,9 @@ pub struct Placement {
     pub folder: Option<String>,
     pub groups: GroupChange,
     pub materials: MaterialChange,
+    /// What the asset left behind ([`left_behind`]): its states, values,
+    /// sounds and script, when it had any.
+    pub note: Option<String>,
 }
 
 /// Places `asset` in level pack `pack` with its top-left at world pixel
@@ -1056,7 +1287,10 @@ pub struct Placement {
 /// files written
 /// into the composition, two pieces or more in a new folder named after
 /// the asset (issue #59) (a level without one gets its raster base first,
-/// `element::ensure_composed`). Checked whole; the pack is unchanged on a
+/// `element::ensure_composed`). Issue #71: the asset lands in its starting
+/// state posed with its defaults ([`landed_pieces`]), its own folders
+/// flattened; its states, values, sounds, health and script stay behind
+/// (`Placement::note` says so). Checked whole; the pack is unchanged on a
 /// refusal. Not baked: the caller bakes and saves.
 pub fn place_in_pack(
     pack: &mut crate::pack::Pack,
@@ -1070,7 +1304,8 @@ pub fn place_in_pack(
         return Err(AssetError::Bad("not a level pack".into()));
     };
     let (size, s) = (level.size, level.art_scale);
-    let groups = with_groups(level.look.as_ref(), &asset.groups);
+    let (pieces, posed_groups) = landed_pieces(asset)?;
+    let groups = with_groups(level.look.as_ref(), &posed_groups);
     if groups.changes() {
         level.look = Some(groups.look.clone());
     }
@@ -1086,7 +1321,7 @@ pub fn place_in_pack(
         .filter_map(|(k, v)| Some((k.strip_prefix(dir.as_str())?.to_string(), Arc::new(v.clone()))))
         .collect();
     let mut ids = Vec::new();
-    for piece in &asset.pieces {
+    for piece in &pieces {
         let taken: BTreeSet<String> = src.files.keys().chain(&stray).cloned().collect();
         let landing = Landing {
             elements: &src.composition.elements,
@@ -1151,7 +1386,7 @@ pub fn place_in_pack(
     olr_format::levels::check_surface_maps(src, size, n)?;
     olr_format::levels::compile_look(level)?;
     *pack = copy;
-    Ok(Placement { ids, folder, groups, materials })
+    Ok(Placement { ids, folder, groups, materials, note: left_behind(asset) })
 }
 
 // The asset library (the editor's host and its tests): a folder of asset
