@@ -47,10 +47,10 @@ LEVELS = {
         fill="bands",
         stars=None,
     ),
-    "olr-level-liero-factory-reloaded": dict(
+    "olr-level-liero-factory-after-dark": dict(
         region=("layers", "sky"),
         art="sky",
-        cut=["background"],
+        cut=["backdrop"],
         remove=True,
         depth=90,
         glow=(35, "sky"),

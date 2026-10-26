@@ -109,9 +109,11 @@ Remade OLX content is named "<Old name> Reloaded".
     (`projectiles/big-nuke.s2.ron`, also the Mini Nuke's) 300 %
     of their faint 97.
 
-- `olr-level-liero-factory-reloaded/`: **Liero Factory Reloaded** (issue
-  #7). OLX's Liero Factory (`origin`: `Liero Factory.lxl` at `d1ad953f`)
-  at night, its lights on; its gameplay and art unchanged: the imported
+- `olr-level-liero-factory-after-dark/`: **Liero Factory After Dark** (issue
+  #7). It was Liero Factory Reloaded (`olr-level-liero-factory-reloaded`)
+  until 0.3, renamed in issue #70: that name and id now belong to the
+  level built from assets (issue #96). OLX's Liero Factory (`origin`:
+  `Liero Factory.lxl` at `d1ad953f`) at night, its lights on; its gameplay and art unchanged: the imported
   level split into layers (`olr-cli level element split`), its
   `material.png` byte for byte the imported level's, and its `front.png`
   and `back.png` too but where the sky is see-through (tested; issue
@@ -143,7 +145,8 @@ Remade OLX content is named "<Old name> Reloaded".
     written as a PNG (white the sky, black the rest) and erased from
     every back element covering it with `level element erase <id>
     --mask <png>`: Castle Strike's `background` and `background-2` (the
-    hills, walls and towers stay), Liero Factory's `background`; the
+    hills, walls and towers stay), Liero Factory's `backdrop` (then
+    `background`; issue #70 shortened the factory's ids); the
     factory's `sky` layer (unlocked first) is removed.
   - **The layer.** A level-sized image at (0, 0) (`add-image --at 0,0`,
     no colour reduction, `editor/images/sky.png`), Background, named
@@ -175,7 +178,7 @@ Remade OLX content is named "<Old name> Reloaded".
   - **The roof garden** (Liero Factory, 2026-10-25): the old sky the
     flowers on the left roof hid (the cut-out above took the sky layer's
     pixels, which the dirt flowers covered) showed as fixed blue
-    flower shapes once the dirt was shot away. Erased from `background`
+    flower shapes once the dirt was shot away. Erased from `backdrop`
     with `level element erase --mask` (its 966 pixels within 8 a channel
     of the sky's art, in x 380-639, y 120-175), then `level bake`: they
     show the distant sky now, within 2 a channel of OLX's colour.
@@ -183,7 +186,7 @@ Remade OLX content is named "<Old name> Reloaded".
     glass design): the `glass` element's pixels mixed halfway to
     `(200, 215, 235)`, `glass: (opacity: 35)`, its glow 67 in the group
     `glass` (`Tint("#c8d4f0")`, intensity 220, reach 160: the window's
-    moonlight); the `background` pixels under them erased, so the sky
+    moonlight); the `backdrop` pixels under them erased, so the sky
     shows through. The hall window's fifth pane (x 799-817, y 151-172)
     is broken: the jagged hole `(y − 160) > (x − 799) × 0.9 + 2 sin(1.7
     x)` erased from the glass, ringed by the new element `glass-rim`
@@ -199,11 +202,11 @@ Remade OLX content is named "<Old name> Reloaded".
     The glass's frost is 1.0 px (`frost: 10`, `glass` and `glass-rim`).
     The control room's lower consoles shine further: `screens` 450,
     reach 48. Its upper screen (the `screens` pixels with y < 110 and x
-    880-950) has its own Background layer `ctrl-screen` (glow 90,
+    880-950) has its own Background layer `ctrl-scr` (glow 90,
     group `control`, `Tint("#d0e0ff")`, 450, reach 48) and lights all
     around, blue-white. The offices' PC screens (the `rock` pixels of the
     four screen colours at x 523-533 × y 209-213, x 344, 498 and 513 × y
-    259-263) left `rock-screens` for three Rock layers in group `pcs`
+    259-263) left `rock-scr` for three Rock layers in group `pcs`
     (own colour, 1000, reach 56):
     - `rock-pcs`: the blue floor's PC, which faces the player, glow 100,
       undirected;
@@ -239,10 +242,12 @@ Remade OLX content is named "<Old name> Reloaded".
   colour (`tools/levels/reloaded_materials.py`, its `factory` and
   `castle`), one exact-colour `olr-cli level element surface --rule`
   per colour unlike the default:
-  - Liero Factory Reloaded (stone, concrete, metal, wood, dirt, glass):
-    `rock` stone, `dirt` dirt, `background` concrete, the
-    `lamps`, `glass`, `screens` and `displays` layers (and their
-    `-in-rock` ones) glass, the `beacons` metal. The rule: in rock, pure
+  - Liero Factory After Dark (stone, concrete, metal, wood, dirt, glass):
+    `rock` stone, `dirt` dirt, `backdrop` concrete, the
+    `lamps`, `glass`, `glass-rim`, `screens`, `ctrl-scr` and `displays`
+    layers and the glowing rock ones (`rock-scr`, `rock-pcs`,
+    `pcs-right`, `pcs-left`, `headlights`, `rock-disp`) glass, the
+    `beacons` and `rock-bcn` metal. The rule: in rock, pure
     grey (r = g = b) is the cave's stone, a grey tinted warm the
     building's concrete, a grey tinted blue or near white steel (metal),
     brown, olive and green wood (desks, crates), any other colour

@@ -79,7 +79,7 @@ pub const MAX_SHIPPED_PATH: usize = 80;
 /// The levels in [`RELOADED`] a release must hold: the verification
 /// finds each in the folder, and its server's rotation names them.
 pub const RELOADED_LEVELS: [&str; 2] =
-    ["olr-level-liero-factory-reloaded", "olr-level-castlestrike-reloaded"];
+    ["olr-level-liero-factory-after-dark", "olr-level-castlestrike-reloaded"];
 /// How long a verification waits for the server to load its rotation.
 const READY_WITHIN: Duration = Duration::from_secs(60);
 /// How long the Linux verification waits for the bot client's match.
@@ -100,7 +100,7 @@ const CHECK_CONFIG: &str = "// `cargo xtask dist`'s check: by address only, noth
     min_players: 1,
     rotation: [
         (mod: \"olx-classic\", level: \"olx-level-dirt-level\", time_limit: 0.2, kill_limit: 0, lives: -2),
-        (mod: \"olx-classic\", level: \"olr-level-liero-factory-reloaded\"),
+        (mod: \"olx-classic\", level: \"olr-level-liero-factory-after-dark\"),
         (mod: \"olx-classic\", level: \"olr-level-castlestrike-reloaded\"),
     ],
     start_when_ready: true,

@@ -97,7 +97,7 @@ def hsv(r, g, b):
 
 
 def factory(kind, r, g, b):
-    """Liero Factory Reloaded: a concrete factory on a stone cave. The art
+    """Liero Factory After Dark: a concrete factory on a stone cave. The art
     tells them apart by its greys: the cave's rock is pure grey (r = g =
     b), the building's floors and walls a grey tinted a step warm. Steel
     is grey tinted blue, or white; the machines, the truck and the pipes
@@ -162,24 +162,30 @@ def castle(kind, r, g, b):
 # Each level: its rule, the materials it copies in (their order is the
 # maps' values) and each element's default (None: none).
 LEVELS = {
-    "olr-level-liero-factory-reloaded": (
+    "olr-level-liero-factory-after-dark": (
         factory,
         ["stone", "concrete", "metal", "wood", "dirt", "glass"],
         {
-            "background": "concrete",
+            "backdrop": "concrete",
             "dirt": "dirt",
             "rock": "stone",
             "lamps": "glass",
             "glass": "glass",
+            "glass-rim": "glass",
             "screens": "glass",
-            "rock-screens": "glass",
+            "ctrl-scr": "glass",
+            "rock-scr": "glass",
+            "rock-pcs": "glass",
+            "pcs-right": "glass",
+            "pcs-left": "glass",
+            "headlights": "glass",
             "displays": "glass",
-            "rock-display": "glass",
+            "rock-disp": "glass",
             "beacons": "metal",
-            "rock-beacons": "metal",
+            "rock-bcn": "metal",
         },
         # The glowing layers are one material whole: no rule.
-        {"background", "dirt", "rock"},
+        {"backdrop", "dirt", "rock"},
     ),
     "olr-level-castlestrike-reloaded": (
         castle,

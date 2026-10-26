@@ -3,8 +3,9 @@
 //! `skin.rs`), shipped beside the imported ones: each
 //! checks clean against the committed content, none shares an id with it,
 //! the game's content lists them, a bot match plays on each, Liero Factory
-//! Reloaded is OLX's Liero Factory but for its look and its distant sky's
-//! stars (issue #63), its PCs and headlights cast glow beams, and
+//! After Dark (Liero Factory Reloaded until issue #70) is OLX's Liero
+//! Factory but for its look and its distant sky's stars (issue #63), its
+//! PCs and headlights cast glow beams, and
 //! Liero v1.0 Reloaded plays exactly as Classic (`olx-classic`) but for its
 //! name and look. On the GPU tier each plays and draws lit.
 
@@ -16,7 +17,7 @@ use olr_content::Content;
 use olr_data::manifest::PackKind;
 use olr_vfs::DirFs;
 
-const FACTORY: &str = "olr-level-liero-factory-reloaded";
+const FACTORY: &str = "olr-level-liero-factory-after-dark";
 const CASTLE: &str = "olr-level-castlestrike-reloaded";
 const RELOADED_MOD: &str = "olr-mod-liero-v1-reloaded";
 const CLASSIC: &str = "olx-classic";
@@ -81,7 +82,7 @@ fn reloaded_and_imported_packs_share_no_id() {
 fn the_bundled_content_lists_the_reloaded_levels() {
     let content = Content::open_bundled(&packs_dir()).unwrap();
     let levels = content.ids(PackKind::Level);
-    for (id, name) in [(FACTORY, "Liero Factory Reloaded"), (CASTLE, "Castle Strike Reloaded")] {
+    for (id, name) in [(FACTORY, "Liero Factory After Dark"), (CASTLE, "Castle Strike Reloaded")] {
         assert!(levels.contains(&id.to_string()), "{id}");
         assert_eq!(content.pack_name(id), Some(name));
         assert!(content.load_level(id).unwrap().has_look(), "{id} is lit");
@@ -91,12 +92,12 @@ fn the_bundled_content_lists_the_reloaded_levels() {
     assert!(!content.load_mod(RELOADED_MOD).unwrap().look.is_empty(), "the mod has a look");
 }
 
-/// The factory's gameplay and art are OLX's: its composition (checked
-/// fresh by `reloaded_packs_check_clean`) bakes the imported level's
-/// material byte for byte, and its front and back pixel for pixel but
-/// where the sky is see-through (issue #63): there the distant sky
-/// (`distant/0.png`, level-sized at its reference placement) shows the
-/// imported sky, but for its stars, and behind the roof garden (the old
+/// Liero Factory After Dark's gameplay and art are OLX's: its
+/// composition (checked fresh by `reloaded_packs_check_clean`) bakes the
+/// imported level's material byte for byte, and its front and back pixel
+/// for pixel but where the sky is see-through (issue #63): there the
+/// distant sky (`distant/0.png`, level-sized at its reference placement)
+/// shows the imported sky, but for its stars, and behind the roof garden (the old
 /// sky the flowers hid, see-through since 2026-10-25) within 2 a channel
 /// of it. The windows are glass (the background glass design): each pane
 /// OLX's colour halfway to pale blue at 35 % (alpha 89), the hall
@@ -178,8 +179,8 @@ fn the_factory_is_the_imported_level_but_for_its_look() {
     assert!(src.look.is_some() && src.glow.is_some());
 }
 
-/// The factory's PCs and headlights cast glow beams (the directional-glow
-/// design, 2026-10-25): the side PCs' screens at x 344 and 513 face right
+/// Liero Factory After Dark's PCs and headlights cast glow beams (the
+/// directional-glow design, 2026-10-25): the side PCs' screens at x 344 and 513 face right
 /// and the one at 498 left, 35° each; the truck's headlights (42-44 ×
 /// 410-414) left and a little down, 166° at 15°; the blue floor's PC stays
 /// undirected, and no backdrop pixel is directional. The haze is 50: the

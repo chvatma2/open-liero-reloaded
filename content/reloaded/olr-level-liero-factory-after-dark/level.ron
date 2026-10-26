@@ -1,5 +1,5 @@
 (
-    name: "Liero Factory Reloaded",
+    name: "Liero Factory After Dark",
     notes: "OLX Liero Factory at night, its lights on (issue #7). The base layers are the imported level split; each glowing layer above them (one per glow group and material) holds only its own pixels, found by colour in the imported front.png and copied from it, so the bake is the imported material, front and back byte for byte.",
     size: (1200, 480),
     theme: "olx-theme-dirt",

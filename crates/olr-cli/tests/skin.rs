@@ -159,7 +159,7 @@ fn firefly_lights_its_surroundings_in_play() {
         return;
     }
     let tmp = tempfile::tempdir().unwrap();
-    for level in ["olr-level-castlestrike-reloaded", "olr-level-liero-factory-reloaded"] {
+    for level in ["olr-level-castlestrike-reloaded", "olr-level-liero-factory-after-dark"] {
         let plain = discs(level, "olx-skin-default", &tmp.path().join("plain.png"));
         let lit = discs(level, FIREFLY, &tmp.path().join("firefly.png"));
         assert!(lit > plain, "{level}: {lit} discs with Firefly, {plain} without");

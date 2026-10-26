@@ -3,7 +3,7 @@
     size: (30, 11),
     elements: [
         (
-            id: "background",
+            id: "backdrop",
             name: "Background",
             kind: Drawn(
                 material: Background,

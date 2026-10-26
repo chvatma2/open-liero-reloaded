@@ -13,7 +13,7 @@
             surface_map: true,
         ),
         (
-            id: "rock-display",
+            id: "rock-disp",
             name: "Displays in rock",
             kind: Drawn(
                 material: Rock,

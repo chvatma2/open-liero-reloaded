@@ -22,32 +22,32 @@ there (issue #46), so placed in a level they heat as they did in it.
       olr-cli asset save content/reloaded/olr-level-castlestrike-reloaded --rect 203,423,14,16 --layers background,dirt,rock --name Torch --out content/assets/torch
 
 - `ceiling-lamp/`: **Ceiling lamp**, a round office lamp of Liero Factory
-  Reloaded under three rows of its ceiling (rock), group `lamps`.
+  After Dark under three rows of its ceiling (rock), group `lamps`.
 
-      olr-cli asset save content/reloaded/olr-level-liero-factory-reloaded --rect 319,137,13,6 --layers rock,lamps --name "Ceiling lamp" --out content/assets/ceiling-lamp
+      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 319,137,13,6 --layers rock,lamps --name "Ceiling lamp" --out content/assets/ceiling-lamp
 
 - `strip-light/`: **Strip light**, one of the factory's white ceiling
   strips, group `lamps`.
 
-      olr-cli asset save content/reloaded/olr-level-liero-factory-reloaded --rect 778,80,29,2 --layers lamps --name "Strip light" --out content/assets/strip-light
+      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 778,80,29,2 --layers lamps --name "Strip light" --out content/assets/strip-light
 
 - `computer-screen/`: **Computer screen**, the control room's upper
   screen on its wall, group `control` (blue-white, `Tint("#d0e0ff")`;
-  its own layer `ctrl-screen` since 2026-10-25).
+  its own layer `ctrl-scr` since 2026-10-25).
 
-      olr-cli asset save content/reloaded/olr-level-liero-factory-reloaded --rect 906,83,14,14 --layers background,ctrl-screen --name "Computer screen" --out content/assets/computer-screen
+      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 906,83,14,14 --layers backdrop,ctrl-scr --name "Computer screen" --out content/assets/computer-screen
 
 - `control-desk/`: **Control desk**, the control room's console: its
   three screens (group `screens`) and lamps (group `displays`).
 
-      olr-cli asset save content/reloaded/olr-level-liero-factory-reloaded --rect 903,119,30,11 --layers background,screens,displays --name "Control desk" --out content/assets/control-desk
+      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 903,119,30,11 --layers backdrop,screens,displays --name "Control desk" --out content/assets/control-desk
 
 - `lit-sign/`: **Lit sign**, the "13-37 -LD-" board set in rock, group
   `displays` (`Flicker`).
 
-      olr-cli asset save content/reloaded/olr-level-liero-factory-reloaded --rect 934,299,31,21 --layers rock,rock-display --name "Lit sign" --out content/assets/lit-sign
+      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 934,299,31,21 --layers rock,rock-disp --name "Lit sign" --out content/assets/lit-sign
 
 - `warning-beacon/`: **Warning beacon**, a roof speaker's red ring on its
   box, group `beacons` (`Pulse`).
 
-      olr-cli asset save content/reloaded/olr-level-liero-factory-reloaded --rect 951,45,25,28 --layers background,beacons --name "Warning beacon" --out content/assets/warning-beacon
+      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 951,45,25,28 --layers backdrop,beacons --name "Warning beacon" --out content/assets/warning-beacon

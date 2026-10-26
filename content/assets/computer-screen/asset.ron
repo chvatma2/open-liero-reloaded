@@ -3,7 +3,7 @@
     size: (14, 14),
     elements: [
         (
-            id: "background",
+            id: "backdrop",
             name: "Background",
             kind: Drawn(
                 material: Background,
@@ -13,7 +13,7 @@
             surface_map: true,
         ),
         (
-            id: "ctrl-screen",
+            id: "ctrl-scr",
             name: "Control room screen",
             kind: Drawn(
                 material: Background,

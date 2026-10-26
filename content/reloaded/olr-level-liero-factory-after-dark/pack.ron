@@ -1,7 +1,7 @@
 (
     format_version: 5,
-    id: "olr-level-liero-factory-reloaded",
-    name: "Liero Factory Reloaded",
+    id: "olr-level-liero-factory-after-dark",
+    name: "Liero Factory After Dark",
     version: "1",
     kind: Level,
     authors: [],

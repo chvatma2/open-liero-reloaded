@@ -47,7 +47,7 @@
     rotation: [
         (mod: "olx-classic", level: "olx-level-dirt-level", time_limit: 5.0, kill_limit: 15, lives: -2),
         (mod: "olx-mw-1-0", level: "olx-level-castlestrike", time_limit: 5.0, kill_limit: 20, lives: -2, loadout: "Standard 100lt"),
-        (mod: "olx-classic", level: "olr-level-liero-factory-reloaded", time_limit: 5.0, kill_limit: 15, lives: -2),
+        (mod: "olx-classic", level: "olr-level-liero-factory-after-dark", time_limit: 5.0, kill_limit: 15, lives: -2),
         (mod: "olx-mw-1-0", level: "olr-level-castlestrike-reloaded", time_limit: 5.0, kill_limit: 20, lives: -2, loadout: "Standard 100lt"),
     ],
     // Start as soon as every player is ready and at least min_players are

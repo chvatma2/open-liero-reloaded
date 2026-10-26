@@ -17,7 +17,7 @@
             distant: 90,
         ),
         (
-            id: "background",
+            id: "backdrop",
             name: "Background",
             kind: Drawn(
                 material: Background,
@@ -104,7 +104,7 @@
             surface: "glass",
         ),
         (
-            id: "ctrl-screen",
+            id: "ctrl-scr",
             name: "Control room screen",
             locked: true,
             kind: Drawn(
@@ -117,7 +117,7 @@
             surface: "glass",
         ),
         (
-            id: "rock-screens",
+            id: "rock-scr",
             name: "Screens in rock",
             locked: true,
             kind: Drawn(
@@ -207,7 +207,7 @@
             surface: "glass",
         ),
         (
-            id: "rock-display",
+            id: "rock-disp",
             name: "Displays in rock",
             locked: true,
             kind: Drawn(
@@ -233,7 +233,7 @@
             surface: "metal",
         ),
         (
-            id: "rock-beacons",
+            id: "rock-bcn",
             name: "Beacons in rock",
             locked: true,
             kind: Drawn(
