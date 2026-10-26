@@ -186,10 +186,12 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     `MAX_BYTES`; `Edit::Whole` carries `masks` too). The document keeps
     `GlowMasks` (by element id, each its box at art resolution, 0-255;
     `glow_mask(id)`) and bakes with them (`bake_elements_with`); saving
-    drops a mask flag whose mask does not fit. A plain level's glow and
-    clear flags made outside the editor (`Kept`) stay as they are while no
-    element glows or is clear, their groups following the look by id, with
-    a diagnostic saying so (`a_plain_level_keeps_its_glow_and_clear`); a
+    drops a mask flag whose mask does not fit. A plain level's glow (with
+    its glow beam maps, final review M1) and clear flags made outside the
+    editor (`Kept`) stay as they are while no element glows or is clear,
+    their groups following the look by id, with a diagnostic saying so
+    (`a_plain_level_keeps_its_glow_and_clear`,
+    `a_plain_level_keeps_its_glow_beams`); a
     resize, crop or art-scale change re-lays the masks (`relay_mask`,
     `resample_mask`), and a paste keeps them.
   - **Tools**: Glow (H) paints the selected element's mask

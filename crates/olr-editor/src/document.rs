@@ -16,9 +16,9 @@ use olr_edit::folders;
 use olr_edit::level::refresh_thumb;
 use olr_edit::pack::{Pack, Source};
 use olr_format::levels::{
-    Composition, CompositionSource, Element, ElementKind, Folder, GlowLayers, LevelObject, LevelSource,
-    check_composition, check_elements, element_box, glow_file, image_file, surface_back_file, surface_file,
-    surface_map_size,
+    Composition, CompositionSource, Element, ElementKind, Folder, GlowBeamMap, GlowLayers, LevelObject,
+    LevelSource, check_composition, check_elements, element_box, glow_file, image_file, surface_back_file,
+    surface_file, surface_map_size,
 };
 use olr_pack::Severity;
 use olr_vfs::VPath;
@@ -117,6 +117,8 @@ pub struct Document {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Kept {
     pub(crate) glow: Option<GlowLayers>,
+    /// The glow's beam maps (final review M1), kept with it.
+    pub(crate) glow_beams: Option<GlowBeamMap>,
     pub(crate) clear: Option<Vec<u8>>,
     /// The look's group ids the glow's group map numbers (1 + index).
     pub(crate) ids: Vec<String>,
@@ -308,6 +310,7 @@ impl Document {
         let surface_maps = decode_surface_maps(&src, level.size)?;
         let kept = (plain && (level.glow.is_some() || level.clear.is_some())).then(|| Kept {
             glow: level.glow.clone(),
+            glow_beams: level.glow_beams.clone(),
             clear: level.clear.clone(),
             ids: group_ids(&level),
         });
@@ -472,6 +475,9 @@ impl Document {
                     g.groups_back.iter_mut().for_each(remap);
                     g
                 });
+                // Its beams with it, none without it (as a bake makes them).
+                self.level.glow_beams =
+                    k.glow_beams.clone().filter(|b| self.level.glow.is_some() && b.fits(self.level.size));
             }
             if !self.items.iter().any(|i| i.element.clear) {
                 self.level.clear = k.clear.clone().filter(|c| c.len() == cells);
@@ -488,6 +494,7 @@ impl Document {
         if let Some(k) = &mut self.kept {
             if !glows {
                 (k.glow, k.ids) = (self.level.glow.clone(), group_ids(&self.level));
+                k.glow_beams = self.level.glow_beams.clone();
             }
             if !clears {
                 k.clear = self.level.clear.clone();

@@ -210,6 +210,38 @@ fn a_plain_level_keeps_its_glow_and_clear() {
     assert_eq!((saved.glow, saved.clear), (src.glow, src.clear));
 }
 
+/// Final review M1: a plain level's glow beams made outside the editor are
+/// kept with its glow (`Kept`): the bake and a save keep them.
+#[test]
+fn a_plain_level_keeps_its_glow_beams() {
+    let Some(root) = content() else { return };
+    let (_tmp, dir) = crate::common::copy_pack(&root, std::path::Path::new("olx-level-dirt-level"));
+    let fs = olr_vfs::DirFs::new(&dir);
+    let mut src = olr_format::levels::read_level_files(&fs).unwrap();
+    let (w, h) = src.size;
+    let s = src.art_scale;
+    let mut glow = olr_format::levels::GlowLayers::empty((w * s, h * s), (w, h));
+    glow.front.iter_mut().step_by(7).for_each(|v| *v = 200);
+    glow.back.iter_mut().step_by(5).for_each(|v| *v = 100);
+    src.glow = Some(glow);
+    let mut beams = olr_format::levels::GlowBeamMap::none((w, h));
+    for i in (0..(w * h) as usize).step_by(11) {
+        (beams.front[2 * i], beams.front[2 * i + 1]) = (46, 30);
+        (beams.back[2 * i], beams.back[2 * i + 1]) = (1, 20);
+    }
+    src.glow_beams = Some(beams);
+    olr_format::levels::write_level_files(&mut olr_vfs::DirFs::new(&dir), &src).unwrap();
+    let (_t, mut st) = editor_at(&root, &dir);
+    let doc = st.document().unwrap();
+    assert!(src.glow_beams.is_some() && doc.level().glow_beams == src.glow_beams, "the bake keeps them");
+    let saved_dir = doc.dir().to_path_buf();
+    let meta = olr_editor::LevelMeta { name: "Renamed".into(), ..doc.meta() };
+    run(&mut st, A::Meta(meta));
+    run(&mut st, A::Save);
+    let saved = olr_format::levels::read_level_files(&olr_vfs::DirFs::new(&saved_dir)).unwrap();
+    assert_eq!(saved.glow_beams, src.glow_beams, "and so does a save");
+}
+
 /// Element `id` given a glow and a dab of the brush at `at`, then selected.
 fn paint_glow_on(s: &mut olr_editor::EditorState, id: &str, at: (i32, i32)) {
     let glow = ElementGlow { strength: 100, group: String::new(), mask: false, beam: None };
