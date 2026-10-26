@@ -176,9 +176,14 @@ on screen or offscreen.
   has a beam map.
   **The cone:** with a beam map, a cascade ray meeting a glowing cell
   weights its light by `beam_cone` (`gi_cascade.wgsl`, group 1: the beam
-  map at the cell's middle world pixel): smoothstep from `cos(spread +
-  0.26)` to `cos(spread)` of the light's way against the direction; 1
-  for a cell not directional. **The beam** (`glow_beams_at`, the
+  map over the cell's world pixels, at most 4 × 4 sampled evenly): the
+  widest of its directional texels' cones, each a smoothstep from
+  `cos(spread + 0.26)` to `cos(spread)` of the light's way against the
+  direction; 1 for a cell none of whose pixels is directional (final
+  review I2: at cells of 2 px or more a thin directional patch beside air
+  still casts nothing behind it, `a_thin_beam_in_a_coarse_cell_casts_nothing_behind`;
+  undirected glow sharing its cell is coned too; a cell of 1 px is its
+  pixel's cone, as before). **The beam** (`glow_beams_at`, the
   composite's group 1: the uniform and the haze map): rejects `along`
   outside (0, reach] and then the wedge (`|side| ≥ width + pen`) first;
   width `half + along tan(spread)`, edge `1 − smoothstep(width − pen/2,

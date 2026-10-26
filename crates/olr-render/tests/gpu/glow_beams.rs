@@ -528,3 +528,57 @@ fn a_long_beam_stays_smooth() {
         assert!(mean > 0.0 && beam[x] >= 0.9 * mean, "({x}, 32): {} against {mean}", beam[x]);
     }
 }
+
+/// Final review I2: on a level whose glow light cells are 2 world pixels
+/// (a 1100 px wide level on a device of 2048 texels a side), a one-pixel
+/// directional column at an even x shares its cell with the air beside it;
+/// the cone still keeps its light from falling behind it.
+#[test]
+fn a_thin_beam_in_a_coarse_cell_casts_nothing_behind() {
+    if offscreen().is_none() {
+        return;
+    }
+    let small = OffscreenOptions { max_texture_side: Some(2048), ..OffscreenOptions::default() };
+    let Ok(gpu) = olr_render::Offscreen::open(&small) else { return };
+    let (w, h) = (1100u32, 64u32);
+    assert_eq!(olr_render::gi_cell((w, h), gpu.device().limits().max_texture_dimension_2d), 2);
+    assert_eq!(PATCH_X % 2, 0, "an even column");
+    let rock = |x: u32, y: u32| x == PATCH_X && PATCH_ROWS.contains(&y);
+    let draw = |directed: bool| {
+        let cells = (0..w * h)
+            .map(|i| if rock(i % w, i / w) { Material::Rock } else { Material::Background })
+            .collect();
+        let t = Terrain::from_grid(&MaterialGrid::from_cells(w, h, cells).unwrap());
+        let mut art = RgbaImage::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                art.set(x, y, if rock(x, y) { Rgba::rgb(255, 255, 255) } else { Rgba::rgb(128, 128, 128) });
+            }
+        }
+        let theme = ThemeArt { holes: Vec::new(), green_mask: None, front_tile: solid(1, 1, Rgba::BLACK) };
+        let mut map = ColorMap::new(&t, &art, &art, 1, theme);
+        let mut g = olr_terrain::GlowLayers::empty((w, h), (w, h));
+        let mut b = GlowBeamMap::none((w, h));
+        for y in PATCH_ROWS {
+            let i = (y * w + PATCH_X) as usize;
+            (g.front[i], g.back[i], g.groups[i], g.groups_back[i]) = (255, 255, 1, 1);
+            if directed {
+                (b.front[2 * i], b.front[2 * i + 1]) = (1, SPREAD);
+            }
+        }
+        assert!(map.set_glow(Some(g)) && map.set_glow_beams(Some(b)));
+        let mut r = renderer(&gpu, &map);
+        let mut l = list(View { x: 0.0, y: 0.0, w: W as f32, h: H as f32 });
+        l.map = (w, h);
+        Frame { img: gpu.render_lit_to_image(&mut r, &l, Some(&beam_look(0)), (2 * W, 2 * H)), at: (0, 0) }
+    };
+    let f = draw(true);
+    let amb = ambient(&f);
+    assert!(f.light(41, 32) > 3.0 * amb, "ahead: {} against {amb}", f.light(41, 32));
+    for (x, y) in [(15, 32), (12, 28), (17, 36)] {
+        assert!(f.light(x, y) < 1.1 * amb, "behind, ({x}, {y}): {} against {amb}", f.light(x, y));
+    }
+    // Undirected, the same column lights behind it.
+    let f = draw(false);
+    assert!(f.light(15, 32) > 1.5 * amb, "undirected behind: {} against {amb}", f.light(15, 32));
+}

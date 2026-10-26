@@ -23,25 +23,48 @@
 // radians (the spike's soft edge).
 const BEAM_SOFT: f32 = 0.26;
 
-// How much of a directional cell's light the ray from it along `-ray`
-// carries: all within its spread, none past the spread and BEAM_SOFT, a
-// smoothstep between; 1 for a cell that is not directional. Cell `q`'s
-// middle world pixel's texel (the light comes from the patch it is in).
-fn beam_cone(q: vec2<i32>, ray: vec2<f32>) -> f32 {
-    let c = i32(cp.c.w);
-    let w = q * c + vec2<i32>(c / 2);
-    let size = vec2<i32>(textureDimensions(beam_tex));
-    if any(w < vec2<i32>(0)) || any(w >= size) {
-        return 1.0;
-    }
-    let b = textureLoad(beam_tex, w, 0).rg;
-    if b.x == 0u {
-        return 1.0;
-    }
+// The cone of beam texel `b` (direction / 2 + 1, the spread) for the ray
+// along `-ray`: 1 within its spread, 0 past the spread and BEAM_SOFT, a
+// smoothstep between.
+fn texel_cone(b: vec2<u32>, ray: vec2<f32>) -> f32 {
     let theta = radians(f32(b.x - 1u) * 2.0);
     let spread = radians(f32(max(b.y, 1u)));
     let d = vec2<f32>(cos(theta), sin(theta));
     return smoothstep(cos(min(spread + BEAM_SOFT, 3.14159265)), cos(spread), dot(-ray, d));
+}
+
+// The most texels a side `beam_cone` reads of a cell (cells of more world
+// pixels are sampled evenly).
+const CONE_SAMPLES: i32 = 4;
+
+// How much of a directional cell's light the ray from it along `-ray`
+// carries: 1 for a cell none of whose world pixels is directional, else
+// the widest cone of its directional texels (final review I2: a cell of
+// 2 or more world pixels on a large level holds a thin directional patch
+// beside air or undirected glow; their cone keeps its light from falling
+// behind it, coning undirected glow sharing the cell too). At a cell of 1
+// world pixel this is that pixel's cone, as before.
+fn beam_cone(q: vec2<i32>, ray: vec2<f32>) -> f32 {
+    let c = max(i32(cp.c.w), 1);
+    let n = min(c, CONE_SAMPLES);
+    let stride = c / n;
+    let size = vec2<i32>(textureDimensions(beam_tex));
+    var cone = 0.0;
+    var directional = false;
+    for (var j = 0; j < n; j++) {
+        for (var i = 0; i < n; i++) {
+            let w = q * c + vec2<i32>(i, j) * stride + vec2<i32>(stride / 2);
+            if any(w < vec2<i32>(0)) || any(w >= size) {
+                continue;
+            }
+            let b = textureLoad(beam_tex, w, 0).rg;
+            if b.x != 0u {
+                directional = true;
+                cone = max(cone, texel_cone(b, ray));
+            }
+        }
+    }
+    return select(1.0, cone, directional);
 }
 
 // The most steps of one ray's march (a ray grazing a wall steps one cell
