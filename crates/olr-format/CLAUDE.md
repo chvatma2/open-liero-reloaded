@@ -174,8 +174,8 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   or a plain drawn (not mixed, no back art) Background element, never
   clear (it may glow, issue #62), 1-99, every distant element below every other
   (`check_distant`), at most `MAX_DISTANT`, `at` within `MAX_DISTANT_AT`,
-  their art pixels within `LEVEL_ART.max_pixels`; an asset carries none
-  (`check_asset`). The thumbnail (`thumb.rs`' `seen`) shows them from the
+  their art pixels within `LEVEL_ART.max_pixels`; a library asset carries none
+  (`check_asset`; a level's own asset may, `check_own_asset`). The thumbnail (`thumb.rs`' `seen`) shows them from the
   level's centre in see-through pixels, lit as ambient plus (1 − depth) of
   the rest (`the_thumbnail_shows_distant_layers`). Tests in `files.rs`
   (`distant_layers_round_trip`, `bad_distant_layers_are_errors_and_played_without`,
@@ -339,7 +339,7 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   `folder_chain(c, folder)` walks up the parents, innermost first,
   stopping at an unknown id, a repeat and `MAX_FOLDER_DEPTH`: safe on an
   unchecked composition (`read_composition`, which also refuses more
-  than `MAX_FOLDERS`). `check_asset` refuses an element naming a folder.
+  than `MAX_FOLDERS`). An asset's elements name its own folders (issue #71).
   Tests: `composition.rs`' `nested_folders_round_trip_in_canonical_order`,
   `folder_rules_are_refused_naming_the_folder`,
   `folder_chains_stop_on_a_cycle_and_at_the_depth_limit`,
@@ -349,7 +349,7 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   `Element::glass` (`ElementGlass { opacity 1-99, tint 0-100 default 0,
   frost 0-MAX_GLASS_FROST 40 tenths default 0 }`), only on a Background
   image or drawn layer (mixed: its background pixels), never distant;
-  `check_asset` refuses it (`glass_elements_follow_their_rules`).
+  an asset may carry it (issue #71; `glass_elements_follow_their_rules`).
   `LevelSource::glass` (`GlassMap`, `olr-terrain`'s: `GLASS_FILE`
   `look/glass.png`, RGBA at the art size, RGB the filter of the distant
   layers behind (white none), alpha the frost in tenths; optional on its
@@ -386,6 +386,44 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   `MAX_ASSET_BYTES` (256 MiB) in all; `write_asset_files` writes only the
   files the elements name. Unit tests in `assets.rs`; the page is
   `docs/formats/asset.md`.
+  Issue #71 (STATUS.md "Asset-based levels: the asset format (issue
+  #71)"; types and rules in `assets/states.rs`): `AssetFile` gains
+  `folders` (the composition's, `check_folders`' rules), `states`
+  (`StateSource { name, own, values, loop_sound, enter_sound }`, 1 to
+  `MAX_STATES` 32, default `normal_states()` (one `Normal`, left out when
+  exactly that), names `valid_state_name` unique case aside), `start`
+  (none: the first; written out only when it names another), `exposed`
+  (`ExposedSource { name, property, default, min, max }`, at most
+  `MAX_EXPOSED` 64, `valid_exposed_name`; `default` optional, none the
+  layer's own, required for an `Own` group's `GlowColour`, an exposed
+  `Health`'s is `points`; `min`/`max` for `Int` only, required for
+  positions), `sounds` (at most `MAX_ASSET_SOUNDS` 16, `valid_sound_name`,
+  files `sounds/<name>` at most `MAX_ASSET_SOUND_BYTES` 2 MiB) and
+  `health` (`HealthSource { points 1-MAX_HEALTH 10000, at_zero }`); each
+  new field is left out at its default, so a stateless asset writes byte
+  for byte as before (`a_stateless_asset_writes_as_before`, every
+  built-in asset). `PropertySource` (`X`, `Y`, `Visible`, `Facing`,
+  `Health` and the layer properties by element id), `ValueSource` (`Int`,
+  `Bool`, `Colour`, `Animation`); `property_type(file, p)` is the
+  design's table (type, range, the layers each is valid on; an error
+  saying why not), `own_value` a property's own setting, `property_key`
+  one value's key (a group property's kind and group), `check_value`.
+  `AssetSource` gains `sounds` (by name) and `script` (`script.rhai`,
+  `SCRIPT_FILE`, read when present, UTF-8, at most `MAX_SCRIPT_BYTES` 64
+  KiB, else a read error). A drawn layer owned by n states stacks its
+  pictures in its own files (`owners`; `layers/<id>.png`,
+  `.material.png`, `.back.png` and `glow/<id>.png` `1 + n` boxes tall;
+  surface maps and image masks not): `levels::check_stacked_composition`
+  and `check_stacked_elements` (what `check_composition`/`check_elements`
+  call with one picture each) check each sheet's height from its header,
+  within `LEVEL_ART`, and every picture in `MAX_COMPOSED_PIXELS`.
+  `check_names` (before any file is read or written) bounds the folders,
+  states, exposed entries and sounds and checks the sound names.
+  `check_asset` (the library's) now allows folders and glass;
+  `check_own_asset` (an asset a level holds, issue #73) also allows a
+  raster, distant layers and glow groups and materials no element names;
+  a raster or distant layer is still never owned nor named by a
+  property. `tests/hostile.rs`' `mutated_asset_files_never_panic`.
 - **Themes** (`themes/`): `ThemeSource` is `theme.ron`, `holes/<i>.png` with
   `holes/<i>.mask.png`, `green_ball.png` with `green_ball.mask.png`,
   `stones/`, `misc/`, `front_tile.png` and `back_tile.png`. A stamp is a
