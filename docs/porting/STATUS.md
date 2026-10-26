@@ -6243,9 +6243,31 @@ No OLX counterpart. Spec
 picked by the maintainer from spike renders ("PCs 0.12, soft shadows,
 softest edge"). Presentation only; levels without directional glow and
 haze draw byte for byte as before (the render goldens and
-`lit-hashes.ron` held without a bless). The maintainer's rulings on
-Liero Factory Reloaded's renders (2026-10-25), shown beside the spike's
-picked frames:
+`lit-hashes.ron` held without a bless).
+
+The spec's decisions, in brief:
+
+- **Analytic beams.** Light-blocking rock, a cone on the light pass alone
+  and a haze that scatters the glow light all looked like mist and were
+  dropped.
+- **A beam is not an object.** A glowing element takes an optional
+  direction and spread (`ElementGlow.beam`); each separate patch of its
+  glowing pixels becomes one beam, as wide as the patch at its front face,
+  with the group's colour, strength and reach. Nothing is placed by hand.
+- **No light behind the source:** the same cone limits the directional
+  pixels' light on the light pass.
+- **Haze** (the look's strength plus an optional painted haze map) makes a
+  cone with nothing in it show as light in the air.
+- **Not directional:** distant layers' glow, and play lights (explosions,
+  muzzle flashes, mod lights). The simulation is untouched.
+- **Editor:** direction and spread under the glow properties, a haze
+  strength in the look, a Haze brush (`level haze paint` in the CLI), and
+  the canvas draws the beams as the game does.
+- **Liero Factory Reloaded:** its side PCs and its headlights cast beams
+  (`content/reloaded/README.md` has the rebuild).
+
+The maintainer's rulings on Liero Factory Reloaded's renders (2026-10-25),
+shown beside the spike's picked frames:
 
 - **The side PCs glow at 15.** Their beams are then 0.12 of their
   colour, as in the picked look. Their own screens are duller than at
@@ -6295,7 +6317,22 @@ The renderer, as built (`olr-render`'s `renderer/glow_beams.rs`):
   falls on a pixel that does not glow and is not a distant layer's (rock
   faces, the back wall, sprites); `beam × haze / 50 × haze map` is added after
   `light × art` in the open air and over the sky.
-- **Planning calls:** the beams go in a uniform (64 × 48 bytes), not a
+- **Planning calls, in the formats and tools:**
+  - **Direction in 2 degree steps (P3):** the beam map stores a direction
+    in 2 degree steps; the element keeps whole degrees.
+  - **The haze map lives in `look/haze.png` only (P2):** edited in place,
+    not baked and not copied into `editor/` as the spec had it (the map
+    has no element source). A new map starts at 255, the look's haze
+    everywhere (T6a), and `level resize` fills its new area with 255 too
+    (T6c).
+  - **`level haze paint` (T4a)** takes `level paint`'s shape arguments
+    (rect, circle, mask), not glow's `--colour-at`: haze has no element
+    art to pick by colour.
+  - **A background patch is one beam (T5a):** see Shadows above.
+  - **Short layer ids (T6b):** the factory's layers are `ctrl-screen`,
+    `pcs-right`, `pcs-left` and `headlights`, for the 80-character
+    shipped path rule; the names are unchanged.
+- **Planning calls, in the renderer:** the beams go in a uniform (64 × 48 bytes), not a
   storage buffer, so no device without fragment storage buffers is
   refused; the beam map the cascades read is composed from the live
   material (the backdrop's texel where a pixel is background), so digging
@@ -6307,8 +6344,15 @@ The renderer, as built (`olr-render`'s `renderer/glow_beams.rs`):
 - **Cost:** per pixel and beam whose wedge holds the pixel, 8 shadow
   marches of up to the distance to the source; a few arithmetic rejects
   outside the wedges; no pass of its own, and a level without beams reads
-  only the count. Unmeasured (the maintainer deferred measurement,
-  2026-10-25).
+  only the count. Bounded: a walk takes at most 2048 steps, at most 64
+  beams, and the beams are evaluated per world-target texel and again per
+  split-screen view. A spread over about 60 degrees at a long reach
+  reaches the walk bound and draws dark on its far side.
+- **Deferred measurement:** unmeasured (the maintainer deferred it,
+  2026-10-25: the PC was in use). `docs/deferred-verification.md` lists
+  the `cargo xtask profile` of the factory's beams against the last base
+  and a playtest of the beams in motion; the maintainer judged still
+  frames only.
 
 ## Kept OLX quirks
 
