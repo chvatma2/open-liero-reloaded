@@ -6262,7 +6262,8 @@ The spec's decisions, in brief:
   muzzle flashes, mod lights). The simulation is untouched.
 - **Editor:** direction and spread under the glow properties, a haze
   strength in the look, a Haze brush (`level haze paint` in the CLI), and
-  the canvas draws the beams as the game does.
+  the canvas draws the beams as the game does, re-deriving them after
+  every glow or art upload (final review I1, below).
 - **Liero Factory Reloaded:** its side PCs and its headlights cast beams
   (`content/reloaded/README.md` has the rebuild).
 
@@ -6339,20 +6340,44 @@ The renderer, as built (`olr-render`'s `renderer/glow_beams.rs`):
   dirt reveals a backdrop patch's cone; a beam whose group's reach is
   unlimited (which `check` refuses) is not drawn, and a reach is drawn to
   512 at most (the shadow walk is bounded by four times it); the beams are derived
-  again, and the maps uploaded, when the editor sets new maps
-  (`ColorMap::beams_generation`).
+  again, and the maps uploaded, when the editor sets new maps or uploads
+  glow or art over a level with beams (`ColorMap::beams_generation`).
 - **Cost:** per pixel and beam whose wedge holds the pixel, 8 shadow
   marches of up to the distance to the source; a few arithmetic rejects
   outside the wedges; no pass of its own, and a level without beams reads
   only the count. Bounded: a walk takes at most 2048 steps, at most 64
   beams, and the beams are evaluated per world-target texel and again per
-  split-screen view. A spread over about 60 degrees at a long reach
-  reaches the walk bound and draws dark on its far side.
+  split-screen view. A wide spread's reach is cut to fit the walk bound
+  (`walk_reach`), so it fades out rather than draws dark on its far side.
 - **Deferred measurement:** unmeasured (the maintainer deferred it,
   2026-10-25: the PC was in use). `docs/deferred-verification.md` lists
   the `cargo xtask profile` of the factory's beams against the last base
   and a playtest of the beams in motion; the maintainer judged still
   frames only.
+- **The final review's fixes (2026-10-26):**
+  - **I1, stale beams in the editor:** a directional element's glow
+    strength (the beam's only strength control), its group, a mask stroke
+    that zeroes no pixel and art under an own-colour group leave the beam
+    map as it is, so the canvas kept the old beams. `replace_glow_rect`
+    and `replace_rect` now bump `beams_generation` on a level with beams
+    (none without, so such levels draw as before).
+  - **I2, thin patches on large levels:** above 2^20 px a glow light cell
+    is 2 or more world pixels, and the cascade's cone read one texel a
+    cell, so a one-pixel directional column at an even x cast all round.
+    `beam_cone` now reads the cell's texels (at most 4 × 4) and takes the
+    widest cone of its directional ones: light behind a source stays out,
+    at the cost of coning undirected glow that shares its cell. A cell of
+    one pixel reads its pixel as before.
+  - **I3, no live warning past 64 beams:** the editor's diagnostics show
+    the Error "N glow beams, above 64" (`olr_format::levels::glow_beam_count`
+    of the bake).
+  - **M1:** a plain level's glow beam maps are kept with its glow
+    (`Kept`), not dropped by the first bake.
+  - **M2:** a beam's reach is cut at pack time (`walk_reach`: the walk to
+    any source point from any pixel it lights stays within
+    `BEAM_MAX_STEPS`), so a wide beam fades rather than ends in a dark cut.
+  - **M3:** the editor's Direction field steps by 2 degrees (the map's
+    step); the CLI and the format still take whole degrees.
 
 ## Kept OLX quirks
 
