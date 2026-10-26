@@ -56,3 +56,113 @@ proptest! {
         }
     }
 }
+
+/// An asset with states (issue #71): a stacked sheet, a glow mask, sounds.
+const ASSET: &str = r##"(
+    name: "Desk",
+    size: (2, 2),
+    elements: [
+        (
+            id: "screen",
+            kind: Drawn(
+                material: Background,
+                size: (2, 2),
+            ),
+            glow: (
+                strength: 80,
+                group: "screens",
+                mask: true,
+            ),
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "screens",
+            colour: Tint("#40ff80"),
+            reach: Pixels(12),
+        ),
+    ],
+    states: [
+        (
+            name: "Normal",
+        ),
+        (
+            name: "Alarm",
+            own: [
+                "screen",
+            ],
+            values: [
+                (
+                    property: GlowColour("screen"),
+                    value: Colour("#ff2020"),
+                ),
+            ],
+            loop_sound: "alarm.ogg",
+        ),
+    ],
+    exposed: [
+        (
+            name: "glow",
+            property: GlowStrength("screen"),
+            default: Int(50),
+            min: 0,
+            max: 100,
+        ),
+    ],
+    sounds: [
+        "alarm.ogg",
+    ],
+    health: (
+        points: 20,
+        at_zero: "Alarm",
+    ),
+)
+"##;
+
+fn asset_fs(ron: &[u8], sheet: &[u8]) -> MemFs {
+    use olr_data::image::RgbaImage;
+    use olr_format::image_io;
+    MemFs::new()
+        .with("asset.ron", ron.to_vec())
+        .with("layers/screen.png", sheet.to_vec())
+        .with("glow/screen.png", image_io::encode_grey(2, 4, &[9; 8]))
+        .with("sounds/alarm.ogg", b"OggS".to_vec())
+        .with("script.rhai", "fn x() {}".to_string())
+        .with("unused", image_io::encode_rgba(&RgbaImage::new(1, 1)))
+}
+
+fn sheet() -> Vec<u8> {
+    olr_format::image_io::encode_rgba(&olr_data::image::RgbaImage::new(2, 4))
+}
+
+#[test]
+fn the_asset_fixture_reads_and_checks() {
+    use olr_format::assets::{check_asset, read_asset_files};
+    let src = read_asset_files(&asset_fs(ASSET.as_bytes(), &sheet())).unwrap();
+    check_asset(&src).unwrap();
+    assert_eq!(src.file.states.len(), 2);
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(512))]
+    #[test]
+    fn mutated_asset_files_never_panic(
+        edits in proptest::collection::vec((0usize..ASSET.len(), any::<u8>()), 1..8),
+        sheet_edits in proptest::collection::vec((0usize..64, any::<u8>()), 0..6),
+    ) {
+        use olr_format::assets::{check_asset, check_own_asset, read_asset_files};
+        let mut bytes = ASSET.as_bytes().to_vec();
+        for (at, b) in edits {
+            bytes[at] = b;
+        }
+        let mut png = sheet();
+        for (at, b) in sheet_edits {
+            let at = at % png.len();
+            png[at] = b;
+        }
+        if let Ok(src) = read_asset_files(&asset_fs(&bytes, &png)) {
+            let _ = check_asset(&src);
+            let _ = check_own_asset(&src);
+        }
+    }
+}

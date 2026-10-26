@@ -132,7 +132,8 @@ pub struct Element {
     #[serde(default, skip_serializing_if = "d::is_false")]
     pub locked: bool,
     /// The id of its innermost folder (issue #59); none: the top level.
-    /// An asset's elements name none. Default none.
+    /// An asset's elements name the asset's own folders (issue #71).
+    /// Default none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub folder: Option<String>,
     /// What the element is.
@@ -164,7 +165,7 @@ pub struct Element {
     /// its box (the camera at the level's centre), its picture glows where
     /// it is drawn. A Background image or plain drawn
     /// layer only, and every distant element lies below every other one;
-    /// an asset carries none.
+    /// a library asset carries none (a level's own asset may).
     /// Default none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub distant: Option<u8>,
@@ -608,9 +609,24 @@ pub fn check_composition(
     size: (u32, u32),
     art_scale: u32,
 ) -> Result<(), FormatError> {
-    let mut pixels = check_elements(&src.composition, size, art_scale)?;
+    check_stacked_composition(src, size, art_scale, &|_| 1)
+}
+
+/// [`check_composition`] where drawn element `e`'s art, material, back
+/// art and glow mask each stack `pictures(e)` (at least 1) pictures of its
+/// box from the top down (an asset's states, issue #71): each file that
+/// many boxes tall, each picture counted in the pixel budget.
+pub fn check_stacked_composition(
+    src: &CompositionSource,
+    size: (u32, u32),
+    art_scale: u32,
+    pictures: &dyn Fn(&Element) -> u32,
+) -> Result<(), FormatError> {
+    let mut pixels = check_stacked_elements(&src.composition, size, art_scale, pictures)?;
     let art = (size.0.saturating_mul(art_scale), size.1.saturating_mul(art_scale));
     for (i, e) in src.composition.elements.iter().enumerate() {
+        let n = pictures(e).max(1);
+        let tall = |(w, h): (u32, u32)| (w, h.saturating_mul(n));
         let boxed = drawn_box(&e.kind, size);
         let glow = glow_file(&e.id);
         if e.glow.as_ref().is_some_and(|g| g.mask) {
@@ -622,7 +638,7 @@ pub fn check_composition(
                 ));
             };
             let b = element_box(&e.kind, size).map_or((0, 0), |(_, b)| b);
-            let expected = (b.0.saturating_mul(art_scale), b.1.saturating_mul(art_scale));
+            let expected = tall((b.0.saturating_mul(art_scale), b.1.saturating_mul(art_scale)));
             check_file(&glow, bytes, Some((expected, "the element's box × art_scale")))?;
         }
         let surfaces = [surface_file(&e.id), surface_back_file(&e.id)];
@@ -655,10 +671,10 @@ pub fn check_composition(
                 (ElementKind::Image { .. }, _) => None,
                 (ElementKind::Raster, _) if part == 0 => Some((size, "the level's size")),
                 (ElementKind::Drawn { mixed: true, .. }, Some((_, b))) if part == 1 => {
-                    Some((b, "the layer's size"))
+                    Some((tall(b), "the layer's size"))
                 }
                 (ElementKind::Drawn { .. }, Some((_, b))) => Some((
-                    (b.0.saturating_mul(art_scale), b.1.saturating_mul(art_scale)),
+                    tall((b.0.saturating_mul(art_scale), b.1.saturating_mul(art_scale))),
                     "the layer's size × art_scale",
                 )),
                 _ => Some((art, "the level's size × art_scale")),
@@ -796,6 +812,18 @@ pub fn decode_surface_map(
 /// case aside, each box's art within `LEVEL_ART`, the pixel budget (its
 /// total, masks aside, returned).
 pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Result<u64, FormatError> {
+    check_stacked_elements(c, size, art_scale, &|_| 1)
+}
+
+/// [`check_elements`] with drawn element `e`'s pictures stacked
+/// `pictures(e)` high ([`check_stacked_composition`]): each sheet within
+/// `LEVEL_ART`, every picture in the budget.
+pub fn check_stacked_elements(
+    c: &Composition,
+    size: (u32, u32),
+    art_scale: u32,
+    pictures: &dyn Fn(&Element) -> u32,
+) -> Result<u64, FormatError> {
     let elements = &c.elements;
     if let Some(e) = too_many(elements.len()) {
         return Err(e);
@@ -866,7 +894,16 @@ pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Resu
                 let (w, h) = boxed.unwrap_or(size);
                 let cells = u64::from(w) * u64::from(h);
                 let art = cells * u64::from(art_scale) * u64::from(art_scale);
-                art * (1 + u64::from(*back)) + if *mixed { cells } else { 0 }
+                // Stacked pictures (an asset's states, issue #71): every
+                // sheet decodes whole, its glow mask too.
+                let n = u64::from(pictures(e).max(1));
+                if n > 1 {
+                    let tall = (h.saturating_mul(art_scale)).saturating_mul(n as u32);
+                    image_io::check_size(w.saturating_mul(art_scale), tall, LEVEL_ART)
+                        .map_err(|why| bad("size", format!("its {n} stacked pictures: {why}")))?;
+                }
+                let mask = if n > 1 && e.glow.as_ref().is_some_and(|g| g.mask) { art } else { 0 };
+                n * (art * (1 + u64::from(*back)) + if *mixed { cells } else { 0 } + mask)
             }
             ElementKind::Raster => 2 * art_pixels + u64::from(size.0) * u64::from(size.1),
         });

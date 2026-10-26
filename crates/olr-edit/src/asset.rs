@@ -774,14 +774,12 @@ pub fn encode(asset: &Asset) -> Result<AssetSource, AssetError> {
         elements.push(e);
     }
     let file = AssetFile {
-        name: asset.name.clone(),
         art_scale: s,
-        size: asset.size,
-        elements,
         glow_groups: asset.groups.clone(),
         materials: asset.materials.clone(),
+        ..AssetFile::new(&asset.name, asset.size, elements)
     };
-    let mut src = AssetSource { file, files, thumb: None };
+    let mut src = AssetSource::new(file, files);
     let decoded = decode(&src)?;
     src.thumb = Some(olr_format::image_io::encode_rgba(&thumbnail(&decoded)));
     Ok(src)
@@ -969,7 +967,7 @@ fn read_header(dir: &Path) -> Result<AssetSource, AssetError> {
             })
         })
     };
-    let src = AssetSource { file, files: BTreeMap::new(), thumb };
+    let src = AssetSource { thumb, ..AssetSource::new(file, BTreeMap::new()) };
     match check_asset(&src) {
         // Only a missing file may fail here (the files are not read).
         Err(FormatError::Invalid { message, .. }) if message.ends_with(": missing") => Ok(src),

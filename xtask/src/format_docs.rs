@@ -144,6 +144,7 @@ const PAGES: &[Page] = &[
         module: "crates/olr-format/src/assets.rs",
         sources: &[
             "crates/olr-format/src/assets.rs",
+            "crates/olr-format/src/assets/states.rs",
             "crates/olr-format/src/levels/composition.rs",
             "crates/olr-format/src/look.rs",
             "crates/olr-format/src/materials.rs",
@@ -160,6 +161,8 @@ const PAGES: &[Page] = &[
             "glow/<id>.png",
             "surface/<id>.png",
             "surface/<id>.back.png",
+            "sounds/<file>",
+            "script.rhai",
             "thumb.png",
         ],
     },
@@ -606,6 +609,15 @@ fn declares(line: &str, name: &str, field: bool) -> bool {
 }
 
 /// A literal expression as written (`-75.0`, `"x"`), if it is one.
+/// A default function's value as its doc comment gives it, when its body
+/// is no literal: the last sentence `Written `<value>`.`.
+fn written_value(doc: &[String]) -> Option<String> {
+    let text = doc.join(" ");
+    let (_, rest) = text.rsplit_once("Written `")?;
+    let (value, _) = rest.split_once('`')?;
+    Some(value.to_string())
+}
+
 fn literal(e: &Expr) -> Option<String> {
     match e {
         Expr::Lit(l) => Some(l.lit.to_token_stream().to_string()),
@@ -701,6 +713,8 @@ impl Sources {
                     if let [syn::Stmt::Expr(e, None)] = f.block.stmts.as_slice()
                         && let Some(v) = literal(e)
                     {
+                        self.values.insert(f.sig.ident.to_string(), v);
+                    } else if let Some(v) = written_value(&doc_lines(&f.attrs)) {
                         self.values.insert(f.sig.ident.to_string(), v);
                     }
                 }
@@ -1481,6 +1495,30 @@ enum Mode {
                 "| `mode` | [Mode](#mode) | `Off` | Mode. |",
             ]
         );
+    }
+
+    /// A default function whose body is no literal gives its value in its
+    /// doc comment (issue #71: an asset's states).
+    #[test]
+    fn reads_a_written_default() {
+        let s = sources(&[(
+            "src/w.rs",
+            r#"
+/// One state. Written `[(name: "Normal")]`.
+fn normal() -> Vec<State> {
+    vec![State::new("Normal")]
+}
+
+#[derive(Serialize, Deserialize)]
+struct W {
+    /// States.
+    #[serde(default = "normal")]
+    states: Vec<String>,
+}
+"#,
+        )]);
+        let md = s.sections(&[("W", "w.ron")], &BTreeMap::new()).unwrap();
+        assert!(md.contains("| `states` | list of string | `[(name: \"Normal\")]` | States. |"), "{md}");
     }
 
     #[test]

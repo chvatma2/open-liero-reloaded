@@ -97,7 +97,7 @@ fn the_guide_asset_example_checks_clean() {
         "glow/torch.png".to_string(),
         olr_format::image_io::encode_grey(w * s, h * s, &vec![255; (w * h * s * s) as usize]),
     );
-    let src = olr_format::assets::AssetSource { file, files, thumb: None };
+    let src = olr_format::assets::AssetSource::new(file, files);
     olr_format::assets::check_asset(&src).unwrap();
     olr_edit::asset::decode(&src).unwrap();
 }
