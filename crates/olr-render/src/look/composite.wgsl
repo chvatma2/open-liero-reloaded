@@ -70,10 +70,9 @@ struct GlowBeams {
 const BEAM_PENUMBRA: f32 = 0.03;
 // The points across a beam's source a pixel looks for (soft shadows).
 const BEAM_SHADOW_POINTS: i32 = 8;
-// The most pixels a shadow march visits: four times the longest reach (512,
-// `renderer/glow_beams.rs`), so a beam of that reach and a spread up to
-// about 60° is walked whole; a walk that runs out counts as blocked.
-const BEAM_MAX_STEPS: i32 = 2048;
+// The most pixels a shadow march visits, BEAM_MAX_STEPS (2048, given by
+// `renderer/glow_beams.rs`, four times the longest reach): a walk that runs
+// out counts as blocked, so each beam's reach is cut to fit (`walk_reach`).
 
 @vertex
 fn vs_full(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {

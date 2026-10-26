@@ -28,9 +28,14 @@ pub(super) const BEAM_FLOATS: usize = 12;
 pub(super) const BEAMS_BYTES: u64 = (MAX_GLOW_BEAMS * BEAM_FLOATS * 4) as u64;
 
 /// The longest reach a beam is drawn to, world pixels (hostile content:
-/// the composite's shadow march is bounded by four times it,
-/// `BEAM_MAX_STEPS` in `composite.wgsl`); `check` allows reaches to 65 535.
+/// the composite's shadow march is bounded by [`BEAM_MAX_STEPS`], four
+/// times it); `check` allows reaches to 65 535.
 pub(super) const MAX_BEAM_REACH: f32 = 512.0;
+
+/// The most pixels the composite's shadow walk visits (`beam_sees` in
+/// `composite.wgsl`, given it by [`wgsl`]); a walk that runs out counts as
+/// blocked, so [`walk_reach`] keeps every beam within it.
+pub(super) const BEAM_MAX_STEPS: u32 = 2048;
 
 /// The widest spread a beam is drawn at, radians (a half-angle of 90° is a
 /// half-plane: its tangent stays finite).
@@ -38,7 +43,21 @@ const MAX_SPREAD: f32 = 89.5 * core::f32::consts::PI / 180.0;
 
 /// The composite's prelude: the uniform's array length.
 pub(super) fn wgsl() -> String {
-    format!("const MAX_GLOW_BEAMS: i32 = {MAX_GLOW_BEAMS};\n")
+    format!("const MAX_GLOW_BEAMS: i32 = {MAX_GLOW_BEAMS};\nconst BEAM_MAX_STEPS: i32 = {BEAM_MAX_STEPS};\n")
+}
+
+/// The longest reach a beam of half-width `half` and spread tangent `tan`
+/// is drawn to so the shadow walk from any pixel it lights to any point
+/// across its source stays within [`BEAM_MAX_STEPS`] (final review M2: a
+/// wide beam at a long reach ran out of steps and ended in a hard dark
+/// cut; cut short, its falloff fades it out). A lit pixel lies at most
+/// `reach` along and `half + reach (tan + 0.03) + 0.5` aside (the edge's
+/// penumbra), a source point half a pixel behind the face and `half`
+/// aside; a grid walk takes at most √2 times that distance plus a pixel
+/// at each end. At most [`MAX_BEAM_REACH`]; never negative.
+pub(super) fn walk_reach(half: f32, tan: f32) -> f32 {
+    let steps = BEAM_MAX_STEPS as f32 / core::f32::consts::SQRT_2 - 2.0 * half.max(0.0) - 4.0;
+    (steps / (1.03 + tan.max(0.0))).clamp(0.0, MAX_BEAM_REACH)
 }
 
 /// The layouts and the frame's uniform a level's bind groups use.
@@ -288,7 +307,7 @@ impl GlowBeams {
 
 /// Packs the frame's beams into `out` ([`BEAM_FLOATS`] each): each of
 /// `sources` whose group `look` has, with a reach in world pixels, that
-/// casts. Its light is [`BEAM_SCALE`] × the group's cast × its colour (its
+/// casts, its reach at most [`walk_reach`]. Its light is [`BEAM_SCALE`] × the group's cast × its colour (its
 /// art's, normalised, for an own-colour or filtered group; white for a
 /// tint, which the cast carries) × its mean glow. `regions` are the flicker
 /// regions (a `Flicker` group's beam flickers as its patch's first pixel's
@@ -314,7 +333,8 @@ fn pack(sources: &[GlowBeamSource], look: &LookFrame, regions: &[u16], out: &mut
         let tan = s.spread.clamp(0.0, MAX_SPREAD).tan();
         let group = if s.back { -f32::from(s.group) } else { f32::from(s.group) };
         let at = out.len();
-        out.extend([s.at[0], s.at[1], s.dir[0], s.dir[1], s.half, tan, g.reach.min(MAX_BEAM_REACH), group]);
+        let reach = g.reach.min(walk_reach(s.half, tan));
+        out.extend([s.at[0], s.at[1], s.dir[0], s.dir[1], s.half, tan, reach, group]);
         out.extend([light[0], light[1], light[2], f32::from(region)]);
         // A NaN never reaches a shader.
         if !out[at..].iter().all(|v| v.is_finite()) {
@@ -417,5 +437,38 @@ mod tests {
         sources[0].back = false;
         pack(&sources, &look(10.0, 60.0, true), &[], &mut out);
         assert_eq!(out[7], 1.0);
+    }
+
+    /// Final review M2: a wide beam's reach is cut so the composite's
+    /// shadow walk (`BEAM_MAX_STEPS` pixels) reaches its far end: the beam
+    /// fades out within the walk rather than ending in a hard dark cut. A
+    /// beam whose walk fits keeps its reach.
+    #[test]
+    fn a_wide_beam_fades_within_the_walk() {
+        let mut one = sources(&map(4));
+        one.truncate(1);
+        let mut out = Vec::new();
+        for spread in 1..=90 {
+            for half in [0.5, 2.5, 10.0, 40.0] {
+                one[0].spread = (spread as f32).to_radians();
+                one[0].half = half;
+                assert_eq!(pack(&one, &look(10.0, 65535.0, true), &[], &mut out), 1);
+                let (tan, reach) = (out[5], out[6]);
+                let walk = reach * core::f32::consts::SQRT_2 * (1.0 + tan);
+                assert!(walk <= 2048.0, "spread {spread}, half {half}: reach {reach} walks {walk}");
+                assert!(reach > 0.0 && reach <= MAX_BEAM_REACH);
+            }
+        }
+        // Spread 30: the walk fits, the reach as asked (or 512).
+        one[0].spread = 30f32.to_radians();
+        one[0].half = 2.5;
+        pack(&one, &look(10.0, 60.0, true), &[], &mut out);
+        assert_eq!(out[6], 60.0);
+        pack(&one, &look(10.0, 65535.0, true), &[], &mut out);
+        assert_eq!(out[6], MAX_BEAM_REACH);
+        // Spread 80 at reach 500: cut.
+        one[0].spread = 80f32.to_radians();
+        pack(&one, &look(10.0, 500.0, true), &[], &mut out);
+        assert!(out[6] < 250.0 && out[6] == walk_reach(2.5, out[5]), "{}", out[6]);
     }
 }

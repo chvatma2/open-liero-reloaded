@@ -161,7 +161,10 @@ on screen or offscreen.
   haze map (`R8Unorm`, `ColorMap::haze`, else 1 × 1 at 1). Each frame
   `pack_glow_beams` packs the beams into one uniform shared by every
   view (`GlowBeam` in `composite.wgsl`, 12 floats: at, dir, half,
-  tan(spread), reach (at most `MAX_BEAM_REACH` 512: hostile content),
+  tan(spread), reach (at most `MAX_BEAM_REACH` 512: hostile content; and
+  at most `walk_reach(half, tan)`, final review M2: so the shadow walk of
+  `BEAM_MAX_STEPS` reaches the far end, a wide beam fading out rather
+  than cut dark, `a_wide_beam_fades_within_the_walk`),
   group (negative for a backdrop patch's beam), light, region; a uniform rather than a
   storage buffer, so no device without fragment storage buffers is
   refused): only those whose group the frame has, with a reach in world
@@ -192,7 +195,8 @@ on screen or offscreen.
   the source (half a pixel behind its face) each pixel sees past `solid_px`
   (`beam_sees`: an exact grid walk, Amanatides-Woo, over every world pixel
   the segment crosses, both pixels beside a corner it passes exactly
-  through, at most `BEAM_MAX_STEPS` 2048 then blocked; a front source's
+  through, at most `BEAM_MAX_STEPS` 2048 (`renderer/glow_beams.rs`, the
+  composite's prelude) then blocked; a front source's
   walk stops on entering a pixel whose farthest corner is behind the
   face plane (`behind_face`, per pixel, not the accumulated point, so a
   long walk's float drift never stops it early), so its own rock never
