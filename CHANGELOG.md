@@ -188,6 +188,10 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   the lobby. A fresh install and a missing loadout play Default; an
   older settings file's weapon preset and loading time are not carried
   over. The network protocol version is 4.
+- Liero Factory Reloaded is now Liero Factory After Dark
+  (`olr-level-liero-factory-after-dark`); its old name and id go to a new
+  level built from assets. Replays and settings naming the old id find
+  no level.
 
 ### Removed
 

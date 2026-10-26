@@ -8,7 +8,7 @@ are in `content/reloaded/README.md`; they reproduce the committed packs
 byte for byte, and running one again changes nothing.
 
 - `reloaded_materials.py` (issue #46): the surface materials of Liero
-  Factory Reloaded and Castle Strike Reloaded: each element's default,
+  Factory After Dark and Castle Strike Reloaded: each element's default,
   then a rule painting its pixels by collision kind and art colour
   (`factory` and `castle`), handed to `olr-cli level element surface` as
   one exact-colour `--rule` per colour. `--preview DIR` writes each ruled

@@ -175,7 +175,7 @@ on screen or offscreen.
   `LookGlobals.beams` (a vec4 after `distant`): the count, the haze's
   air-term scale (percent / `HAZE_FULL` 50, `LookFrame::haze`: haze 50
   adds the beam itself, 100 twice it; the maintainer's ruling,
-  2026-10-25, Liero Factory Reloaded's beams at 50), 1 when the level
+  2026-10-25, Liero Factory After Dark's beams at 50), 1 when the level
   has a beam map.
   **The cone:** with a beam map, a cascade ray meeting a glowing cell
   weights its light by `beam_cone` (`gi_cascade.wgsl`, group 1: the beam
@@ -206,7 +206,7 @@ on screen or offscreen.
   scenes steady); a solid pixel takes its beam once for the world pixel,
   at its centre, walking from its open 4-neighbour that faces the source
   most (none: no beam), so a slanted face shows no sub-pixel stripes. **Where it shows** (judged
-  on Liero Factory Reloaded, 2026-10-25): the surface term adds it to the light before
+  on Liero Factory After Dark, 2026-10-25): the surface term adds it to the light before
   the cap and `light × art` on every in-level pixel that does not glow and
   is not a distant layer's (sky or glass); the air term adds `beam × haze / 50
   × haze_map(w)` after `light × art`, before the grade, on open pixels

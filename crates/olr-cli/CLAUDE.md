@@ -837,7 +837,7 @@ The headless command-line tool. Its commands:
 **Content:** every command's `--content` (default `content/packs`) opens
 with `Content::open_bundled` (issue #7): OLR's own packs, the `reloaded`
 directory beside it, lie over it, so `--level
-olr-level-liero-factory-reloaded` works anywhere an OLX level does;
+olr-level-liero-factory-after-dark` works anywhere an OLX level does;
 `render-match` lays its `--packs` over both. `pack check`, `level …` and
 `look-preview` read only themes from `--content`.
 
@@ -969,12 +969,14 @@ tests are `cargo nextest run -p olr-cli --test integration corpus::`.
 `tests/corpus.rs` checks every imported
 pack when `OLR_CONTENT_DIR` is set. `tests/reloaded.rs` (issue #7, offline too: the
 committed `content/packs`) checks OLR's own shipped packs
-(`content/reloaded/`: Liero Factory Reloaded, Castle Strike Reloaded,
+(`content/reloaded/`: Liero Factory After Dark, Castle Strike Reloaded,
 issue #21's Liero v1.0 Reloaded, issue #13's Firefly skin) with
 `pack check --content content/packs`, that they share no pack id with
 `content/packs`, that `Content::open_bundled` lists both levels by name,
 lit, and the mod with its look, that the factory's material, front and back are the imported Liero
-Factory's byte for byte (its origin too), that the mod is Classic but for
+Factory's byte for byte (its origin too), that both levels' baked files
+hash as before issue #70's renames (`after_dark_bakes_as_the_old_factory`,
+`castle_strike_bakes_as_before`; issue #74 is proven against them), that the mod is Classic but for
 its name and look (`ModDef` but the name, assets, `SimMod`, presets,
 physics, origin; the same bot matches' checksums, OLX's bots on Dirt
 Level and chaos bots on Castle Strike Reloaded; `olx_bot_weapons` alike

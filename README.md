@@ -62,9 +62,9 @@ more:
   replaces packs and never removes others (`--prune` does). The game has no
   Import screen; the editors will import too, later.
 
-OLR's own levels, remade "Reloaded" versions of OLX's, are hand-made packs
+OLR's own levels, remade versions of OLX's, are hand-made packs
 in `content/reloaded` (beside `content/packs`, shipped and loaded with it):
-**Liero Factory Reloaded** (the factory at night, its lamps and screens
+**Liero Factory After Dark** (the factory at night, its lamps and screens
 lit) and **Castle Strike Reloaded** (Castle Strike by day, lit by the sky).
 See `content/reloaded/README.md`.
 

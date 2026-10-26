@@ -4070,6 +4070,18 @@ test, on 2026-10-25.
   tenth of the light beyond the ambient, so the factory's sky draws
   darker than the old sky element, lit by its glow at 35 % (listed for
   the playtest in `docs/deferred-verification.md`).
+- Renamed Liero Factory After Dark (issue #70);
+  `olr-level-liero-factory-reloaded` is free for the asset-built level
+  (#96). Its pack is `olr-level-liero-factory-after-dark`, and five
+  element ids are shorter so every shipped path stays within 80
+  characters (`rock-scr`, `rock-disp`, `rock-bcn`, `ctrl-scr`,
+  `backdrop`, were `rock-screens`, `rock-display`, `rock-beacons`,
+  `ctrl-screen`, `background`); the bake is byte for byte the old
+  factory's (`tests/reloaded.rs`' `after_dark_bakes_as_the_old_factory`,
+  and `castle_strike_bakes_as_before` for the other level, hashes taken
+  before the renames). The four built-in assets cut from the renamed
+  layers carry the new ids, their pieces unchanged. Nothing maps the old
+  id: replays and settings naming it find no level until #96.
 
 ## Liero v1.0 Reloaded (issue #21)
 
