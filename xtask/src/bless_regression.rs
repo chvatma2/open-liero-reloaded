@@ -1,7 +1,10 @@
 //! `cargo xtask bless-regression --reason <text> [--from <failure>]`
 //! (spec §7.2, §7.3): re-records the golden checksum streams in
-//! `fixtures/matches/` (by running `olr-cli`'s `golden` test with
-//! `OLR_BLESS_REGRESSION` set) and records why in `fixtures/blessings.log`.
+//! `fixtures/matches/` and (issue #89) the live goldens in
+//! `fixtures/matches-live/`, each with the content it needs (by running
+//! `olr-cli`'s `golden` test with `OLR_BLESS_REGRESSION` set: its live test
+//! lays `fixtures/live/levels` over the content) and records why in
+//! `fixtures/blessings.log`.
 //! `--from target/failures/<name>.ron` first adds that failed match as a new
 //! golden (its record names the match; the stream is recorded now, once
 //! the failure is fixed). A record named `net-*.ron` (`olr-cli net-sim`'s) is
@@ -17,6 +20,10 @@ use crate::bless::{changed_files, log_blessing, snapshot};
 use crate::root;
 
 const DIR: &str = "fixtures/matches";
+/// Issue #89: the live goldens, which the `golden` test re-records too.
+const LIVE_DIR: &str = "fixtures/matches-live";
+/// Every directory a bless re-records.
+const DIRS: [&str; 2] = [DIR, LIVE_DIR];
 
 /// What `add_failure` kept the record as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,7 +65,7 @@ pub fn run(reason: &str, from: Option<&Path>) -> anyhow::Result<bool> {
         bail!("{} not found: run `cargo xtask fetch-olx-content` first", content.display());
     }
     let dir = root.join(DIR);
-    let before = snapshot(&dir)?;
+    let before = DIRS.iter().map(|d| snapshot(&root.join(d))).collect::<anyhow::Result<Vec<_>>>()?;
     if let Some(from) = from {
         let before_net = snapshot(&root.join(NET_DIR))?;
         let (added, kept) = add_failure(&dir, from)?;
@@ -85,7 +92,10 @@ pub fn run(reason: &str, from: Option<&Path>) -> anyhow::Result<bool> {
         .output()
         .context("cannot run cargo")?;
     // A failing run must not leave a changed golden unlogged.
-    let changed = changed_files(DIR, &before, &snapshot(&dir)?);
+    let mut changed = Vec::new();
+    for (d, before) in DIRS.iter().zip(&before) {
+        changed.extend(changed_files(d, before, &snapshot(&root.join(d))?));
+    }
     if !changed.is_empty() {
         log_blessing("bless-regression", reason, &changed)?;
     }
@@ -101,6 +111,26 @@ pub fn run(reason: &str, from: Option<&Path>) -> anyhow::Result<bool> {
 
 #[cfg(test)]
 mod tests {
+    /// Issue #89: a bless covers both golden directories, and the `golden`
+    /// test it runs reads both.
+    #[test]
+    fn a_bless_re_records_both_directories() {
+        let root = crate::root();
+        for d in super::DIRS {
+            assert!(root.join(d).is_dir(), "{d}");
+            assert!(
+                crate::bless::snapshot(&root.join(d)).unwrap().keys().any(|f| f.ends_with(".ron")),
+                "{d}"
+            );
+        }
+        let test = std::fs::read_to_string(root.join("crates/olr-cli/tests/golden.rs")).unwrap();
+        for d in super::DIRS {
+            let name = d.trim_start_matches("fixtures/");
+            assert!(test.contains(&format!("\"{name}\"")), "golden.rs plays {d}");
+        }
+        assert!(test.contains("live/levels") && test.contains("open_layers"), "the live goldens' content");
+    }
+
     #[test]
     fn a_failure_becomes_a_golden_once() {
         let tmp = tempfile::tempdir().unwrap();

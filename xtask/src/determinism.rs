@@ -7,6 +7,11 @@
 //! Linux (QEMU user mode); every leg's stream must equal the native one.
 //! With no leg flag the WASM leg runs; a leg flag runs that leg only. A
 //! leg whose tools are missing is skipped with a notice naming the fix.
+//! Issue #89: the live goldens (`fixtures/matches-live/`, on the fixture
+//! level's scripts and motions) are recorded with `fixtures/live/levels`
+//! laid over the content and replayed on every leg so (`olr-detcheck
+//! --content` twice), the WASI leg's included: a real cross-platform check
+//! of Rhai.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -18,12 +23,17 @@ use crate::root;
 use crate::winbuild;
 
 const MATCHES: &str = "fixtures/matches";
+/// Issue #89: the live goldens, and the packs they play laid over the
+/// content.
+const LIVE_MATCHES: &str = "fixtures/matches-live";
+const LIVE_LEVELS: &str = "fixtures/live/levels";
 /// A composed level (plan 14a): every leg also prints its bake's digest
 /// (`olr-detcheck --bake`), so the image pipeline and the bake are
 /// compared across platforms with the simulation.
 const BAKE: &str = "fixtures/edit/composed-level";
 const OUT: &str = "target/determinism";
-/// The golden `check` replays; `--all` (and `full`'s legs) replay every golden.
+/// The golden of `fixtures/matches` `check` replays (with every live
+/// golden); `--all` (and `full`'s legs) replay every golden.
 const CHECK_GOLDEN: &str = "mw-castlestrike-8chaos";
 const WASM_TARGET: &str = "wasm32-wasip1";
 const ARM64_TARGET: &str = "aarch64-unknown-linux-gnu";
@@ -218,26 +228,39 @@ fn rustup_has(target: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// The golden specs to record, as `(stem, spec)`, by file name.
-fn goldens(all: bool) -> Result<Vec<(String, Spec)>, String> {
-    let dir = root().join(MATCHES);
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .map_err(|e| format!("{}: {e}", dir.display()))?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|e| e == "ron"))
-        .collect();
-    paths.sort();
+/// One golden to record: its file's stem, its spec, and whether it is
+/// a live one (played with [`LIVE_LEVELS`] laid over the content).
+struct Recorded {
+    stem: String,
+    spec: Spec,
+    live: bool,
+}
+
+/// The golden specs to record, by file name: `fixtures/matches`' ([`CHECK_GOLDEN`]
+/// alone unless `all`), then every live one.
+fn goldens(all: bool) -> Result<Vec<Recorded>, String> {
+    let mut paths = Vec::new();
+    for (dir, live) in [(MATCHES, false), (LIVE_MATCHES, true)] {
+        let dir = root().join(dir);
+        let mut found: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .map_err(|e| format!("{}: {e}", dir.display()))?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|e| e == "ron"))
+            .collect();
+        found.sort();
+        paths.extend(found.into_iter().map(|p| (p, live)));
+    }
     let mut out = Vec::new();
-    for p in paths {
+    for (p, live) in paths {
         let stem = p.file_stem().unwrap_or_default().to_string_lossy().into_owned();
-        if !all && stem != CHECK_GOLDEN {
+        if !all && !live && stem != CHECK_GOLDEN {
             continue;
         }
         let text = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
         let g: Golden = ron::from_str(&text)
             .with_context(|| format!("parsing {}", p.display()))
             .map_err(|e| format!("{e:#}"))?;
-        out.push((stem, g.spec));
+        out.push(Recorded { stem, spec: g.spec, live });
     }
     if out.is_empty() {
         return Err(format!("no golden match in {MATCHES}"));
@@ -245,17 +268,26 @@ fn goldens(all: bool) -> Result<Vec<(String, Spec)>, String> {
     Ok(out)
 }
 
+/// `olr-detcheck`'s `--content` arguments, the content directory (`at`
+/// its path on the leg) under the live fixture's levels (`live`).
+fn contents(live: &str, content: &str) -> [String; 4] {
+    ["--content".into(), live.into(), "--content".into(), content.into()]
+}
+
 /// Records each golden's replay natively into `target/determinism/<stem>.olrp`.
-fn record(goldens: &[(String, Spec)]) -> Result<Vec<PathBuf>, String> {
+fn record(goldens: &[Recorded]) -> Result<Vec<PathBuf>, String> {
     std::fs::create_dir_all(root().join(OUT)).map_err(|e| format!("{OUT}: {e}"))?;
     let mut build = cargo();
     build.args(["build", "--quiet", "--release", "-p", "olr-cli", "-p", "olr-detcheck"]);
     ok_output(build, "cargo build olr-cli and olr-detcheck")?;
     let mut files = Vec::new();
-    for (stem, spec) in goldens {
+    for Recorded { stem, spec, live } in goldens {
         let file = PathBuf::from(OUT).join(format!("{stem}.olrp"));
         let mut c = Command::new(root().join("target/release/olr-cli"));
         c.current_dir(root()).arg("match").args(spec.flags()).args(["--no-verify", "--record"]).arg(&file);
+        if *live {
+            c.args(["--packs", LIVE_LEVELS]);
+        }
         ok_output(c, &format!("olr-cli match ({stem})"))?;
         files.push(file);
     }
@@ -264,7 +296,7 @@ fn record(goldens: &[(String, Spec)]) -> Result<Vec<PathBuf>, String> {
 
 fn native_stream(replays: &[PathBuf]) -> Result<String, String> {
     let mut c = Command::new(root().join("target/release/olr-detcheck"));
-    c.current_dir(root()).args(["--content", "content/packs", "--bake", BAKE]).args(replays);
+    c.current_dir(root()).args(contents(LIVE_LEVELS, "content/packs")).args(["--bake", BAKE]).args(replays);
     ok_output(c, "olr-detcheck (native)")
 }
 
@@ -307,7 +339,7 @@ fn wasm_leg(native: &str, replays: &[PathBuf]) -> Result<(), String> {
         .arg("tools/wasi-run.mjs")
         .arg(format!("target/{WASM_TARGET}/release/olr-detcheck.wasm"))
         .arg(root())
-        .args(["--content", "/content/packs"])
+        .args(contents(&format!("/{LIVE_LEVELS}"), "/content/packs"))
         .args(["--bake".to_string(), format!("/{BAKE}")])
         .args(replays.iter().map(|r| format!("/{}", r.display())));
     let wasm = ok_output(c, "olr-detcheck under Node.js WASI")?;
@@ -333,7 +365,8 @@ fn arm64_leg(native: &str, replays: &[PathBuf]) -> Result<(), String> {
     c.current_dir(root())
         .args(["-L", ARM64_SYSROOT])
         .arg(format!("target/{ARM64_TARGET}/release/olr-detcheck"))
-        .args(["--content", "content/packs", "--bake", BAKE])
+        .args(contents(LIVE_LEVELS, "content/packs"))
+        .args(["--bake", BAKE])
         .args(replays);
     let arm = ok_output(c, "olr-detcheck under qemu-aarch64")?;
     compare(native, &arm, "arm64").map_err(|e| format!("arm64 differs from native: {e}"))
@@ -349,8 +382,15 @@ fn windows_leg(native: &str, replays: &[PathBuf]) -> Result<(), String> {
         _ => {}
     }
     winbuild::copy_dir(&root().join(BAKE), &bake.join("composed-level"))?;
-    let mut args: Vec<String> =
-        vec!["--content".into(), "content".into(), "--bake".into(), "bake/composed-level".into()];
+    // Issue #89: the live goldens' level, staged beside the content.
+    let live = stage.dir.join("live-levels");
+    match std::fs::remove_dir_all(&live) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(format!("{}: {e}", live.display())),
+        _ => {}
+    }
+    winbuild::copy_dir(&root().join(LIVE_LEVELS), &live)?;
+    let mut args: Vec<String> = contents("live-levels", "content").into();
+    args.extend(["--bake".into(), "bake/composed-level".into()]);
     args.extend(
         files.iter().map(|f| format!("replays/{}", f.file_name().unwrap_or_default().to_string_lossy())),
     );
@@ -464,13 +504,33 @@ mod tests {
                 "--mod olx-mw-1-0 --level olx-level-castlestrike --bots 8 --difficulty mixed --personality chaos \
                  --seed 2 --ticks 3000 --kill-limit 0 --time-limit 6 --bonus-frequency 5",
             ),
+            (
+                "classic-live-test-4dm",
+                "--mod olx-classic --level olr-level-live-test --bots 4 --difficulty mixed --personality dm \
+                 --seed 1 --ticks 3000 --kill-limit 15 --time-limit 6 --bonus-frequency 5",
+            ),
         ];
         let found = goldens(true).unwrap();
         assert_eq!(found.len(), want.len());
-        for ((stem, spec), (name, flags)) in found.iter().zip(want) {
-            assert_eq!(stem, name);
-            assert_eq!(spec.flags().join(" "), flags, "{stem}");
+        for (g, (name, flags)) in found.iter().zip(want) {
+            assert_eq!(g.stem, name);
+            assert_eq!(g.spec.flags().join(" "), flags, "{}", g.stem);
+            assert_eq!(g.live, name.contains("live"), "{name}");
         }
+    }
+
+    /// Issue #89: `check`'s leg replays one golden of `fixtures/matches`
+    /// and every live golden, with the live levels laid over the content.
+    #[test]
+    fn check_replays_the_live_goldens_layered() {
+        let found = goldens(false).unwrap();
+        let stems: Vec<&str> = found.iter().map(|g| g.stem.as_str()).collect();
+        assert_eq!(stems, [CHECK_GOLDEN, "classic-live-test-4dm"]);
+        assert!(found.iter().any(|g| g.live));
+        assert_eq!(
+            contents("/fixtures/live/levels", "/content/packs"),
+            ["--content", "/fixtures/live/levels", "--content", "/content/packs"]
+        );
     }
 
     #[test]
