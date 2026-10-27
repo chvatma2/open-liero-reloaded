@@ -18,6 +18,10 @@ pub struct Args {
     /// (the `reloaded` directory beside it) over it.
     #[arg(long, default_value = "content/packs")]
     content: PathBuf,
+    /// Pack directories laid over `--content` (the first wins), such as
+    /// `fixtures/live/levels` (issue #89's live goldens).
+    #[arg(long)]
+    packs: Vec<PathBuf>,
     /// Write the match's replay here.
     #[arg(long)]
     record: Option<PathBuf>,
@@ -40,7 +44,15 @@ pub struct Args {
 
 /// Returns `Ok(false)` if the match failed.
 pub fn run(args: &Args) -> anyhow::Result<bool> {
-    let content = olr_content::Content::open_bundled(&args.content)?;
+    let content = if args.packs.is_empty() {
+        olr_content::Content::open_bundled(&args.content)?
+    } else {
+        std::fs::read_dir(&args.content)
+            .map_err(|e| anyhow::anyhow!("content directory {}: {e}", args.content.display()))?;
+        let bundled = olr_content::bundled_roots(&args.content);
+        let roots: Vec<&std::path::Path> = args.packs.iter().chain(&bundled).map(PathBuf::as_path).collect();
+        olr_content::Content::open_layers(&roots)?
+    };
     let run = play(&content, &args.spec, &Options { fail_at: args.fail_at })?;
     println!("{}", run.summary());
     if let Some(path) = &args.record {
