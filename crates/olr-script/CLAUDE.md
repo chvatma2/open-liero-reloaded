@@ -12,9 +12,10 @@ checks (`ScriptNames`, `check_level`), `move_to`, `stop`, `moving`,
 - **Layer 3, `#![no_std]` + `alloc`, `#![forbid(unsafe_code)]`.** Builds for
   `wasm32-unknown-unknown` (`xtask/layers.ron`'s `no_std` and `wasm`).
   Depends on `rhai` and `olr-sim` (the `same_layer` pair `("olr-script",
-  "olr-sim")`; `("olr-edit", "olr-script")` is #89's save refusal). Its
-  callers: `olr-content` (compiles a level's scripts at load) and
-  `olr-editor` (`check`). Tests also use `olr-data` and `olr-terrain`.
+  "olr-sim")`; `("olr-edit", "olr-script")` is #89's save refusal,
+  `olr_edit::scripts`). Its callers: `olr-content` (compiles a level's
+  scripts at load), `olr-edit` (`check_level`) and `olr-editor`
+  (`check`). Tests also use `olr-data` and `olr-terrain`.
 - **Rhai's pin:** `rhai = "=1.27.0"`, default features off, with
   `no_std`, `sync`, `no_float`, `only_i64`, `no_module`,
   `no_custom_syntax`, `no_time`, `no_closure` and `internals` (the
@@ -56,6 +57,29 @@ checks (`ScriptNames`, `check_level`), `move_to`, `stop`, `moving`,
   nothing; at most one issue, or one for text over `MAX_SCRIPT_BYTES` (64
   KiB, `olr_format::assets::MAX_SCRIPT_BYTES`: `olr-editor`'s tests check
   they agree). Syntax only.
+- **`check_level(&ScriptNames, &[RunScript]) -> Vec<LevelIssue>`**
+  (`names.rs`, issue #89; the design's call 20): `ScriptNames { copies:
+  Vec<CopyNames { id, states, exposed, sounds }> }` is a plain table (no
+  `olr-format` types; `olr_edit::scripts::names` fills it from a
+  placement's live copies), `RunScript { copy: Option<&str>, text }` a
+  script the level runs on that copy (none: the level script), and a
+  `LevelIssue { script, issue }` names the script by index, its
+  `ScriptIssue` the line and column. Per script, by line: its syntax
+  error (`check`'s; then nothing else), a handler (the runtime's
+  `HANDLERS`) defined only with another number of parameters ("handler
+  tick() takes 0 parameters, not 1 parameter: it never runs"; its line
+  found in the text), and every **string literal** passed where the API
+  takes a name: `this.copy("…")` naming no copy, `set_state` naming no
+  state of the copy it acts on, `get`, `set`, `move_to`, `stop`,
+  `moving`, `min`, `max` naming no exposed name of it (#92 adds `play`
+  against `sounds`). The copy acted on: this one (the own form, or a
+  handle `this.me()`), a handle `this.copy("…")` itself, or a variable
+  every `let` of which in the script binds the same `this.copy("…")`;
+  any other handle (a parameter, a computed id) is not checked, nor is a
+  name built at runtime (a script error when it runs). In the level
+  script an own form is an issue ("the level script has no copy of its
+  own"). Walks the AST with Rhai's `internals` (`AST::walk`, `Expr::Dot`
+  of `ThisPtr` and a `MethodCall`); runs nothing.
 - **`Scripts::compile(&LiveLevel)`** (`runtime.rs`): the runtime engine
   (`engine()` plus Rhai's arithmetic, logic, basic string, iterator,
   array and map packages: no `exit`, no `LanguageCorePackage`) and every
@@ -88,7 +112,10 @@ checks (`ScriptNames`, `check_level`), `move_to`, `stop`, `moving`,
   `start()`, `tick()`, `entered(state)` (this copy, by name),
   `spawned(worm)`, `killed(victim, killer)` (-1 nobody), `exploded(x, y,
   damage)` (whole pixels, truncated), `damaged(worm, amount, by)`
-  (`amount` truncated).
+  (`amount` truncated), issue #89's `arrived(name)` (this copy's value
+  `name` reached its motion's target: `EventKind::LiveArrived`, emitted
+  in the motions' step before the physics, so it reaches `arrived` in the
+  same tick).
 - **The API object** (`api.rs`, `Live`): each run (one handler or timer
   call) gets a fresh one bound as `this` (`CallFnOptions::bind_this_ptr`),
   holding the run's reads (copies' states and values, worms, the clocks:
@@ -112,7 +139,23 @@ checks (`ScriptNames`, `check_level`), `move_to`, `stop`, `moving`,
   `set` takes them so; the world clamps into the prop's limits; a value
   set lasts until the next state change (call 11), which sets the
   state's complete look. Reads see the world as the run started; its
-  commands apply after it. Timers: `this.after(ticks, "fn")`,
+  commands apply after it. **Motions** (issue #89; own-copy and handle
+  forms alike): `this.move_to(name, target, speed)` (a position-like
+  value, `X`, `Y`, `OffsetX`, `OffsetY`, else a script error; `target`
+  whole world pixels, the world clamps it into the limits; `speed` world
+  pixels a second, at least 1 (else a script error), made 1/256 pixel a
+  10-ms tick, `speed × 256 / 100` rounded down and at least 1, whatever
+  the game speed; `olr-sim` clamps it to `MAX_MOTION_SPEED`, 8 pixels a
+  tick; it starts or replaces the value's motion: `LiveCommand::Move`),
+  `this.stop(name)` (`LiveCommand::Stop`), `this.moving(name)` (from the
+  run's reads: a `move_to` of the same run is not seen yet), and
+  `this.min(name)`, `this.max(name)`: the value's limits for this copy
+  (a stretched copy's scaled by the bake, `Health`'s within its points),
+  whole world pixels for a position, so a default script sweeps a
+  stretched crane's whole travel (`this.move_to("claw_x",
+  this.max("claw_x"), 40)`). The world steps motions once a tick before
+  the first physics sub-step (`olr-sim`'s `LiveWorld::step_motions`); a
+  `set` of the value stops its motion, a state change does not. Timers: `this.after(ticks, "fn")`,
   `this.every(ticks, "fn")` (ticks are 10-ms frames, at least 1; one
   timer a function: a new one replaces it; at most `MAX_TIMERS` 16),
   `this.cancel("fn")`; a timer names a function of no parameter of the
@@ -147,7 +190,12 @@ checks (`ScriptNames`, `check_level`), `move_to`, `stop`, `moving`,
   scripts may allocate, bounded by the limits and freed by the run's end.
   A world without a director allocates nothing (`olr-sim`'s `no_alloc`).
 
-Tests: `tests/check.rs` (`a_good_script_has_no_issues`,
+Tests: issue #89's `tests/motion.rs`
+(`move_to_reaches_its_target_at_its_speed_and_calls_arrived`,
+`min_and_max_follow_a_stretched_copy`,
+`a_set_stops_a_motion_and_a_state_change_does_not`) and `tests/names.rs`
+(`check_level_finds_unknown_copies_states_names_and_bad_handlers`, with
+lines); `tests/check.rs` (`a_good_script_has_no_issues`,
 `syntax_errors_name_line_and_column`,
 `hostile_scripts_are_cheap_and_never_panic`); `tests/runtime.rs` on a
 world made in `tests/common/mod.rs`
