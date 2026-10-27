@@ -252,7 +252,15 @@ on screen or offscreen.
   (`ColorMap::clear`, Task 14b) a clear solid is written as background,
   so the glow light and the soak pass it
   (`a_lamp_shines_through_a_clear_wall`, `glow_light_passes_a_clear_wall`,
-  `a_clear_solid_takes_no_soak_or_floor`). The `LookFrame` is packed each
+  `a_clear_solid_takes_no_soak_or_floor`). Issue #87: a live copy's rock
+  part (`ColorMap::live_solid`) is written as rock, over a clear flag,
+  so it stops the glow light and takes soak as the ground's rock does;
+  live copies reach every lit pass because they are composited into the
+  map's colour, glow and groups (`olr-terrain`'s live layer), uploaded
+  per dirty rectangle as the ground's; the beam map and the static beams
+  read the ground only (`tests/gpu/live.rs`:
+  `a_live_lamp_lights_the_level_by_its_own_group`,
+  `a_live_rock_part_occludes_the_glow_light`). The `LookFrame` is packed each
   frame into one uniform (`LookGlobals`, `look/common.wgsl`, every field a
   vec4; 255 groups, `groups[v - 1]` for group value v, 0 none, each a
   `Group` of three vec4s: `light` (the cast, `cast` being a WGSL keyword)
