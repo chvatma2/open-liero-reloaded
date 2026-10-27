@@ -64,13 +64,17 @@ impl State {
     }
 }
 
-/// One piece of a posed asset: the piece in asset coordinates and its
+/// One piece of a posed asset: the piece in asset coordinates, its
 /// opacity, percent (100 unless `Opacity` sets it; carried, not applied to
-/// the art: the bake mixes the piece's back pixels at it, issue #73).
+/// the art: the bake mixes the piece's back pixels at it, issue #73), and
+/// how far the positions (`OffsetX`/`Y`, then `X`/`Y`, after `Facing`
+/// mirrored the box) moved its box, asset pixels: a stretched copy scales
+/// this move apart from the box (issue #73).
 #[derive(Clone, Debug, PartialEq)]
 pub struct PosedPiece {
     pub piece: Piece,
     pub opacity: u8,
+    pub offset: (i64, i64),
 }
 
 /// An asset in a state with a copy's values ([`posed`]): its pieces bottom
@@ -170,7 +174,7 @@ pub fn posed(asset: &Asset, state: usize, copy: &BTreeMap<String, ValueSource>) 
                     p.glow_mask = own.glow_mask.clone();
                 }
             }
-            Some(PosedPiece { piece: p, opacity: 100 })
+            Some(PosedPiece { piece: p, opacity: 100, offset: (0, 0) })
         })
         .collect();
     let (mut facing, mut shown, mut at) = (false, true, (0i64, 0i64));
@@ -197,8 +201,14 @@ pub fn posed(asset: &Asset, state: usize, copy: &BTreeMap<String, ValueSource>) 
                 let e = &mut pp.piece.element;
                 let group = e.glow.as_ref().and_then(|g| groups.iter_mut().find(|x| x.id == g.group));
                 match (p, value) {
-                    (P::OffsetX(_), _) => pp.piece = shifted(pp.piece.clone(), int.into(), 0),
-                    (P::OffsetY(_), _) => pp.piece = shifted(pp.piece.clone(), 0, int.into()),
+                    (P::OffsetX(_), _) => {
+                        pp.piece = shifted(pp.piece.clone(), int.into(), 0);
+                        pp.offset.0 += i64::from(int);
+                    }
+                    (P::OffsetY(_), _) => {
+                        pp.piece = shifted(pp.piece.clone(), 0, int.into());
+                        pp.offset.1 += i64::from(int);
+                    }
                     (P::LayerVisible(_), _) if !yes => *slot = None,
                     (P::Opacity(_), _) if int <= 0 => *slot = None,
                     (P::Opacity(_), _) => pp.opacity = int.clamp(0, 100) as u8,
@@ -268,11 +278,13 @@ pub fn posed(asset: &Asset, state: usize, copy: &BTreeMap<String, ValueSource>) 
     if facing {
         for p in &mut out {
             p.piece = mirrored(&p.piece, asset.size, asset.art_scale);
+            p.offset.0 = -p.offset.0;
         }
     }
     if at != (0, 0) {
         for p in &mut out {
             p.piece = shifted(p.piece.clone(), at.0, at.1);
+            p.offset = (p.offset.0 + at.0, p.offset.1 + at.1);
         }
     }
     Ok(Posed { pieces: out, groups, materials: asset.materials.clone() })

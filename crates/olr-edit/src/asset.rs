@@ -990,6 +990,20 @@ pub fn thumbnail(asset: &Asset) -> RgbaImage {
 /// length).
 pub fn decode(src: &AssetSource) -> Result<Asset, AssetError> {
     check_asset(src)?;
+    decode_checked(src)
+}
+
+/// [`decode`] for an asset a level holds (issue #73: its ground, an `Own`
+/// asset), checked as one (`check_own_asset`): a raster and distant layers
+/// may be among its pieces, glow groups and materials no piece names
+/// among its own.
+pub fn decode_own(src: &AssetSource) -> Result<Asset, AssetError> {
+    olr_format::assets::check_own_asset(src)?;
+    decode_checked(src)
+}
+
+/// [`decode`] of an asset already checked.
+fn decode_checked(src: &AssetSource) -> Result<Asset, AssetError> {
     let f = &src.file;
     let comp = as_composition(src);
     // The composition as its files are: a stacked layer's box as tall as
