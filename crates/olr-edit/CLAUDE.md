@@ -417,6 +417,47 @@ operations.
   `sounds_are_checked_and_kept_while_named`,
   `health_needs_its_state_and_unexposing_first`,
   `the_thumbnail_shows_the_starting_state`.
+- **`placed`, issue #73's bake of a level's placed copies** (the format
+  is `olr_format::levels`' `PlacedFile`; STATUS.md "Asset-based levels:
+  the level format (issues #73, #74)"; no pack reads it until #74):
+  `bake(level, src, back_tile) -> Result<Baked, PlacedError>` checks
+  (`check_placed`, the level's art scale within `MAX_ART_SCALE`), decodes
+  each asset (`asset::decode_own` for the ground, `check_own_asset`; else
+  `decode`), poses each copy (`posed`; a Live copy refused by
+  `live_refusal`, "cannot be Live: …", and otherwise baked as static for
+  now), gathers its posed groups and materials in copy order
+  (`olr_format::levels::gather_groups`/`gather_materials`: shared when
+  identical, else `<id>-2`, …; `Baked::groups_renamed`/
+  `materials_renamed` list the renames) and renumbers its painted surface
+  maps, then lays each piece (folders folded) as an element
+  `<copy id>.<element id>`: its box before the posed move mapped by
+  `stretch_span` (floor), the move by `stretch_offset` (half away from
+  zero, `PosedPiece::offset`), its data resampled nearest (`resample`,
+  per box, an image's processed grid not its original; art across art
+  scales by `level::rescale_art`). Every distant piece goes first, then
+  the rest; the gathered groups are checked against `MAX_GROUPS` again
+  (a copy's values may change settings); the look is the level's with
+  the gathered groups and materials (a default one, `Baked::note` saying
+  `ADDED_LIGHTING`, when the level had none and something was gathered)
+  and must compile. The level's sizes stay; its buffers are made fit and
+  everything is baked with `compose::bake_elements_with_opacity` (the
+  full rect) and `refresh_thumb`. Nothing is written. Errors are
+  `PlacedError` (`Format`, `Asset { key }`, `Copy { copy }`, `Level`).
+  Opacity (`compose`): `bake_elements_with_opacity` takes one percent per
+  non-distant item (missing: 100); a Background piece below 100 mixes
+  its back pixels over the back below as glass does (straight alpha,
+  `round(opacity × 255 / 100)`) and never over a see-through (alpha 0)
+  pixel; `bake_elements_with` passes none, so every composition bakes as
+  before. Tests: `tests/placed.rs`
+  (`a_ground_alone_bakes_as_its_composition`, byte for byte against
+  `compose::bake` on two levels, `a_stretched_copy_maps_columns_by_floor`,
+  `an_art_scale_change_resamples_nearest`,
+  `positions_and_facing_scale_with_the_copy`,
+  `opacity_mixes_a_background_piece_over_the_back_below`,
+  `distant_pieces_bake_below_everything`,
+  `gathering_shares_equal_groups_and_renames_others`,
+  `a_live_copy_with_dirt_cells_is_refused_by_the_bake`,
+  `live_copies_bake_as_static_for_now`).
 - **Issue #16, the mod operations** (`mods`; `olr-cli mod`; STATUS.md
   "Mod editing operations (issue #16)"), on a loaded mod `Pack`
   (`source(pack)`, else `ModError::NotAMod`):
@@ -592,7 +633,7 @@ operations.
   through a folder at art scales 1 and 2, masks and groups joined or
   added, resampling across scales, the rectangle's rules, a picture kept
   whole, a raster's cells and back art, bad folders refused, the
-  library), `pack.rs` (every bundled pack loads and
+  library), `placed.rs` (issue #73's bake, above), `pack.rs` (every bundled pack loads and
   writes back byte for byte; foreign files kept; invalid results refused;
   saves through `x/..` and a symbolic link; a name a save would lose),
   `fmt.rs` (`bundled_packs_are_canonical`, R5's `check` guard), `new.rs`,

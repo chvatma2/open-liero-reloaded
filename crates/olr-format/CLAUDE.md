@@ -424,6 +424,65 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   raster, distant layers and glow groups and materials no element names;
   a raster or distant layer is still never owned nor named by a
   property. `tests/hostile.rs`' `mutated_asset_files_never_panic`.
+- **Level placement** (`levels/placed.rs`, issue #73; STATUS.md
+  "Asset-based levels: the level format (issues #73, #74)"; the page
+  `docs/formats/level.md`, `PlacedFile`): `PlacedFile` is
+  `editor/placed.ron` (`PLACED_FILE`): `assets` (`LevelAsset { key,
+  origin: AssetOrigin::Own | Builtin(id) | Yours(id) }`, the library ids
+  by `assets::valid_asset_id`, moved here from `olr-edit`), `copies`
+  (`PlacedCopy { id, asset, at, size, free_aspect, live, state, values,
+  script, default_script, distant, locked }`, `PlacedCopy::new`) and
+  `script` (`editor/level.rhai`, `LEVEL_SCRIPT_FILE`). The ground is the
+  asset keyed `GROUND_KEY` (`ground`, always `Own`) rooted at `editor/`
+  itself; every other asset is `editor/<key>/` (`asset_dir`); a copy's
+  script `editor/scripts/<id>.rhai` (`copy_script_file`). Keys:
+  `valid_key` (`[a-z0-9-]`, 1-`MAX_KEY` 16, not starting with `-`, not
+  `RESERVED_KEYS`, the ground's folder names); `next_key` gives `a`…`z`,
+  `aa`, … (skipping the reserved and `ground`). Copy ids `valid_copy_id`
+  (an element id's slug without `.`, 1-`MAX_COPY_ID` 32). `PlacedSource`
+  adds the assets' `AssetSource`s by key and the scripts.
+  `check_placed(src, size, art_scale)` checks metadata only (headers, never
+  pixels; cells are `olr-edit`'s bake): keys and ids (`check_names`, also
+  run by both readers before any path is made: at most
+  `MAX_LEVEL_ASSETS` 256 and `MAX_COPIES` 1024), origins, every asset
+  used and present and checked (`check_own_asset` for the ground, else
+  `check_asset`; errors under `editor/<key>/`), each copy (`at` within
+  `MAX_COPY_AT`, `size` within `MAX_SIDE`, its state and values by
+  `check_value`, Live (something to drive: states, exposed values, sounds
+  or a script; no plain dirt layer, raster or distant layer; not a
+  distant copy), a raster asset only at
+  `(0, 0)` unstretched at the level's size, distant copies and layers
+  unstretched with no glass, beam or map), stray or missing scripts, the
+  pixel budget (`stretched_element`, `decoded_pixels`, stacked pictures
+  counted), distant count and pixels, and the gathered groups
+  (`MAX_GROUPS`) and materials (`MAX_MATERIALS`) of the assets' own
+  settings. The shared helpers: `gather_id`, `gather_groups`,
+  `gather_materials` (identical settings share, else `<id>-2`, …),
+  `stretch_span` (floor) and `stretch_offset` (half away from zero),
+  `placed_size`, `stretched_element`. `read_placed_files` (`None`
+  without `placed.ron`; every asset's files at most `MAX_ASSET_BYTES`,
+  everything at most `MAX_PLACED_BYTES`, `olr_pack::archive::
+  MAX_UNPACKED`, a test holding them equal) and `write_placed_files`
+  (names checked first). The path budget (80 characters, `xtask`'s
+  `the_shipped_content_keeps_its_paths_short`) under
+  `content/reloaded/olr-level-liero-factory-reloaded/` with a 2-character
+  key:
+
+  | File | Characters left for the id |
+  |---|---|
+  | `editor/<key>/layers/<id>.png` | 9 |
+  | `editor/<key>/layers/<id>.back.png` | 4 |
+  | `editor/<key>/glow/<id>.png` | 11 |
+  | `editor/<key>/masks/<id>.png` | 10 |
+  | `editor/<key>/images/<source>`, `sounds/<name>` | 13 |
+  | `editor/scripts/<copy id>.rhai` | 10 |
+
+  Tests: `placed.rs`' units (canonical round trip, keys, spans and
+  rounding, gathering, the byte bound, the files' round trip, rules
+  refused naming the copy, the group budget, stacked pictures in the
+  pixel budget, a bad key refused before any file) and `tests/hostile.rs`'
+  `the_placed_fixture_reads_and_checks` and the proptest
+  `hostile_placements_are_errors`.
 - **Themes** (`themes/`): `ThemeSource` is `theme.ron`, `holes/<i>.png` with
   `holes/<i>.mask.png`, `green_ball.png` with `green_ball.mask.png`,
   `stones/`, `misc/`, `front_tile.png` and `back_tile.png`. A stamp is a

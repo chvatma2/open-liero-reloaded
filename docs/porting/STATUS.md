@@ -6477,6 +6477,109 @@ its checks and the decoded model (`olr_edit::asset`).
   it is set ("true is not a whole number"), and `none` clears a state's
   value.
 
+## Asset-based levels: the level format (issues #73, #74)
+
+No OLX counterpart. The design
+`docs/superpowers/specs/2026-10-26-asset-based-levels-design.md`; the
+format's page is `docs/formats/level.md` (`PlacedFile`). #73 is the format, its checks and
+the bake (`olr_edit::placed`), tested on placements built in code; #74
+and #75 bring the packs, the conversion, the editor and the CLI. Nothing in
+a pack on disk changes in #73: the committed levels stay compositions.
+
+- **The ground lives in `editor/` itself.** A level's own painted asset
+  (key `ground`, always an `Own` asset) is an asset
+  folder rooted at `editor/`: `editor/asset.ron`, `editor/layers/<id>.png`
+  and so on, the paths a composition's files have today, so converted
+  levels keep their paths (After Dark's longest are 80 characters, the
+  limit, at today's depth). Every other asset is a folder `editor/<key>/`; a
+  copy's script is `editor/scripts/<copy-id>.rhai`, the level script
+  `editor/level.rhai`. Everything under `editor/` stays authoring.
+- **Generated keys are short and internal.** The editor gives `a`, `b`, …
+  `z`, `aa`, `ab`, … (`next_key`: the first free, never `ground` nor one
+  of the ground's folder names `images`, `layers`, `masks`, `glow`,
+  `surface`, `sounds`, `scripts`), in the order the assets join the level.
+  Scripts use copy ids, never keys. A chosen key is
+  `[a-z0-9-]`, 1 to 16 bytes, not starting with `-`, never a ground folder
+  name. The path budget: under
+  `content/reloaded/olr-level-liero-factory-reloaded/` (50 characters)
+  a 2-character key leaves a library asset's file 20 characters
+  (`layers/<id>.png` a 9-character id, `.back.png` 4, `.material.png`
+  none, `glow/<id>.png` 11, `masks/<id>.png` 10, `images/<source>` and
+  `sounds/<name>` 13; a mixed layer's `.material.png` leaves no room
+  there, so the level that needs one takes a 1-character key or the asset
+  drops the mix) and a scripted copy's id 10
+  (`editor/scripts/<id>.rhai`); keys stay short for that, and `xtask`'s
+  `the_shipped_content_keeps_its_paths_short` enforces the limit on
+  whatever ships.
+- **The gathering rule** (`olr_format::levels::gather_groups`,
+  `gather_materials`, `gather_id`; the bake and `check_placed` share
+  them): copies are gathered in placement order, each one's posed glow
+  groups in its asset's order. A group keeps its id when nothing gathered
+  has it, shares a gathered one of that id with identical settings, and
+  is otherwise renamed `<id>-2`, `<id>-3`, … (the first candidate that is
+  free or holds identical settings; the base is cut so the id stays
+  within 64 bytes). Materials alike (all their fields but the id compared),
+  the painted maps' values renumbered to the gathered order. `level.ron`'s
+  look is the level's own settings with `glow_groups` and `materials`
+  replaced by the gathered ones, so the ground carries the level's groups
+  and materials (#74's conversion puts them there); a level without a look
+  gets the default one when any copy, Live included, brings a group or a
+  material (`ADDED_LIGHTING`).
+- **The stretch mapping.** An asset `w` world pixels wide placed `W` wide:
+  an element's box `[b, b + n)` becomes `[at + floor(b × W / w), at +
+  floor((b + n) × W / w))` (floor division below 0; a box stretched to
+  nothing is left out), and its data (an image's processed grid, never
+  re-processed from its original; drawn art, cells, back art, glow masks,
+  surface maps) is resampled nearest into it, value `v` of the new box
+  taking `floor(v × n / N)` of the old (art pixels likewise at art
+  resolution, which also resamples across art scales as `rescale_art`
+  does). For an element filling the asset this is the design's "world
+  column `u` shows asset column `floor(u × w / W)`". The issue's test
+  sketch said a 3 × 1 asset at 2 × 1 "drops the middle" column; by that
+  formula it shows columns 0 and 1 and drops the last, and the test
+  (`a_stretched_copy_maps_columns_by_floor`) holds the formula.
+- **Positions scale apart from the box, rounded half away from zero.**
+  `posed` resolves `X`, `Y`, `OffsetX` and `OffsetY` in asset pixels and
+  reports each piece's move (`PosedPiece::offset`, mirrored with `Facing`);
+  the bake maps the box before the move by the floor rule and adds the
+  move × `W / w` rounded half away from zero (`stretch_offset`), so a
+  stretched crane's claw travels with it.
+- **Opacity** (`PosedPiece::opacity`, issue #71's `Opacity`): a Background
+  piece below 100 lays its own back pixels over the back below at that
+  opacity, as glass mixes (`glass_over`, straight alpha, rounded), in any
+  level, and never over a see-through pixel (a distant layer shows there
+  unchanged). At 100 the bake is today's; nothing in a composition makes
+  less.
+- **Checks: metadata in `olr-format`, cells in `olr-edit`.**
+  `check_placed` (below `olr-edit`) reads only `placed.ron`, the assets'
+  `asset.ron`s and file headers: keys, ids, states, values, the Live and
+  distant rules as `asset.ron` shows them, rasters (at `(0, 0)`,
+  unstretched, not distant, not Live, of the level's size: a raster covers
+  the level) and distant layers (unstretched), scripts, and the budgets
+  (stretched pixels with stacked state pictures, gathered groups and
+  materials, distant layers). Its group count gathers the assets' own
+  settings; a copy's values may change a group's settings, so the bake
+  gathers the posed groups and checks the count again. A mixed layer's
+  dirt cell is seen only once decoded: the bake runs `live_refusal` on
+  every Live copy (`a_live_copy_with_dirt_cells_is_refused_by_the_bake`).
+  A distant copy's elements also refuse glass, beams and painted surface
+  maps (what `check_elements` refuses of a distant element).
+- **Flattening.** Every distant piece first (copy order, then piece
+  order: the ground's own distant layers and distant copies), then the
+  rest; element ids `<copy id>.<element id>` (copy ids hold no dot, so
+  these never clash), never written. A ground alone, unstretched at
+  `(0, 0)` with the level's groups and materials, bakes byte for byte as
+  `compose::bake` of its composition (`a_ground_alone_bakes_as_its_composition`).
+- **Live copies bake as static for now** (a later issue takes them out of
+  the bake; their groups and materials stay counted for the look).
+- **Bounds.** At most `MAX_LEVEL_ASSETS` (256) assets and `MAX_COPIES`
+  (1024) copies, checked with every key and id before any path is made;
+  each asset within `MAX_ASSET_BYTES`, the whole `editor/` within
+  `MAX_PLACED_BYTES` (`olr_pack::archive::MAX_UNPACKED`, a test holds them
+  equal: `olr-format` sits below `olr-pack`), counted as it is read.
+  `valid_asset_id` moved into `olr_format::assets` (an origin's folder is
+  one; `olr_edit::asset` re-exports it).
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`
