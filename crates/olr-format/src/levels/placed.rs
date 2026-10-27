@@ -840,6 +840,27 @@ pub fn read_placed_files(src: &dyn ContentSource) -> Result<Option<PlacedSource>
     Ok(Some(PlacedSource { file, assets, scripts, level_script }))
 }
 
+/// The files [`write_placed_files`] writes for `src`, by pack path:
+/// `placed.ron`, each listed asset's files in its folder
+/// (`assets::asset_paths`), the copies' scripts and the level script.
+/// Nothing is encoded.
+pub fn placed_paths(src: &PlacedSource) -> Vec<String> {
+    let mut out = vec![PLACED_FILE.to_string()];
+    for a in &src.file.assets {
+        if let Some(asset) = src.assets.get(&a.key) {
+            let dir = asset_dir(&a.key);
+            out.extend(crate::assets::asset_paths(asset).into_iter().map(|f| format!("{dir}/{f}")));
+        }
+    }
+    for c in src.file.copies.iter().filter(|c| c.script && src.scripts.contains_key(&c.id)) {
+        out.push(copy_script_file(&c.id));
+    }
+    if src.file.script && src.level_script.is_some() {
+        out.push(LEVEL_SCRIPT_FILE.into());
+    }
+    out
+}
+
 /// Writes `placed.ron` in canonical form, each listed asset's folder with
 /// `write_asset_files` (its files byte for byte as given), the scripts of
 /// the copies that list one and the level script when listed; counts,
@@ -1160,6 +1181,11 @@ mod tests {
             assert!(fs.exists(&VPath::new(f).unwrap()), "{f}");
         }
         assert_eq!(read_placed_files(&fs).unwrap(), Some(src.clone()));
+        // `placed_paths` lists exactly what was written.
+        let mut paths = placed_paths(&src);
+        paths.sort();
+        let written: Vec<String> = fs.files().map(|(p, _)| p.as_str().to_string()).collect();
+        assert_eq!(paths, written);
         // The element files are written byte for byte as given.
         let odd = b"\x89PNG not re-encoded".to_vec();
         let mut s = src;

@@ -10,6 +10,9 @@ use serde::de::DeserializeOwned;
 use crate::FormatError;
 use crate::ron_io::{from_canonical, to_canonical};
 
+/// The ground's `asset.ron` in a level pack (issue #74).
+const GROUND_ASSET_FILE: &str = "editor/asset.ron";
+
 /// `text`, the file at `path` in a pack (`level.ron`, `weapons/<id>.ron`,
 /// ...), parsed as that file's type and written again in canonical form.
 /// Only the file itself is checked (no references, no images).
@@ -33,6 +36,8 @@ pub fn canonical_text(path: &str, text: &str) -> Result<String, FormatError> {
         crate::mods::MOD_EDITOR_FILE => again::<crate::mods::ModEditorFile>(path, text),
         crate::levels::COMPOSITION_FILE => again::<crate::levels::Composition>(path, text),
         crate::levels::PLACED_FILE => again::<crate::levels::PlacedFile>(path, text),
+        // The ground's `asset.ron` (issue #74).
+        GROUND_ASSET_FILE => again::<crate::assets::AssetFile>(path, text),
         _ => Err(FormatError::invalid(path, "", "not an authoring file this format reads")),
     }
 }

@@ -487,6 +487,29 @@ fn read_thumb(src: &dyn ContentSource) -> Option<Vec<u8>> {
     (w > 0 && h > 0 && w <= MAX_THUMB_SIDE && h <= MAX_THUMB_SIDE).then_some(bytes)
 }
 
+/// The files [`write_asset_files`] writes for `src`, by path in its
+/// folder: `asset.ron`, the sounds `asset.ron` lists and `src` holds, the
+/// script, the elements' files `src` holds and the thumbnail. Nothing is
+/// encoded.
+pub fn asset_paths(src: &AssetSource) -> Vec<String> {
+    let mut out = vec![ASSET_FILE.to_string()];
+    out.extend(src.file.sounds.iter().filter(|n| src.sounds.contains_key(*n)).map(|n| sound_file(n)));
+    if src.script.is_some() {
+        out.push(SCRIPT_FILE.into());
+    }
+    for e in &src.file.elements {
+        for f in asset_files(e) {
+            if src.files.contains_key(&f) && !out.contains(&f) {
+                out.push(f);
+            }
+        }
+    }
+    if src.thumb.is_some() {
+        out.push(ASSET_THUMB_FILE.into());
+    }
+    out
+}
+
 /// Writes `asset.ron` in canonical form (`start` left out when it names
 /// the first state), the elements' files, the sounds `asset.ron` lists,
 /// the script and the thumbnail (counts, ids, sources and sound names
