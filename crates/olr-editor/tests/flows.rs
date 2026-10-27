@@ -2084,3 +2084,118 @@ fn paint_the_ground_from_the_level() {
     let saved = olr_editor::Document::open(pack, dir, h.state().state.catalog()).unwrap();
     assert_eq!(saved.layer_art("tunnels").unwrap(), &painted);
 }
+
+/// The library's thumbnail named `name` (issue #83: in the left panel, a
+/// copy's row of that name in the right one): the built-in one (the
+/// first) or the user's (the last).
+fn card<'a>(h: &'a Harness<'static, App>, name: &'a str, yours: bool) -> egui_kittest::Node<'a> {
+    let right = h.state().data.canvas_rect().unwrap().left();
+    let mut cards: Vec<_> =
+        h.query_all_by_role_and_label(Role::Button, name).filter(|n| n.rect().right() <= right).collect();
+    cards.sort_by(|a, b| a.rect().top().total_cmp(&b.rect().top()));
+    if yours { cards.pop() } else { cards.into_iter().next() }.expect(name)
+}
+
+/// Asset `name`'s thumbnail dragged onto the canvas, let go at world pixel
+/// `to`'s centre.
+fn drop_card(h: &mut Harness<'static, App>, name: &str, yours: bool, to: (i32, i32)) {
+    let from = card(h, name, yours).rect().center();
+    let s = &h.state().state;
+    let k = s.document().unwrap().level().art_scale;
+    let (a, b) = (s.view().to_screen(to, k), s.view().to_screen((to.0 + 1, to.1 + 1), k));
+    let to = h.state().data.canvas_rect().unwrap().min + egui::vec2((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0);
+    hover(h, from);
+    press(h, from, true);
+    for k in 1..=6 {
+        hover(h, from + (to - from) * (k as f32 / 6.0));
+    }
+    press(h, to, false);
+}
+
+/// A stroke of the Draw tool across the asset tab's Lamps layer.
+fn paint_lamps(h: &mut Harness<'static, App>, y: i32) {
+    use olr_editor::tools::PointerKind;
+    act(h, A::Select(Selection::Element("lamps".into())));
+    act(h, A::Tool(Tool::Brush));
+    for (kind, x) in [(PointerKind::Down, 1), (PointerKind::Move, 12), (PointerKind::Up, 24)] {
+        act(h, A::Pointer { kind, world: (x, y), shift: false, toggle: false });
+    }
+    assert!(h.state().state.active_dirty(), "painted");
+}
+
+/// File ▾ Save.
+fn save_by_menu(h: &mut Harness<'static, App>) {
+    h.get_by_label(labels::FILE).click();
+    h.run();
+    h.get_by_label(labels::SAVE).click();
+    h.run();
+}
+
+/// Issue #83's flow: the built-in strip light dragged onto the level
+/// twice, edited, painted and saved (the user's now), the user's placed,
+/// edited and saved again: the user's copy follows, the built-in ones do
+/// not.
+#[test]
+fn place_two_lamps_and_edit_their_asset() {
+    use olr_format::levels::AssetOrigin;
+    let Some(root) = content() else { return };
+    let (tmp, mut state) = editor(&root);
+    let dir = tmp.path().join("yours");
+    let builtin_dir = crate::common::built_in_assets();
+    run(&mut state, A::AssetsChanged(crate::common::set_library(&builtin_dir, &dir)));
+    let mut h = harness(state);
+    h.run();
+    let builtin = AssetOrigin::Builtin("strip-light".into());
+    let mine = AssetOrigin::Yours("strip-light".into());
+    let copies_of = |h: &Harness<'static, App>, o: &AssetOrigin| {
+        let d = h.state().state.document().unwrap();
+        d.copies().iter().filter(|c| d.copy_origin(&c.id).as_ref() == Some(o)).count()
+    };
+    // 1. Dragged twice.
+    drop_card(&mut h, "Strip light", false, (40, 40));
+    drop_card(&mut h, "Strip light", false, (40, 80));
+    assert_eq!(copies_of(&h, &builtin), 2, "{:?}", h.state().state.status().message);
+    // 2. Edited: picked, then Edit asset.
+    card(&h, "Strip light", false).click();
+    h.run();
+    h.get_by_label(labels::EDIT_LIBRARY_ASSET).click();
+    h.run();
+    assert_eq!(h.state().state.doc_tab(), olr_editor::DocTab::Asset);
+    // 3. Painted, 4. saved: a new asset of the user's.
+    paint_lamps(&mut h, 0);
+    save_by_menu(&mut h);
+    assert!(dir.join("strip-light/asset.ron").is_file());
+    assert!(h.state().state.use_yours().is_some(), "Use your copy in this level offered");
+    assert!(h.query_by_label(labels::USE_YOUR_COPY).is_some());
+    assert_eq!(copies_of(&h, &builtin), 2, "the built-in copies stay built-in");
+    // 5. The user's placed.
+    h.get_by_label(labels::LEVEL_TAB).click();
+    h.run();
+    drop_card(&mut h, "Strip light", true, (40, 120));
+    assert_eq!(copies_of(&h, &mine), 1, "{:?}", h.state().state.status().message);
+    let compare = |h: &Harness<'static, App>| {
+        let d = h.state().state.document().unwrap();
+        let libs = olr_edit::library::read_origins(&d.linked_origins(), Some(&builtin_dir), Some(&dir));
+        d.compare_library(&libs)
+    };
+    let placed: Vec<_> = compare(&h);
+    // 6. The user's edited again: its copy follows, the built-in ones not.
+    card(&h, "Strip light", true).click();
+    h.run();
+    h.get_by_label(labels::EDIT_LIBRARY_ASSET).click();
+    h.run();
+    paint_lamps(&mut h, 1);
+    save_by_menu(&mut h);
+    let links = compare(&h);
+    assert!(links.iter().all(|l| l.status == olr_edit::library::Status::Same), "{links:?}");
+    let d = h.state().state.document().unwrap();
+    let key = |o: &AssetOrigin| d.keys_of(o)[0].clone();
+    let before = placed.iter().find(|l| l.origin == mine).unwrap();
+    assert_eq!(before.key, key(&mine));
+    let read = |p: std::path::PathBuf| olr_edit::asset::read_dir(&p).unwrap();
+    let held = |o: &AssetOrigin| d.placement().unwrap().assets[&key(o)].clone();
+    let same = olr_edit::placed::same_asset;
+    assert!(same(&held(&mine), &read(dir.join("strip-light"))), "the user's copy is as saved again");
+    assert!(same(&held(&builtin), &read(builtin_dir.join("strip-light"))), "the built-in ones are not");
+    assert_eq!((copies_of(&h, &builtin), copies_of(&h, &mine)), (2, 1));
+}

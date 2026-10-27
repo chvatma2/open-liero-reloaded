@@ -252,8 +252,10 @@ impl EditorState {
                 })
                 .collect();
             let Some(doc) = &self.doc else { break };
+            // The library's name for it (a save may have renamed it).
             let key = of().next().map(|l| l.key.clone()).unwrap_or_default();
-            let name = doc.asset_name(&key).unwrap_or(key);
+            let library = libs.get(&origin).and_then(Option::as_ref).map(|a| a.file.name.clone());
+            let name = library.or_else(|| doc.asset_name(&key)).unwrap_or(key);
             if !take.is_empty() {
                 let n = doc.copies_of(&take);
                 let step = format!("Update {name}");
@@ -431,7 +433,8 @@ impl EditorState {
         match made {
             Some((cmds, n)) => {
                 self.use_yours = None;
-                self.say(format!("{} of {name} now use yours", copies_said(n)));
+                let verb = if n == 1 { "uses" } else { "use" };
+                self.say(format!("{} of {name} now {verb} yours", copies_said(n)));
                 cmds
             }
             None => {

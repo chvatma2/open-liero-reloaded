@@ -12,6 +12,7 @@ mod flows;
 mod folders;
 mod history;
 mod level_tab;
+mod library_panel;
 mod look;
 mod materials;
 mod properties;

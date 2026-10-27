@@ -39,12 +39,12 @@ fn harness(state: EditorState) -> Harness<'static, App> {
 
 /// The Copies list's row named `name` (issue #83: the library on the left
 /// shows a thumbnail of the same name): the rightmost.
-pub fn row<'a>(h: &'a Harness<'static, App>, name: &'a str) -> egui_kittest::Node<'a> {
+pub fn row<'a, S>(h: &'a Harness<'static, S>, name: &'a str) -> egui_kittest::Node<'a> {
     h.query_all_by_label(name).max_by(|a, b| a.rect().left().total_cmp(&b.rect().left())).expect(name)
 }
 
 /// The library's thumbnail named `name` (issue #83): the leftmost button.
-pub fn thumbnail<'a>(h: &'a Harness<'static, App>, name: &'a str) -> egui_kittest::Node<'a> {
+pub fn thumbnail<'a, S>(h: &'a Harness<'static, S>, name: &'a str) -> egui_kittest::Node<'a> {
     h.query_all_by_role_and_label(egui::accesskit::Role::Button, name)
         .min_by(|a, b| a.rect().left().total_cmp(&b.rect().left()))
         .expect(name)
