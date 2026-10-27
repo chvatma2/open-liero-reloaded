@@ -1379,3 +1379,39 @@ fn the_thumbnail_shows_the_starting_state() {
     set_start(&mut a, "Normal").unwrap();
     assert_eq!(brightness(encode(&a).unwrap().thumb.as_ref().unwrap()), lit);
 }
+
+/// Issue #78: one grey layer, one pixel of it glowing: the same as its
+/// surroundings in the light preview, brighter in the dark one.
+#[test]
+fn preview_dark_glows_and_light_does_not() {
+    let grey = Rgba::rgb(90, 90, 90);
+    let mut piece = layer("panel", ElementMaterial::Background, (0, 0), (8, 6), grey, Some("light"));
+    let mut mask = vec![0; 16 * 12];
+    mask[5 * 16 + 9] = 255;
+    piece.glow_mask = Some(std::sync::Arc::new(mask));
+    let mut light = group("light", 300);
+    light.colour = GlowColourSource::Tint(colour("#ffffff"));
+    let a = Asset::new("Panel", 2, (8, 6), vec![piece], vec![light], Vec::new());
+    let sum = |p: Rgba| u32::from(p.r) + u32::from(p.g) + u32::from(p.b);
+    let full = preview(&a, false);
+    assert_eq!((full.width(), full.height()), (16, 12), "the art's resolution");
+    assert_eq!(full.get(9, 5), grey);
+    assert_eq!(full.get(2, 2), grey);
+    let dark = preview(&a, true);
+    assert_eq!((dark.width(), dark.height()), (16, 12));
+    assert!(sum(dark.get(9, 5)) > sum(dark.get(2, 10)), "{:?} {:?}", dark.get(9, 5), dark.get(2, 10));
+    assert!(sum(dark.get(2, 10)) < sum(grey), "the rest is dark");
+}
+
+/// Issue #78: a preview is at most `PREVIEW_MAX` a side, keeping the
+/// asset's aspect.
+#[test]
+fn a_big_asset_preview_is_at_most_512() {
+    let piece = layer("wall", ElementMaterial::Rock, (0, 0), (600, 300), BLUE, None);
+    let a = Asset::new("Wall", 2, (600, 300), vec![piece], Vec::new(), Vec::new());
+    for dark in [false, true] {
+        let p = preview(&a, dark);
+        assert_eq!((p.width(), p.height()), (PREVIEW_MAX, 256), "dark: {dark}");
+    }
+    assert_eq!(preview(&a, false).get(100, 100), BLUE, "box-filtered, full bright");
+}

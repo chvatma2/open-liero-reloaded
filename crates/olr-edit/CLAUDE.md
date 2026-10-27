@@ -357,7 +357,12 @@ operations.
   says so); `piece_name`. `encode` writes `AssetSource` (`images/`,
   `layers/`, `masks/`, `glow/`, and `thumbnail`: baked under
   `preview_look`, ambient `PREVIEW_AMBIENT` `#304060` at 20 %, through
-  `level_thumbnail`); `decode` checks (`check_asset`) and decodes
+  `level_thumbnail`); issue #78's `preview(asset, dark)` is the asset
+  tab's: at its art resolution, at most `PREVIEW_MAX` (512) a side
+  (box-filtered down, its aspect kept), full bright or (`dark`) under
+  `preview_look` through `olr_format::levels::level_lit`, the
+  thumbnail's light model (`preview_dark_glows_and_light_does_not`,
+  `a_big_asset_preview_is_at_most_512`); `decode` checks (`check_asset`) and decodes
   (`decode_element`, `decode_glow_masks`). `load_dir`, `read_dir`,
   `save_dir` (`replace_dir`), `summary` (`asset.ron` and the thumbnail
   only: the Assets tab's entry). `DecodedLevel::of_pack` (a plain level

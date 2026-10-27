@@ -958,6 +958,34 @@ fn strip(path: &str) -> String {
 /// `asset` drawn lit under [`preview_look`] (its uncovered pixels black),
 /// letterboxed into the level thumbnail's size.
 pub fn thumbnail(asset: &Asset) -> RgbaImage {
+    level_thumbnail(&baked(asset, true))
+}
+
+/// The largest side (pixels) of a [`preview`].
+pub const PREVIEW_MAX: u32 = 512;
+
+/// The asset tab's preview of `asset` (issue #78): at its art resolution,
+/// a larger asset box-filtered down to at most [`PREVIEW_MAX`] a side,
+/// keeping its aspect; `dark` lit under [`preview_look`] by the
+/// thumbnail's light model (`olr_format::levels::level_lit`), its glowing
+/// pixels lit, else full bright. Uncovered pixels are black, as the
+/// thumbnail's.
+pub fn preview(asset: &Asset, dark: bool) -> RgbaImage {
+    let s = asset.art_scale.max(1);
+    let (aw, ah) = (asset.size.0.saturating_mul(s).max(1), asset.size.1.saturating_mul(s).max(1));
+    let size = if aw <= PREVIEW_MAX && ah <= PREVIEW_MAX {
+        (aw, ah)
+    } else {
+        let (_, _, w, h) = olr_format::levels::letterbox(aw, ah, PREVIEW_MAX, PREVIEW_MAX);
+        (w, h)
+    };
+    olr_format::levels::level_lit(&baked(asset, dark), size)
+}
+
+/// `asset` in its starting state with its defaults, baked as a level of
+/// its size and art scale; under [`preview_look`] when `lit`, else with no
+/// look.
+fn baked(asset: &Asset, lit: bool) -> LevelSource {
     let (w, h) = asset.size;
     let s = asset.art_scale.max(1);
     let mut level = LevelSource {
@@ -985,7 +1013,9 @@ pub fn thumbnail(asset: &Asset) -> RgbaImage {
     // nothing sets a value).
     let (pieces, groups) =
         landed_pieces(asset).unwrap_or_else(|_| (asset.pieces.clone(), asset.groups.clone()));
-    level.look = Some(preview_look(&groups));
+    if lit {
+        level.look = Some(preview_look(&groups));
+    }
     let masks: GlowMasks =
         pieces.iter().filter_map(|p| Some((p.element.id.clone(), p.glow_mask.clone()?))).collect();
     let items: Vec<(&Element, &Decoded)> = pieces.iter().map(|p| (&p.element, &p.decoded)).collect();
@@ -997,7 +1027,7 @@ pub fn thumbnail(asset: &Asset) -> RgbaImage {
         &RgbaImage::new(0, 0),
         Rect { x: 0, y: 0, w, h },
     );
-    level_thumbnail(&level)
+    level
 }
 
 /// An asset folder's contents decoded: checked first (`check_asset`), every
