@@ -342,8 +342,10 @@ fn copy_and_level_scripts_open_commit_and_list_syntax_warnings() {
     assert_eq!(s.script_open(), None);
     let level = s.document().unwrap().script_of(&ScriptTarget::Level).unwrap().to_string();
     assert!(level.contains("fn broken( {"), "{level:?}");
+    // The level script runs: its problems are errors (the level does not
+    // save with one, issue #89).
     assert!(
-        problems(s, Severity::Warning).iter().any(|w| w.starts_with("the level script, line")),
+        problems(s, Severity::Error).iter().any(|w| w.starts_with("the level script, line")),
         "{:?}",
         s.status().problems
     );
@@ -352,7 +354,7 @@ fn copy_and_level_scripts_open_commit_and_list_syntax_warnings() {
     assert!(matches!(s.dialog(), Some(Dialog::RemoveTargetScript(ScriptTarget::Level))));
     run(s, A::Choose(Choice::Confirm));
     assert!(s.document().unwrap().script_of(&ScriptTarget::Level).is_none());
-    assert!(!problems(s, Severity::Warning).iter().any(|w| w.starts_with("the level script")));
+    assert!(!problems(s, Severity::Error).iter().any(|w| w.starts_with("the level script")));
     // Saved, the scripts are the pack's files.
     run(s, A::Save);
     let dir = s.document().unwrap().dir().to_path_buf();

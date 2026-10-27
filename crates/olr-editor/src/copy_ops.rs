@@ -4,8 +4,12 @@
 //! live_refusal`, the starting states, the exposed values with their
 //! types and limits, the asset's default script, Distant), the copies'
 //! and the level's scripts set as one step each (`olr_edit::placed::
-//! set_copy_script`, `set_level_script`), and the scripts' syntax errors
-//! as the level's warnings (`olr_script::check`; issue #88 runs them in matches).
+//! set_copy_script`, `set_level_script`), and the scripts' problems: those
+//! of every script the level runs (issue #89: `olr_edit::scripts::problems`,
+//! syntax, handlers and names) as errors, since the level does not save
+//! with them, and the syntax errors of the scripts that run nowhere (a
+//! static copy's, an asset's default no live copy runs) as warnings
+//! (`olr_script::check`).
 
 use std::sync::Arc;
 
@@ -216,22 +220,27 @@ impl Document {
         Ok(self.change(edit))
     }
 
-    /// The syntax errors of the level's scripts as warnings (issue #84):
-    /// each copy's, the level's, and the default scripts of the level's
-    /// assets, by script and line.
+    /// The problems of the level's scripts (issues #84, #89): every
+    /// script the level runs checked by name as an error ("crane's script,
+    /// line 3: …": the level does not save with one), then the syntax
+    /// errors of those that run nowhere (a static copy's, a default script
+    /// no live copy runs) as warnings, by script and line.
     pub fn script_problems(&self) -> Vec<Problem> {
         let mut out = Vec::new();
         let Some(p) = self.placement() else { return out };
-        for c in p.file.copies.iter().filter(|c| c.script) {
+        for problem in olr_edit::scripts::problems(p) {
+            out.push(Problem { severity: Severity::Error, text: problem.to_string() });
+        }
+        let runs = |c: &olr_format::levels::PlacedCopy| c.live;
+        for c in p.file.copies.iter().filter(|c| c.script && !runs(c)) {
             if let Some(text) = p.scripts.get(&c.id) {
                 script_warnings(&ScriptTarget::Copy(c.id.clone()).said(), text, &mut out);
             }
         }
-        if let Some(text) = &p.level_script {
-            script_warnings(&ScriptTarget::Level.said(), text, &mut out);
-        }
         for a in &p.file.assets {
-            if let Some(src) = p.assets.get(&a.key)
+            let run = p.file.copies.iter().any(|c| c.asset == a.key && runs(c) && c.default_script);
+            if !run
+                && let Some(src) = p.assets.get(&a.key)
                 && let Some(text) = &src.script
             {
                 script_warnings(&format!("{}'s default script", src.file.name), text, &mut out);
