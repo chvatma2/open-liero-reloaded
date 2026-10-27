@@ -10,7 +10,12 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   `olr-vfs`, `olr-format`, `olr-pack`, `olr-edit`, `olr-look` (`ViewMode`), egui 0.36.2, serde and
   thiserror; not on `olr-ui`, `olr-render` or `olr-present` (the host
   applies `olr_ui::theme`). Not wasm. Tests use `egui_kittest` (`wgpu`,
-  `snapshot`), `tempfile` and `proptest`.
+  `snapshot`), `tempfile`, `proptest` and (issue #78) `olr-ui`, a
+  dev-dependency only, as the skin editor's: the fit and flow tests run
+  under `olr_ui::theme` itself rather than a hand-copied theme. It is
+  allowed though `olr-ui` is a higher layer: `cargo xtask layers` checks
+  no dev-dependency (tests are not shipped), and `olr-ui` does not depend
+  on this crate.
 - **The pattern** (`olr-ui`'s): `EditorState::update(EditorAction) ->
   Vec<EditorCommand>` is pure; `ui::show(ui, &state, &mut EditorData)`
   draws egui and returns actions. The host carries out the commands
@@ -552,7 +557,7 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     and focus restored, the status naming the entry. `AssetParts::
     constrains` is false for an asset without states and exposure: never
     refused.
-  - **Panels** (today's layout; #78 moves it to the skin editor's): the
+  - **Panels** (issue #77; laid out by #78, below): the
     session bar starts with `labels::LEVEL_TAB` | `ASSET_TAB` (Asset
     disabled with `ASSET_TAB_HINT` until one is open); the asset tab has
     no Play, File ▾ Open…, Spawn, Haze brush (`offers(tool)`, the
@@ -564,8 +569,49 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     ("Edit asset"; #81's "Edit in level" is the level's own copies').
     `EditorData`'s drafts belong to the tab, the directory and the asset
     key.
-  - Tests: `tests/asset_tab.rs` and `flows.rs`'s
-    `paint_an_asset_through_the_panels`.
+  - **Layout (issue #78)** (`ui/asset.rs`, the skin editor's, issue
+    #55's sizing rules): the session bar wrapped to the window (below
+    `ui::NARROW`, 900 points, the `TOOLS_TAB` | `LAYERS_TAB` switch;
+    Level | Asset, File ▾ with Save and Close, Undo, Redo, "Asset:
+    name", the unsaved mark `UNSAVED`, View ▾ without Preview parallax);
+    on the left the tools panel (`olr-editor-asset-tools`, 20 % of the
+    width, 200-220 points): the rail's buttons in rows (`rail::grid`),
+    then the chosen tool's options (`toolbar::options_panel`: the options
+    bar's functions in a column, a group of toggles in wrapped rows, a
+    picker under its label at most the panel's width); on the right the
+    layers panel (`olr-editor-asset-layers`, 37 %, 240-400 points): room
+    for issue #79's states, `LAYERS` (the tree, `elements::tree`: no
+    scroll area of its own, names cut to the room), the selection's
+    properties or the asset's, the previews; the status line; the
+    canvas. Narrow, one side panel shows, 55 % of the width (235 points
+    at 427). Both scroll vertically only and follow a focus that moved
+    otherwise than by the pointer (`see_focus`, `follow_focus`, the skin
+    editor's). `EditorData::fit` (the asset tab) makes the shared field
+    helpers fit: `number`, `text` and `slider` put the label above the
+    field where both do not fit (`beside`), a slider's track shortened;
+    "What is it?" and a group's colour kinds wrap their rows in both tabs
+    (as before where they fit); an element's Surface pickers, the
+    materials' rows and an animation's keys fit in the asset tab. The
+    level tab is laid out as before (its fit is #83's).
+  - **Previews** (`ui/previews.rs`): the asset light (`PREVIEW_LIGHT`,
+    full bright) and dark (`PREVIEW_DARK`, under `preview_look`), each
+    at game size (3 points a world pixel, shrunk to the panel) and
+    enlarged (whole points a pixel fitting the panel, at most 12 and 480
+    points high), from `olr_edit::asset::preview(&doc.to_asset(), dark)`
+    on the CPU; made again only when the document's
+    `bake_generation()` (bumped by every `rebake` and `apply`) moved and
+    no drag is in progress (`EditorState::dragging`), kept as textures
+    by (`shown_generation`, bake generation) in `EditorData::previews`
+    (`preview_generation()` for tests).
+  - Tests: `tests/asset_tab.rs`, `flows.rs`'s
+    `paint_an_asset_through_the_panels` (also at 1280 × 720 at UI scale
+    3, through the narrow switch) and `previews_follow_edits_not_frames`,
+    and `tests/fits.rs` (issue #78): `the_asset_tab_fits` (at
+    `olr-ui/tests/fits.rs`' sizes and 1400 × 860 under `olr_ui::theme`,
+    both switch positions below `NARROW`, the asset, a layer and a glass
+    layer: every widget across the window and within its panel, every
+    enabled control focused and scrolled whole into view) and
+    `the_options_are_under_the_tools`.
 - **Tests** (`tests/`, one binary): `asset.rs` (issue #9: save, the name
   clash, the rectangle unclipped and hidden layers left out, placing as one
   step with lighting added, join and add, Remove, Import, and the

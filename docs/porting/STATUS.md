@@ -6760,8 +6760,9 @@ level library|export|import`. The level tab's notice and buttons are
 No OLX counterpart. The design
 `docs/superpowers/specs/2026-10-26-asset-based-levels-design.md` ("The
 asset tab", call 18); the code is `olr-editor`'s `asset_tab.rs` and
-`state.rs`. Part 1 (#77) is the second document on today's layout; #78
-moves it to the skin editor's layout, #79 adds the states panel.
+`state.rs`, laid out in `ui/asset.rs` and `ui/previews.rs`. Part 1
+(#77) is the second document on today's layout; #78 moves it to the
+skin editor's layout, #79 adds the states panel.
 
 - **Two tabs inside the level editor, not a second editor.** One session
   holds the level and an asset (#81 opens the level's ground in the asset
@@ -6814,6 +6815,26 @@ moves it to the skin editor's layout, #79 adds the states panel.
   picture of lamps: edit it in the states panel (issue #79)"): #79 lifts
   this by carrying the states' pictures along. An asset without states
   and exposure (every built-in one) is never refused.
+- **The skin editor's layout, fitted at every size (#78).** The asset tab
+  is laid out as the skin editor (the session bar, the tools on the left,
+  the canvas in the middle, the layers, properties and previews on the
+  right, the status line), its side panels a share of the window's width
+  and below 900 points one at a time (Tools | Layers), at every size the
+  menus fit (issue #55's rules, `tests/fits.rs`). The level tab keeps
+  issue #8's layout until #83 fits it.
+- **Options under the tools.** The chosen tool's options (the level
+  tab's options bar) sit in the tools panel under the tools, as the skin
+  editor keeps its options in its tools panel: a row of options across
+  the top cannot fit a 235-point side panel's window.
+- **Previews on the CPU, at most 512, on release.** The light (full
+  bright) and dark (under the thumbnail's preview look) previews are
+  drawn by the thumbnail's CPU light model at any size
+  (`olr_format::levels::level_lit`, of which the thumbnail is the
+  160 × 96 case, byte for byte), at the asset's art resolution and at
+  most 512 pixels a side, not by the renderer: the editor's panels do no
+  GPU work. They approximate the lit canvas (no shadows, soak, softness
+  or light steps, as the thumbnail), and are made again only when an
+  edit is done, never during a stroke or every frame.
 
 ## Kept OLX quirks
 
