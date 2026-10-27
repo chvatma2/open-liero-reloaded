@@ -11,7 +11,8 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   applied at the next tick, `find_spot`, and issue #86's
   `set_live_state`/`set_live_value`), `World::tick(&[Keys], &mut
   TickEvents)` is the only way state changes, and it does not allocate,
-  mode callbacks and commands included (`tests/no_alloc.rs`). In-crate
+  mode callbacks and commands included (`tests/no_alloc.rs`), unless the
+  level's scripts run (issue #88: Rhai allocates, bounded by its limits). In-crate
   tests build worlds with `World::test_new` (the old positional form,
   settings unchecked) and `spawn_worm`/`set_loadout`.
 - **Game modes** (`mode.rs`, `referee.rs`; spec §20 F6): the world calls
@@ -57,7 +58,7 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   and validated if it indexes anything. `WorldState` holds what `checksum`
   hashes (postcard, then deflate; `MAX_INFLATED`), the mode as
   `GameMode::save_state` bytes; last, `live: Option<LiveWire>` (issue
-  #86), refused (`StateError::Live`) when present without live copies
+  #86; issue #88 its `script` part), refused (`StateError::Live`) when present without live copies
   or the reverse, with another copy or value count, a state out of
   range or a value outside its limits (`LiveWorld::can_load`). The sender may be a stranger: `validate`
   refuses (`StateError`, nothing changed) anything that could index out of
@@ -227,11 +228,56 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   and `rock_parts` at whole-pixel places (copy place + `X`/`Y` + part
   place + its layer's offsets; `Visible` and `LayerVisible` 0 hide).
   Nothing reads the parts in play yet (#90, #91, #94). `LiveWorld` is
-  where #88 (script state) and #89 (motion) extend: each adds to the
-  struct, `LiveWorld::hash` and `LiveWire` (exhaustive destructurings).
+  where #88 (script state, below) and #89 (motion) extend: each adds to
+  the struct, `LiveWorld::hash` and `LiveWire` (exhaustive destructurings).
   Tests: `tests/live.rs` (`tests/common/live.rs`'s console, press and
   crate; `a_value_is_read_by_its_target`), `tests/state.rs`' live refusals and proptest, `tests/no_alloc.rs`'s
   `a_live_world_ticks_without_allocating`.
+- **Scripts' state** (`script.rs`, issue #88; `olr-script` runs them):
+  `Director` (`Debug + Send + Sync`, `box_clone`, `timer_functions(script)`,
+  `run(&self, &mut LiveCtx)`) is **stateless**; `MatchSetup::director:
+  Option<Box<dyn Director>>` (`None` by default; with no `live` it is
+  `SetupError::Live`, as more instances than a `u16`) puts a
+  `ScriptWorld` in `LiveWorld::script`. `World::frame` calls
+  `script_phase` once a tick after `mode_tick`, before the frame clock
+  advances; none while `Referee::frozen`. `live_instances(level)`: the
+  level script, then each copy's scripts in run order. Per instance, in
+  flat buffers (`Arena`: one item buffer and offsets for all instances,
+  so a snapshot clones two buffers): its **memory** (`push_memory`,
+  `memory_entries`, `memory_ok`: key length, key, tag, value; keys
+  strictly sorted, at most `MAX_MEMORY_KEYS` 32, keys and strings at most
+  `MAX_MEMORY_BYTES` 64), its **timers** (`LiveTimer { func, due (server
+  frame), period }`, at most `MAX_TIMERS` 16), its **error count** (at
+  most `MAX_SCRIPT_ERRORS` 16) and flags (switched off, started); the
+  scripts' **generator** (`ScriptRng`, SplitMix64 seeded from
+  `MatchSetup::seed`: never `rand()` or `FindSpot`); and the last phase's
+  state changes (`entered`, at most `MAX_LIVE_COMMANDS` 128), which
+  handlers see next tick. `LiveCtx` gives the director the level, a
+  `LiveView`, the instances, the events handlers see (`ScriptEvent`:
+  the last phase's entries, then the tick's events so far), the reads a
+  run moves into its API object and back (`take_reads`/`give_reads`,
+  `rebuild_reads`; patched per command), each instance's state (getters
+  and setters), `apply(LiveCommand)` (`SetState`, `SetValue`,
+  `SwitchOff`; refused past `MAX_LIVE_COMMANDS` a tick; a state change
+  emits `LiveState`), `fail(i)` (`EventKind::ScriptError { instance }`,
+  switched off at the bound) and `charge(ops)`. `World::script_peak()`
+  (`ScriptPeak { run, tick }`, the most operations one run and one tick
+  used since the world was made) is not state (`NotState`, like
+  `actions_triggered`). The scripts' part is hashed after the copies'
+  only in a world with a director (a live level without scripts hashes
+  as before), and transferred as `LiveWire::script` (`ScriptWire`):
+  `ScriptWorld::can_load` refuses (`StateError::Live`) another instance
+  count, memory that `memory_ok` refuses, a timer past `MAX_TIMERS` or
+  naming no function (`Director::timer_functions`), error counts past
+  the bound, unknown flags, state changes of unknown copies or states,
+  and a part present on one side only. A world without a director never
+  calls into it: its tick stays allocation-free. Tests:
+  `tests/script.rs` with `tests/common/director.rs`' `TestDirector` (no
+  Rhai): `script_state_is_in_the_checksum`,
+  `a_restore_replays_scripts_the_same`,
+  `script_state_round_trips_through_a_state_transfer`,
+  `a_bad_script_part_is_refused`, `script_peak_is_not_state`,
+  `hostile_script_parts_never_panic` (proptest).
 - **Checksum** (`checksum.rs`): FNV-1a 64 over all mutable state, through an
   exhaustive destructuring of each type; a new field must be hashed there
   (types with private fields hash themselves in their module, the mode

@@ -512,6 +512,8 @@ impl World {
         self.bonuses.simulate_server(&self.settings, &self.terrain, &mut self.draws, wall_clock, over);
         // `CGameMode::Simulate`, and the commands (hook H1).
         self.mode_tick();
+        // Issue #88: the level's scripts, after the mode and its commands.
+        self.script_phase(frozen);
         self.time += frame;
     }
 

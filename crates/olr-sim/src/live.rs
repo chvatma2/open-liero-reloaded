@@ -16,6 +16,7 @@
 //! the world, transferred as [`LiveWire`]); [`LiveView`] reads them.
 //! Nothing moves and nothing reads the parts yet (#89-#91).
 
+use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -23,9 +24,12 @@ use core::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use olr_math::AbsTime;
+
 use crate::buf::Buf;
 use crate::checksum::Fnv;
 use crate::events::{EventKind, TickEvents};
+use crate::script::{Director, ScriptWire, ScriptWorld};
 
 /// What a live copy's value drives (`olr_format::levels::Target`): a
 /// layer property names the asset layer its parts show
@@ -372,12 +376,22 @@ pub(crate) struct LiveWorld {
     /// Every copy's values in the world's units (positions in
     /// 1/[`LIVE_SUBPIXELS`] pixel), within their limits.
     values: Buf<i64>,
+    /// Setup: where the match's frame clock started (scripts' `time()`).
+    pub(crate) start: AbsTime,
+    /// The scripts' state (issue #88), present when the setup has a
+    /// director.
+    pub(crate) script: Option<ScriptWorld>,
 }
 
 impl LiveWorld {
     /// The copies of `level` at their defaults, before they enter their
     /// starting states ([`LiveWorld::start`]).
-    pub(crate) fn new(level: Arc<LiveLevel>) -> LiveWorld {
+    pub(crate) fn new(
+        level: Arc<LiveLevel>,
+        director: Option<Box<dyn Director>>,
+        seed: u32,
+        start: AbsTime,
+    ) -> LiveWorld {
         let n = level.copies.len();
         let mut offsets = Buf::with_capacity(n + 1);
         let mut values = Buf::with_capacity(level.copies.iter().map(|c| c.props.len()).sum());
@@ -388,7 +402,14 @@ impl LiveWorld {
         }
         let mut states = Buf::with_capacity(n);
         states.resize(n, 0);
-        LiveWorld { level, offsets, states, values }
+        let script = director.map(|d| ScriptWorld::new(d, &level, seed));
+        LiveWorld { level, offsets, states, values, start, script }
+    }
+
+    /// Every copy's state, every value, the values' offsets, and the
+    /// scripts' part, borrowed apart.
+    pub(crate) fn parts_mut(&mut self) -> (&[u16], &[i64], &[u32], &mut Option<ScriptWorld>) {
+        (&self.states, &self.values, &self.offsets, &mut self.script)
     }
 
     /// At setup: every copy enters its starting state (an event each, with
@@ -479,8 +500,10 @@ impl LiveWorld {
 
     /// The live part of [`crate::World::checksum`]: every copy's state,
     /// then every value, after their counts.
+    /// then, in a world with scripts (only then, so a level without them
+    /// hashes as before), the scripts' state (issue #88).
     pub(crate) fn hash(&self, h: &mut Fnv) {
-        let LiveWorld { level: _, offsets: _, states, values } = self;
+        let LiveWorld { level: _, offsets: _, states, values, start: _, script } = self;
         h.usize(states.len());
         for &s in states.iter() {
             h.bytes(&s.to_le_bytes());
@@ -489,19 +512,34 @@ impl LiveWorld {
         for &v in values.iter() {
             h.u64(v as u64);
         }
+        if let Some(s) = script {
+            s.hash(h);
+        }
     }
 
     /// The live part of [`crate::World::state`].
     pub(crate) fn wire(&self) -> LiveWire {
-        let LiveWorld { level: _, offsets: _, states, values } = self;
-        LiveWire { states: states.to_vec(), values: values.to_vec() }
+        let LiveWorld { level: _, offsets: _, states, values, start: _, script } = self;
+        LiveWire {
+            states: states.to_vec(),
+            values: values.to_vec(),
+            script: script.as_ref().map(|s| s.wire()),
+        }
     }
 
     /// Whether `w` fits this world's setup: as many copies and values,
-    /// each state one of its copy's, each value within its limits.
+    /// each state one of its copy's, each value within its limits, and a
+    /// scripts' part exactly when this world has one, fitting it
+    /// (`ScriptWorld::can_load`).
     pub(crate) fn can_load(&self, w: &LiveWire) -> bool {
-        let LiveWire { states, values } = w;
-        states.len() == self.states.len()
+        let LiveWire { states, values, script } = w;
+        let script_ok = match (&self.script, script) {
+            (None, None) => true,
+            (Some(s), Some(w)) => s.can_load(w, &self.level),
+            _ => false,
+        };
+        script_ok
+            && states.len() == self.states.len()
             && values.len() == self.values.len()
             && self.level.copies.iter().enumerate().all(|(i, c)| {
                 let Ok(copy) = u16::try_from(i) else { return false };
@@ -514,21 +552,33 @@ impl LiveWorld {
 
     /// Takes `w`, checked by [`LiveWorld::can_load`]; keeps every buffer.
     pub(crate) fn load(&mut self, w: LiveWire) {
-        let LiveWire { states, values } = w;
+        let LiveWire { states, values, script } = w;
         self.states.copy_from_slice(&states);
         self.values.copy_from_slice(&values);
+        if let (Some(s), Some(w)) = (&mut self.script, script) {
+            s.load(w);
+        }
     }
 }
 
 /// The live copies' part of a [`crate::WorldState`]: each copy's state and
-/// every value, as [`LiveWorld`] holds them.
+/// every value, as [`LiveWorld`] holds them, and the scripts' state in a
+/// world with scripts (issue #88).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LiveWire {
     states: Vec<u16>,
     values: Vec<i64>,
+    script: Option<ScriptWire>,
 }
 
 impl LiveWire {
+    /// The scripts' part, for tests of [`crate::World::load_state`]'s
+    /// checks.
+    #[doc(hidden)]
+    pub fn script_mut_for_test(&mut self) -> &mut Option<ScriptWire> {
+        &mut self.script
+    }
+
     /// Sets copy `copy`'s state and value `i` (flat), for tests of
     /// [`crate::World::load_state`]'s checks.
     #[doc(hidden)]

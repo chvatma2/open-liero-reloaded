@@ -98,6 +98,21 @@ pub fn world_live(worms: usize, w: u32, h: u32, live: Arc<olr_sim::LiveLevel>) -
     World::new(setup, Box::new(OracleMode)).expect("the live world")
 }
 
+/// [`world_live`] with the director `director` running its scripts
+/// (issue #88).
+pub fn world_directed(
+    worms: usize,
+    w: u32,
+    h: u32,
+    live: Arc<olr_sim::LiveLevel>,
+    director: Box<dyn olr_sim::Director>,
+) -> World {
+    let mut setup = setup_with(worms, w, h, ActionKind::Carve, SimSettings::lx56());
+    setup.live = Some(live);
+    setup.director = Some(director);
+    World::new(setup, Box::new(OracleMode)).expect("the scripted world")
+}
+
 fn build_with(worms: usize, w: u32, h: u32, hit: ActionKind, settings: SimSettings) -> World {
     World::new(setup_with(worms, w, h, hit, settings), Box::new(OracleMode)).expect("the bench world")
 }

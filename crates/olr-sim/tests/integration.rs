@@ -11,6 +11,10 @@ mod world;
 #[path = "common/live.rs"]
 mod live_level;
 
+#[path = "common/director.rs"]
+mod director;
+
 mod live;
+mod script;
 mod snapshot;
 mod state;

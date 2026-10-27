@@ -61,7 +61,8 @@ pub struct EventKey {
 /// a cosmetic's kind with its worm (gib, laser sight, beam) or size
 /// (explosion); an explosion's shake; a pickup's worm and bonus; a
 /// message's text and numbers; a match end's winner and reason; a live
-/// copy's entry its copy and state (issue #86).
+/// copy's entry its copy and state (issue #86); a script's error its
+/// instance (issue #88).
 pub fn event_keys(tick: u32, events: &[Event]) -> Vec<Option<EventKey>> {
     let mut seen: BTreeMap<(u8, u64), u16> = BTreeMap::new();
     events
@@ -135,6 +136,8 @@ fn class(kind: &EventKind, next: Option<&EventKind>) -> Option<u64> {
         // Issue #86: by its copy and state, so a re-simulated tick's entry
         // plays its effects once (#92).
         EventKind::LiveState { copy, state } => h.words(&[11, copy.into(), state.into()]),
+        // Issue #88: by its script instance.
+        EventKind::ScriptError { instance } => h.words(&[12, instance.into()]),
     }
     Some(h.0)
 }

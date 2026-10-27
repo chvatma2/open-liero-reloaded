@@ -17,6 +17,7 @@ use crate::mode::{GameMode, ModeCtx};
 use crate::projectile::ProjectilePool;
 use crate::referee::Referee;
 use crate::rng::Draws;
+use crate::script::Director;
 use crate::settings::{SettingsError, SimSettings};
 use crate::shots::{MAX_SHOOTINGS, ShootList};
 use crate::world::{CLOCK_OFFSET_MS, MAX_WORMS, Scratch, World};
@@ -72,6 +73,10 @@ pub struct MatchSetup {
     /// match; `None` (the default) for a level without them, whose world
     /// hashes, transfers and plays exactly as before.
     pub live: Option<Arc<LiveLevel>>,
+    /// The level's scripts (issue #88: `olr-script`'s runtime), run once a
+    /// tick; `None` (the default) for a level without scripts, whose world
+    /// hashes, transfers and plays exactly as before. Needs `live`.
+    pub director: Option<Box<dyn Director>>,
 }
 
 impl MatchSetup {
@@ -100,6 +105,7 @@ impl MatchSetup {
             pool_capacity: Self::DEFAULT_POOL_CAPACITY,
             bonus_weapons: None,
             live: None,
+            director: None,
         }
     }
 
@@ -107,7 +113,8 @@ impl MatchSetup {
     /// ranges ([`SimSettings::validate`]), more than [`MAX_WORMS`] worms, a
     /// pool size outside `1..=MAX_POOL_CAPACITY`, a loadout of more than
     /// [`MAX_SLOTS`] slots, live copies, states or values past what a
-    /// `u16` index reaches.
+    /// `u16` index reaches, or a director without live copies or with more
+    /// script instances than a `u16` indexes.
     pub fn validate(&self) -> Result<(), SetupError> {
         self.settings.validate().map_err(SetupError::Settings)?;
         if self.worms.len() > MAX_WORMS {
@@ -127,6 +134,13 @@ impl MatchSetup {
             if live.copies.len() > max || !live.copies.iter().all(fits) {
                 return Err(SetupError::Live);
             }
+        }
+        match (&self.live, &self.director) {
+            (None, Some(_)) => return Err(SetupError::Live),
+            (Some(live), Some(_)) if crate::script::live_instances(live).len() > usize::from(u16::MAX) => {
+                return Err(SetupError::Live);
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -158,7 +172,12 @@ impl fmt::Display for SetupError {
             SetupError::TooManySlots { worm, slots } => {
                 write!(f, "worm {worm}: {slots} weapon slots, at most {MAX_SLOTS}")
             }
-            SetupError::Live => write!(f, "more live copies, states or values than a match holds"),
+            SetupError::Live => {
+                write!(
+                    f,
+                    "more live copies, states, values or scripts than a match holds, or scripts without copies"
+                )
+            }
         }
     }
 }
@@ -222,6 +241,7 @@ impl World {
             pool_capacity,
             bonus_weapons,
             live,
+            director,
         } = setup;
         let terrain_min = terrain.width().min(terrain.height());
         let bonuses = Bonuses::new(sim_mod.weapons().len(), start + TimeDiff(CLOCK_OFFSET_MS));
@@ -251,7 +271,7 @@ impl World {
             },
             spare: Spare::new(MAX_WORMS.saturating_sub(worms.len())),
             setup_worms: 0,
-            live: live.map(LiveWorld::new),
+            live: live.map(|l| LiveWorld::new(l, director, seed, start)),
         };
         if let Some(ids) = bonus_weapons {
             world.set_bonus_weapons(&ids);

@@ -209,6 +209,11 @@ pub enum EventKind {
     /// entered its state `state` (issue #86): at setup, its starting state
     /// (with the first tick's events), or a setup call's. No OLX counterpart.
     LiveState { copy: u16, state: u16 },
+    /// A script's run failed (issue #88): an error, an overflow, a limit;
+    /// it applied none of its commands. `instance` indexes the level's
+    /// script instances in run order (`olr_sim::live_instances`). No OLX
+    /// counterpart.
+    ScriptError { instance: u16 },
 }
 
 impl EventKind {
