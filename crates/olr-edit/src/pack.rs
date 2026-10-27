@@ -289,6 +289,14 @@ pub enum SaveError {
     Invalid(Vec<Diagnostic>),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    /// Issue #89: a script the level runs has problems (its syntax, a
+    /// handler, a name it uses); nothing was written.
+    #[error("the level's scripts have problems: {}", scripts(.0))]
+    Scripts(Vec<crate::scripts::ScriptProblem>),
+}
+
+fn scripts(problems: &[crate::scripts::ScriptProblem]) -> String {
+    problems.iter().map(|p| p.to_string()).collect::<Vec<_>>().join("; ")
 }
 
 fn list(diagnostics: &[Diagnostic]) -> String {
@@ -474,6 +482,12 @@ pub fn mod_pack(pack: &Pack) -> Result<olr_pack::ModPack, SaveError> {
 pub fn save(dir: &Path, pack: &Pack) -> Result<Vec<String>, SaveError> {
     let files = files(pack)?;
     check(&files)?;
+    if let Some(src) = &pack.placed {
+        let problems = crate::scripts::problems(src);
+        if !problems.is_empty() {
+            return Err(SaveError::Scripts(problems));
+        }
+    }
     let dir = dir.canonicalize()?;
     Ok(olr_pack::install::replace_dir(&dir, |d| {
         let mut sink = DirFs::new(d);

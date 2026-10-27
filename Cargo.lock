@@ -3698,6 +3698,7 @@ dependencies = [
  "olr-data",
  "olr-format",
  "olr-pack",
+ "olr-script",
  "olr-vfs",
  "png",
  "proptest",

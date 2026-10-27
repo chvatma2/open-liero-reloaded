@@ -78,7 +78,9 @@ pub enum Break {
     Live { copy: String, message: String },
     /// A distant copy of an asset that may no longer be distant.
     Distant { copy: String, message: String },
-    /// A script naming what the asset no longer has (reserved for #89).
+    /// A script the level runs naming what the asset would no longer
+    /// have, or no longer compiling with it (issue #89's
+    /// `olr_script::check_level`).
     Script { copy: String, message: String },
 }
 
@@ -336,7 +338,27 @@ fn breaks(placed: &PlacedSource, key: &str, new: &AssetSource, decoded: &Asset) 
             out.push(Break::Distant { copy: copy.clone(), message });
         }
     }
+    out.extend(script_breaks(placed, key, new));
     out
+}
+
+/// Issue #89: the problems `new` in place of asset `key` would give the
+/// scripts `placed` runs (`scripts::problems`) that they do not have now,
+/// each naming the copy it runs on (the level script's the first live
+/// copy of `key`, whose names it reads).
+fn script_breaks(placed: &PlacedSource, key: &str, new: &AssetSource) -> Vec<Break> {
+    let now: Vec<String> = crate::scripts::problems(placed).iter().map(|p| p.to_string()).collect();
+    let mut swapped = placed.clone();
+    swapped.assets.insert(key.to_string(), new.clone());
+    let first = placed.file.copies.iter().find(|c| c.asset == key && c.live).map(|c| c.id.clone());
+    crate::scripts::problems(&swapped)
+        .into_iter()
+        .filter(|p| !now.contains(&p.to_string()))
+        .filter_map(|p| {
+            let copy = p.whose.copy().map(String::from).or_else(|| first.clone())?;
+            Some(Break::Script { copy, message: p.to_string() })
+        })
+        .collect()
 }
 
 /// Puts `new` in place of asset `key` in `src` (its origin `origin` when

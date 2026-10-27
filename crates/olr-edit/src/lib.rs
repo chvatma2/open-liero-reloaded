@@ -22,5 +22,6 @@ pub mod new;
 pub mod pack;
 pub mod pixelate;
 pub mod placed;
+pub mod scripts;
 pub mod skin;
 pub mod textures;

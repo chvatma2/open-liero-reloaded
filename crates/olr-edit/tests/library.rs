@@ -668,3 +668,99 @@ fn import_respects_max_user_assets() {
     let one = exported(t.path(), "castle-one", &[(yours("x"), &encode(&console(RED)).unwrap(), "a")]);
     library::import(&one, &places(&packs, &user, None, &none), &back_tile).unwrap();
 }
+
+/// Issue #89: `pack` baked and saved to `dir`.
+fn bake_and_save(dir: &Path, pack: &mut Pack) -> Result<Vec<String>, pack::SaveError> {
+    placed::bake_pack(pack, &tile()).unwrap();
+    pack::save(dir, pack)
+}
+
+#[test]
+fn a_level_with_a_broken_run_script_is_refused_at_save() {
+    let mut f = fixture();
+    let t = tempfile::tempdir().unwrap();
+    let good = "fn start() {\n  this.set_state(\"Closed\");\n  this.move_to(\"claw_x\", this.max(\"claw_x\"), 4);\n}\n";
+    placed::set_copy_script(&mut f.pack, "crane", Some(good.into())).unwrap();
+    bake_and_save(t.path(), &mut f.pack).unwrap();
+    let saved = std::fs::read(t.path().join("editor/placed.ron")).unwrap();
+    // A name the live crane lacks, and the level script's syntax.
+    let bad = "fn start() {\n  this.set_state(\"Shut\");\n}\n";
+    placed::set_copy_script(&mut f.pack, "crane", Some(bad.into())).unwrap();
+    placed::set_level_script(&mut f.pack, Some("fn tick( {".into())).unwrap();
+    let Err(pack::SaveError::Scripts(problems)) = bake_and_save(t.path(), &mut f.pack) else { panic!() };
+    let said: Vec<String> = problems.iter().map(|p| p.to_string()).collect();
+    assert_eq!(said.len(), 2, "{said:?}");
+    assert!(said[0].starts_with("the level script, line 1: "), "{said:?}");
+    assert_eq!(said[1], "crane's script, line 2: copy crane has no state \"Shut\"");
+    let e = pack::save(t.path(), &f.pack).unwrap_err().to_string();
+    assert!(e.contains("crane's script, line 2"), "{e}");
+    assert_eq!(std::fs::read(t.path().join("editor/placed.ron")).unwrap(), saved, "nothing written");
+    // A script on a static copy runs nowhere: it saves.
+    placed::set_level_script(&mut f.pack, None).unwrap();
+    placed::set_copy_script(&mut f.pack, "crane", Some(good.into())).unwrap();
+    placed::set_copy_script(&mut f.pack, "console", Some(bad.into())).unwrap();
+    bake_and_save(t.path(), &mut f.pack).unwrap();
+}
+
+#[test]
+fn an_asset_with_a_script_error_still_saves() {
+    let t = tempfile::tempdir().unwrap();
+    let mut a = crane();
+    olr_edit::asset::set_script(&mut a, Some("fn start( {\n  this.set_state(\"Nope\");\n".into())).unwrap();
+    let src = encode(&a).unwrap();
+    save_dir(&t.path().join("crane"), &src).unwrap();
+    let back = olr_edit::asset::read_dir(&t.path().join("crane")).unwrap();
+    assert_eq!(back.script, src.script);
+    // A level placing it static saves; its default script runs nowhere.
+    let mut p = level_pack("yard", "Yard");
+    add(&mut p, &src, yours("crane"), (2, 2), "crane");
+    std::fs::create_dir(t.path().join("level")).unwrap();
+    bake_and_save(&t.path().join("level"), &mut p).unwrap();
+    // Live, its default script runs: refused, unless switched off.
+    placed::set_copy(&mut p, "crane", CopyProperty::Live(true)).unwrap();
+    let Err(pack::SaveError::Scripts(problems)) = bake_and_save(&t.path().join("level"), &mut p) else {
+        panic!()
+    };
+    assert!(problems[0].to_string().starts_with("crane's default script (Crane's), line "), "{problems:?}");
+    placed::set_copy(&mut p, "crane", CopyProperty::DefaultScript(false)).unwrap();
+    bake_and_save(&t.path().join("level"), &mut p).unwrap();
+}
+
+#[test]
+fn a_library_change_breaking_a_script_is_a_break() {
+    let mut f = fixture();
+    let crane_key = key_of(&f.pack, "crane");
+    let own = "fn arrived(name) {\n  this.set_state(\"Open\");\n  this.move_to(\"claw_x\", this.min(\"claw_x\"), 4);\n}\n";
+    placed::set_copy_script(&mut f.pack, "crane", Some(own.into())).unwrap();
+    let level = "fn tick() {\n  let c = this.copy(\"crane\");\n  if this.moving(c, \"claw_x\") { this.set_state(c, \"Closed\"); }\n}\n";
+    placed::set_level_script(&mut f.pack, Some(level.into())).unwrap();
+    // A painted change breaks nothing.
+    let l = libs(vec![(yours("crane"), Some(encode(&painted(crane(), BLUE)).unwrap()))]);
+    assert_eq!(status_of(&links(&f.pack, &l), &crane_key), Status::Changed { breaks: vec![] });
+    // `claw_x` renamed: the copy's script and the level script break.
+    let mut a = crane();
+    olr_edit::asset::rename_exposed(&mut a, "claw_x", "claw").unwrap();
+    let l = libs(vec![(yours("crane"), Some(encode(&a).unwrap()))]);
+    let Status::Changed { breaks } = status_of(&links(&f.pack, &l), &crane_key) else { panic!() };
+    let scripts: Vec<String> =
+        breaks.iter().filter(|b| matches!(b, Break::Script { .. })).map(|b| b.to_string()).collect();
+    assert_eq!(
+        scripts,
+        [
+            "crane: script: the level script, line 3: copy crane has no exposed value \"claw_x\"",
+            "crane: script: crane's script, line 3: copy crane has no exposed value \"claw_x\"",
+            "crane: script: crane's script, line 3: copy crane has no exposed value \"claw_x\"",
+        ],
+        "{breaks:?}"
+    );
+    // Forced, the update lists it and leaves the script to its author;
+    // the level then does not save.
+    let up = library::update(&mut f.pack, &[crane_key], true, &l).unwrap();
+    assert!(
+        up.resolutions.iter().any(|r| matches!(r, Resolution::Script { copy, .. } if copy == "crane")),
+        "{:?}",
+        up.resolutions
+    );
+    let t = tempfile::tempdir().unwrap();
+    assert!(matches!(bake_and_save(t.path(), &mut f.pack), Err(pack::SaveError::Scripts(_))));
+}
