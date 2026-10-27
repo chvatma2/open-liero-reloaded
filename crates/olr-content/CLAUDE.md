@@ -109,6 +109,24 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   `replay_assets_from` (so `world_for_replay`) as
   `MatchSetup::director`/`Assets::director`. Test:
   `a_script_that_does_not_compile_refuses_the_level`.
+  Issue #93 (live light): the art's pictures carry their beam maps (with
+  the groups) and glass maps; `live_frame` also sets each part's layer's
+  `BeamDirection`, `BeamSpread`, `GlassOpacity` and `GlassTint`, clamped.
+  `LoadedLive::light` (`Arc<LiveLight>`, a `CopyLight` per copy: id, its
+  own groups, `GroupProps` per group, its animation table compiled, one
+  that does not compile steady, and each picture's beam patches,
+  `olr_look::glow_beams::live_patches` on the drawn picture, groups at run
+  time, a background picture's the backdrop's). A group's props are the
+  first value (prop order) of each light property (`GlowColour`,
+  `LightIntensity`, `LightReach`, `GlowAnimation`) of a layer that uses
+  it (a layer's group: the first group pixel of a picture of a part of
+  it), so two layers sharing a group change together.
+  `live_look(world.live(), &light, world size, &mut LookFrame, t_ms)`
+  pushes each copy's groups with its values over them
+  (`LookFrame::push_live_group_with`), then each visible part's patches
+  placed (mirrored by `Facing` within the copy), turned by its layer's
+  `BeamDirection`/`BeamSpread`, at its strength (`push_live_beam`); no
+  allocation once warm. Test: `a_copys_groups_take_its_values`.
 - **Hostile levels:** `load_level` refuses an art scale above
   `MAX_ART_SCALE` (8) or a colour image above `MAX_COLOR_MAP_BYTES`
   (256 MiB), so a pack cannot make the colour map allocate gigabytes.

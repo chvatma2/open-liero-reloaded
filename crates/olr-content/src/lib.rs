@@ -41,7 +41,7 @@ pub use cache::{
 pub use catalog::{Catalog, LevelInfo, MAX_THUMB_BYTES, MAX_THUMB_SIDE, ModInfo, PackSource, ThumbRef};
 pub use color::{apply_edits, color_edit, lost_area};
 pub use core_assets::{CORE_PACK_ID, CORE_SPRITES, CorePack};
-pub use live::{LoadedLive, live_frame, live_level};
+pub use live::{CopyLight, GroupProps, LiveLight, LoadedLive, live_frame, live_level, live_look};
 pub use locate::{
     ASSETS_DIR, CONTENT_DIR, MATERIALS_DIR, RELOADED_DIR, assets_dir, bundled_roots, default_content_dir,
     materials_dir,

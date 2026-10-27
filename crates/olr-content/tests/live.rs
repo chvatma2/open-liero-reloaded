@@ -272,3 +272,48 @@ fn a_level_lit_only_by_live_copies_draws_lit() {
     assert_eq!((shown("lamp"), shown("console-a"), shown("console-b")), (Some(1), Some(2), Some(3)));
     assert!(map.glow().unwrap().iter().any(|&g| g != 0));
 }
+
+/// Issue #93: a copy's groups know the values driving them (the console's
+/// screen group its `screen_colour`), and `live_look` lays each copy's
+/// values over its own groups: console-a turned red leaves console-b's
+/// blue as it was.
+#[test]
+fn a_copys_groups_take_its_values() {
+    let (_tmp, content) = content(|dir| {
+        let path = dir.join("level.ron");
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, text.replace("olx-theme-dirt", "test-theme")).unwrap();
+    });
+    let setup = olr_content::SandboxSetup {
+        mod_id: "broken-mod".into(),
+        level_id: ID.into(),
+        seed: 3,
+        settings: olr_sim::SimSettings::lx56(),
+        worms: vec![olr_content::SpawnSpec::default()],
+        restrictions: olr_content::DEFAULT_PRESET.into(),
+    };
+    let mut world = content.new_world(&setup).unwrap();
+    let level = content.load_level(ID).unwrap();
+    let live = level.live.as_ref().unwrap();
+    let a = live.sim.copy("console-a").unwrap();
+    let ca = &live.light.copies[usize::from(a)];
+    let screen = ca.groups.iter().position(|g| g.id == "screen").unwrap();
+    let colour = live.sim.copies[usize::from(a)].prop("screen_colour").unwrap();
+    assert_eq!(ca.props[screen].colour, Some(colour), "the screen's colour is screen_colour");
+    let world_size = (level.material.width(), level.material.height());
+    let look = |world: &olr_sim::World| {
+        let mut f = olr_look::LookFrame::default();
+        f.begin(None, 0.0);
+        olr_content::live_look(world.live().unwrap(), &live.light, world_size, &mut f, 0.0);
+        f
+    };
+    // The groups in copy order: the lamp's, console-a's, console-b's.
+    let before = look(&world);
+    let (ga, gb) = (before.groups[1], before.groups[2]);
+    assert!(ga.cast[1] > ga.cast[0], "console-a starts green: {:?}", ga.cast);
+    world.set_live_value(a, colour, 0xff_2020).unwrap();
+    let after = look(&world);
+    assert!(after.groups[1].cast[0] > after.groups[1].cast[1], "console-a red: {:?}", after.groups[1].cast);
+    assert_eq!(after.groups[2], gb, "console-b as it was");
+    assert_eq!(after.groups[0], before.groups[0], "the lamp too");
+}
