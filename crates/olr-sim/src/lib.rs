@@ -27,6 +27,7 @@ mod damage;
 mod effects;
 mod events;
 mod input;
+mod live;
 mod mod_rt;
 mod mode;
 mod physics;
@@ -57,6 +58,10 @@ pub use events::{
     SoundId, StampId, TerrainOp, TickEvents,
 };
 pub use input::{KeyLatch, Keys, Latches};
+pub use live::{
+    LiveCopy, LiveCopySetup, LiveHealth, LiveLevel, LivePart, LivePartKind, LiveProp, LiveSolid, LiveState,
+    LiveTarget,
+};
 pub use mod_rt::{
     MAX_AMOUNT, MAX_DEPTH, MAX_PROJECTILES, SimMod, SimModError, SimProjectile, SimWeapon, SpawnInfo,
     WeaponType,

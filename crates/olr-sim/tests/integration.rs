@@ -8,5 +8,6 @@
 #[path = "common/world.rs"]
 mod world;
 
+mod live;
 mod snapshot;
 mod state;
