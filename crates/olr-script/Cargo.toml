@@ -1,6 +1,6 @@
 [package]
 name = "olr-script"
-description = "Asset scripts: the Rhai parser (issue #80's syntax check; #88 adds the runtime)."
+description = "Asset scripts: the Rhai parser (issue #80's syntax check) and runtime (issue #88: the live copies' director)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,7 +9,12 @@ publish.workspace = true
 autotests = false
 
 [dependencies]
+olr-sim.workspace = true
 rhai.workspace = true
+
+[dev-dependencies]
+olr-data.workspace = true
+olr-terrain.workspace = true
 
 [[test]]
 name = "integration"

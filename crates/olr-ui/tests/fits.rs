@@ -594,7 +594,7 @@ fn lobby(h: &mut Harness<'static, App>, view: olr_ui::LobbyView) {
 fn lobby_view(host: bool) -> olr_ui::LobbyView {
     let mut v = crate::online::lobby_view(host);
     if host {
-        v.invite = Some("olr1".to_string() + &"a1b2c3d4".repeat(12));
+        v.invite = Some("olr1".to_string() + "a1b2c3d4".repeat(12).as_str());
         v.listing = Some("Listed on the Internet: 3 relays".into());
         v.reach = vec![
             "Your router opened port 23400 (UPnP), but its own address 100.64.12.34 is not public (double NAT \

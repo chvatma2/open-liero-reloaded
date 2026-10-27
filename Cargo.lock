@@ -3630,6 +3630,7 @@ dependencies = [
  "olr-modes",
  "olr-pack",
  "olr-replay",
+ "olr-script",
  "olr-sim",
  "olr-terrain",
  "olr-vfs",
@@ -4167,6 +4168,9 @@ dependencies = [
 name = "olr-script"
 version = "0.3.0"
 dependencies = [
+ "olr-data",
+ "olr-sim",
+ "olr-terrain",
  "rhai",
 ]
 
