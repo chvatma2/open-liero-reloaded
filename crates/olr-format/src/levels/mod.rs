@@ -9,9 +9,21 @@
 //! whose look has surface materials (issue #37, `material.md`) may have
 //! `look/surface.png` and `look/surface-back.png`: what its front and back
 //! pixels are made of, for the look only.
+//!
+//! Issue #73: a level may instead be placed copies of assets,
+//! `editor/placed.ron`. Its ground (the level's own painted asset, key
+//! `ground`) is an asset folder rooted at `editor/` itself
+//! (`editor/asset.ron`, `editor/layers/<id>.png`, …, see `asset.md`); every
+//! other asset it uses is a copy in `editor/<key>/` (`a`, `b`, …); a
+//! copy's own script is `editor/scripts/<id>.rhai` and the level script
+//! `editor/level.rhai`. Static copies bake into the level's files in their
+//! starting state, stretched to their placed size (nearest neighbour), and
+//! their glow groups and materials are gathered into the level's look.
 
 mod composition;
 pub use composition::*;
+mod placed;
+pub use placed::*;
 mod files;
 pub(crate) use files::LevelFile;
 mod thumb;

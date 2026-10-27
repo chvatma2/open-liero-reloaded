@@ -32,6 +32,7 @@ pub fn canonical_text(path: &str, text: &str) -> Result<String, FormatError> {
         "core.ron" => again::<crate::core_pack::CoreFile>(path, text),
         crate::mods::MOD_EDITOR_FILE => again::<crate::mods::ModEditorFile>(path, text),
         crate::levels::COMPOSITION_FILE => again::<crate::levels::Composition>(path, text),
+        crate::levels::PLACED_FILE => again::<crate::levels::PlacedFile>(path, text),
         _ => Err(FormatError::invalid(path, "", "not an authoring file this format reads")),
     }
 }

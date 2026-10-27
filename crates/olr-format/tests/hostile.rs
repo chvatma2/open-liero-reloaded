@@ -166,3 +166,76 @@ proptest! {
         }
     }
 }
+
+/// A placement (issue #73): the asset above placed twice, one Live with
+/// its own script, a level script.
+const PLACED: &str = r##"(
+    assets: [
+        (
+            key: "a",
+            origin: Yours("desk"),
+        ),
+    ],
+    copies: [
+        (
+            id: "desk-1",
+            asset: "a",
+            at: (2, 3),
+        ),
+        (
+            id: "desk-2",
+            asset: "a",
+            at: (-4, 1),
+            size: (4, 3),
+            live: true,
+            state: "Alarm",
+            values: {
+                "glow": Int(20),
+            },
+            script: true,
+            default_script: false,
+        ),
+    ],
+    script: true,
+)
+"##;
+
+fn placed_fs(placed: &[u8]) -> MemFs {
+    let mut fs = MemFs::new()
+        .with("editor/placed.ron", placed.to_vec())
+        .with("editor/scripts/desk-2.rhai", "fn x() {}".to_string())
+        .with("editor/level.rhai", "// level".to_string());
+    let asset = asset_fs(ASSET.as_bytes(), &sheet());
+    for p in olr_vfs::walk(&asset, &olr_vfs::VPath::root()).unwrap() {
+        let to = olr_vfs::VPath::new(&format!("editor/a/{}", p.as_str())).unwrap();
+        olr_vfs::ContentSink::write(&mut fs, &to, &olr_vfs::ContentSource::read(&asset, &p).unwrap())
+            .unwrap();
+    }
+    fs
+}
+
+#[test]
+fn the_placed_fixture_reads_and_checks() {
+    use olr_format::levels::{check_placed, read_placed_files};
+    let src = read_placed_files(&placed_fs(PLACED.as_bytes())).unwrap().unwrap();
+    check_placed(&src, (16, 16), 2).unwrap();
+    assert_eq!(src.file.copies.len(), 2);
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(512))]
+    #[test]
+    fn hostile_placements_are_errors(
+        edits in proptest::collection::vec((0usize..PLACED.len(), any::<u8>()), 1..8),
+    ) {
+        use olr_format::levels::{check_placed, read_placed_files, write_placed_files};
+        let mut bytes = PLACED.as_bytes().to_vec();
+        for (at, b) in edits {
+            bytes[at] = b;
+        }
+        if let Ok(Some(src)) = read_placed_files(&placed_fs(&bytes)) {
+            let _ = check_placed(&src, (16, 16), 2);
+            let _ = write_placed_files(&mut MemFs::new(), &src);
+        }
+    }
+}
