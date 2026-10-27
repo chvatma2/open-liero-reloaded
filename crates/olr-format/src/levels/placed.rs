@@ -104,8 +104,9 @@ pub struct LevelAsset {
     pub origin: AssetOrigin,
 }
 
-/// Where a level's asset comes from.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Where a level's asset comes from (ordered so a map can key on it,
+/// issue #76's `Libraries`).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum AssetOrigin {
     /// The level's own, in no library (the ground).
     Own,
@@ -462,6 +463,41 @@ fn under(dir: &str, e: FormatError) -> FormatError {
     }
 }
 
+/// Why a copy of `file` placed distant at `depth` may not be, layer by
+/// layer (`check_placed`'s rule): a layer `check_distant` refuses, glass,
+/// a directed glow or a painted surface map; "layer <id> of <name>: <why>"
+/// for the first, else `None`.
+pub fn distant_layer_refusal(file: &AssetFile, depth: u8) -> Option<String> {
+    file.elements.iter().find_map(|e| {
+        let why = check_distant(e, depth).err().or_else(|| {
+            if e.glass.is_some() {
+                Some("a distant layer cannot be glass".into())
+            } else if e.glow.as_ref().is_some_and(|g| g.beam.is_some()) {
+                Some("a distant layer's glow stays undirected".into())
+            } else if e.surface_map || e.back_surface_map {
+                Some("a distant layer takes one surface for the whole layer".into())
+            } else {
+                None
+            }
+        })?;
+        Some(format!("layer {:?} of {:?}: {why}", e.id, file.name))
+    })
+}
+
+/// Why a copy of `file` may not be placed distant at `depth`: a raster or
+/// distant layer in it (it is then placed unstretched, not distant), else
+/// [`distant_layer_refusal`]'s. Issue #76 checks a library asset's new
+/// version against a level's distant copies with it.
+pub fn distant_refusal(file: &AssetFile, depth: u8) -> Option<String> {
+    if file.elements.iter().any(|e| matches!(e.kind, ElementKind::Raster)) {
+        Some(format!("{:?} holds a raster: placed at (0, 0), unstretched, not distant", file.name))
+    } else if file.elements.iter().any(Element::is_distant) {
+        Some(format!("{:?} holds distant layers: placed unstretched, not distant", file.name))
+    } else {
+        distant_layer_refusal(file, depth)
+    }
+}
+
 /// Whether `asset` drives anything: more than one state, exposed values,
 /// sounds or a script (what a Live copy needs).
 fn drives(asset: &AssetSource) -> bool {
@@ -644,23 +680,10 @@ pub fn check_placed(src: &PlacedSource, level_size: (u32, u32), art_scale: u32) 
                 format!("{:?} holds distant layers: placed unstretched, not distant", file.name),
             ));
         }
-        if let Some(depth) = c.distant {
-            for e in &file.elements {
-                let why = check_distant(e, depth).err().or_else(|| {
-                    if e.glass.is_some() {
-                        Some("a distant layer cannot be glass".into())
-                    } else if e.glow.as_ref().is_some_and(|g| g.beam.is_some()) {
-                        Some("a distant layer's glow stays undirected".into())
-                    } else if e.surface_map || e.back_surface_map {
-                        Some("a distant layer takes one surface for the whole layer".into())
-                    } else {
-                        None
-                    }
-                });
-                if let Some(why) = why {
-                    return Err(bad("distant", format!("layer {:?} of {:?}: {why}", e.id, file.name)));
-                }
-            }
+        if let Some(depth) = c.distant
+            && let Some(why) = distant_layer_refusal(file, depth)
+        {
+            return Err(bad("distant", why));
         }
         if c.script {
             match src.scripts.get(&c.id) {
