@@ -272,7 +272,7 @@ fn posed_copy(c: &PlacedCopy, asset: &Asset) -> Result<crate::asset::Posed, Plac
 /// Bakes the placement `src` into `level`'s play files (issue #73):
 /// checked first (`check_placed`, then each asset decoded: `Own` ones by
 /// `check_own_asset`, library copies by `check_asset`); each copy posed
-/// in its starting state with its values (a Live copy as a static one, its
+/// in its state (none: the asset's start) with its values (a Live copy as a static one, its
 /// `live_refusal` an error naming it); placed in level coordinates (art
 /// resampled nearest from the asset's art scale to the level's; a box
 /// `[b, b + n)` of an asset `w` wide placed `W` wide becoming `[at +
