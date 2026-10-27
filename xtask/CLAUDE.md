@@ -171,8 +171,9 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   ending in `pass`, every screenshot the script names, and no `warning:`,
   `error:` or panic line on stderr (`bad_lines`). Then the editor run
   (plan 14c, `editor`, in `target/e2e/editor`): `fixtures/autoplay/editor.ron`
-  the same way in a data directory of its own (a new level "E2E Level", a
-  drawn layer painted, a spawn, Play (ticking) and Stop, Play and Esc,
+  the same way in a data directory of its own (a new level "E2E Level", its
+  ground selected in Copies and opened with Edit in level, a drawn layer
+  painted there in the asset tab (issue #81), back in the level tab a spawn, Play (ticking) and Stop, Play and Esc,
   Save, Close), then its `editor-painted.png` (`canvas_problem`: not the
   canvas's black at the picture's centre) and the pack it saved, `data/packs/e2e-level` (`editor_pack_problems`, issue #74: one copy in
   `editor/placed.ron`, a `Drawn` layer in the ground's `editor/asset.ron`,
