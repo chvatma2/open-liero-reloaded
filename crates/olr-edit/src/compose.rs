@@ -456,10 +456,13 @@ impl<'a> Layer<'a> {
 
 /// The back of art pixel `(ax, ay)` (R4): see-through (the tile's colour
 /// with alpha 0) where no element covers it in a level `see_through`
-/// (with distant layers).
+/// (with distant layers). A layer of `opacity` below 100 (issue #73, a
+/// posed piece's) lays its own art over the back below at that opacity
+/// as glass does, never over a see-through pixel.
 fn back_at(
     layers: &[Layer],
     glass: &[Option<ElementGlass>],
+    opacity: &[u8],
     back_tile: &RgbaImage,
     see_through: bool,
     ax: u32,
@@ -467,7 +470,12 @@ fn back_at(
 ) -> Rgba {
     // The background glass design: the topmost back that is not glass
     // (or the tile), then each glass above it laid over it, bottom up.
-    let alpha = |i: usize, own: bool| glass_alpha(glass.get(i).copied().flatten(), see_through && own);
+    // A translucent layer (issue #73) mixes as glass, in any level.
+    let alpha = |i: usize, own: bool| {
+        glass_alpha(glass.get(i).copied().flatten(), see_through && own)
+            .map(|a| (a, true))
+            .or_else(|| opacity_alpha(opacity.get(i).copied(), own).map(|a| (a, false)))
+    };
     let mut base = None;
     let mut first = layers.len();
     for (i, l) in layers.iter().enumerate().rev() {
@@ -491,12 +499,20 @@ fn back_at(
     let from = if base.is_some() { first + 1 } else { first };
     for (i, l) in layers.iter().enumerate().skip(from) {
         if let Some((c, own)) = l.backdrop(ax, ay)
-            && let Some(a) = alpha(i, own)
+            && let Some((a, glassy)) = alpha(i, own)
+            && (glassy || out.a != 0)
         {
             out = glass_over(c, a, out);
         }
     }
     out
+}
+
+/// A translucent layer's alpha (issue #73: its `opacity` percent below
+/// 100, rounded to 0-255) over its own art (`own`); `None` opaque.
+fn opacity_alpha(opacity: Option<u8>, own: bool) -> Option<u8> {
+    let o = opacity.filter(|o| *o < 100 && own)?;
+    Some(((u32::from(o) * 255 + 50) / 100) as u8)
 }
 
 /// A glass element's alpha (its opacity, 0-255, rounded) where `glassy`
@@ -820,6 +836,24 @@ pub fn bake_elements_with(
     back_tile: &RgbaImage,
     rect: Rect,
 ) {
+    bake_elements_with_opacity(level, items, &[], masks, painted, back_tile, rect);
+}
+
+/// [`bake_elements_with`] with each item's opacity, percent (issue #73:
+/// a posed piece's; `opacity[i]` item `i`'s, 100 when missing): a
+/// Background piece below 100 gives its back pixels mixed over the back
+/// below at that opacity (straight alpha, rounded, as glass mixes), never
+/// over a see-through pixel. At 100 a piece bakes exactly as
+/// [`bake_elements_with`] bakes it.
+pub fn bake_elements_with_opacity(
+    level: &mut LevelSource,
+    items: &[(&Element, &Decoded)],
+    opacity: &[u8],
+    masks: &GlowMasks,
+    painted: &PaintedSurfaces,
+    back_tile: &RgbaImage,
+    rect: Rect,
+) {
     let (w, h) = level.size;
     let s = level.art_scale;
     let (Some(aw), Some(ah)) = (w.checked_mul(s), h.checked_mul(s)) else { return };
@@ -840,11 +874,12 @@ pub fn bake_elements_with(
     let n = materials.len();
     let (mut layers, mut glows, mut clears, mut surfaces) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut glasses = Vec::new();
+    let mut opacities = Vec::new();
     // The distant layers at their reference placement (issue #62: the
     // camera at the level's centre, their box), far to near, with their
     // glow: only where the back is see-through.
     let mut distant = Vec::new();
-    for (e, d) in items.iter() {
+    for (i, (e, d)) in items.iter().enumerate() {
         let Some(layer) = Layer::new(e, d, (aw, ah), s) else { continue };
         if e.distant.is_some() {
             if see_through {
@@ -856,6 +891,7 @@ pub fn bake_elements_with(
         glows.push(layer_glow(e, masks, &groups, (w, h), s));
         clears.push(e.clear);
         glasses.push(e.glass);
+        opacities.push(opacity.get(i).copied().unwrap_or(100));
         surfaces.push(layer_surface(e, painted, &materials, (w, h)));
     }
     let mut surface = surfaces.iter().any(LayerSurface::any).then(|| match level.surface.take() {
@@ -951,7 +987,7 @@ pub fn bake_elements_with(
             }
             for ay in y * s..(y + 1) * s {
                 for ax in x * s..(x + 1) * s {
-                    let mut back = back_at(&layers, &glasses, back_tile, see_through, ax, ay);
+                    let mut back = back_at(&layers, &glasses, &opacities, back_tile, see_through, ax, ay);
                     if let Some(m) = glass.as_mut() {
                         let i = (ay as usize * aw as usize + ax as usize) * 4;
                         m.texels[i..i + 4].copy_from_slice(&glass_texel(
