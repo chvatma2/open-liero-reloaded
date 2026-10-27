@@ -541,3 +541,67 @@ fn ticks_confirmed_before_they_are_simulated_are_recorded() {
     let later: Vec<u32> = rec.take_confirmed(8).iter().map(|t| t.tick).collect();
     assert_eq!(later, vec![5, 6, 7], "simulated after they were confirmed");
 }
+
+/// Issue #89: every peer builds the live fixture's world (its scripts and
+/// motions run); drivers press scripted keys.
+struct LiveWorlds<'a> {
+    content: &'a Content,
+}
+
+impl Factory<WorldSim> for LiveWorlds<'_> {
+    fn sim(&mut self, _peer: PeerId) -> WorldSim {
+        let o = MatchOptions { level_id: "olr-level-live-test".into(), ..options(6) };
+        WorldSim::new(self.content.build_match(&o).unwrap().world)
+    }
+
+    fn driver(&mut self, _peer: PeerId, _seat: Option<Seat>) -> Box<dyn Driver<WorldSim>> {
+        Box::new(Scripted)
+    }
+}
+
+/// Issue #89: two peers on the live fixture under the `bad` profile end
+/// with equal checksums: rollbacks re-run its scripts and motions alike.
+#[test]
+fn two_peers_on_the_live_fixture_agree_under_the_bad_profile() {
+    let Some(dir) = std::env::var("OLR_CONTENT_DIR").ok().filter(|d| std::path::Path::new(d).is_dir()) else {
+        eprintln!("OLR_CONTENT_DIR not set or missing; skipping");
+        return;
+    };
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/live/levels");
+    let c = Content::open_layers(&[std::path::Path::new(&dir), &fixtures]).unwrap();
+    let plan = |id: u32, seat| PeerPlan {
+        id,
+        seat,
+        profile: Profile::BAD,
+        clock_ppm: 0,
+        input_delay: input_delay(Profile::BAD.ping_ms),
+        frame_us: 6_944,
+        join_tick: None,
+        freeze: None,
+    };
+    let sc = Scenario {
+        seed: 6,
+        slots: 8,
+        peers: vec![plan(1, Seat::Player(6)), plan(2, Seat::Player(7))],
+        ticks: 600,
+        settle_ticks: 100,
+        outages: vec![],
+        expect_no_stalls: false,
+        corrupt: vec![],
+        host_freeze: None,
+        exits: vec![],
+        migration: None,
+        profile_changes: vec![],
+    };
+    let mut f = LiveWorlds { content: &c };
+    let r = harness::run(&sc, &mut f).unwrap();
+    harness::verdict(&sc, &r, &mut f).unwrap();
+    assert!(r.stats[&1].rollbacks > 0 && r.stats[&2].rollbacks > 0, "both peers rolled back");
+    // The world the peers played runs the scripts: the press moves.
+    let mut w = f.sim(1);
+    for t in 0..30 {
+        w.tick(&keys(t));
+    }
+    let press = w.world().live().unwrap().copy_by_id("press").unwrap();
+    assert!(press.motions().iter().any(|m| m.moving()), "the press's script moves its head");
+}
