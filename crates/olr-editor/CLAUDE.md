@@ -118,12 +118,15 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   the lights' clock; Play and its ▾, the mod and bots) and the tool options bar (`toolbar.rs`: the chosen tool's
   options only: the brush for `Tool::uses_brush`, the paint for
   `Tool::lays_paint`, then its own; empty but as tall without any); on
-  the left the tool rail (`rail.rs`, icons drawn in `icons.rs`): Import,
+  the left the tool rail (`rail.rs`, icons drawn in `icons.rs`; issue
+  #81: the level tab's is Select, the Haze brush and Spawn, the rest the
+  asset tab's): Import,
   Select, Draw ▸, Pixels ▸ (`ToolGroup`: a click chooses the group's
   last tool, `EditorState::last_tool`; a second click, the corner mark or
   a right click opens the flyout), Glow (named "Glow brush"), Surface
   (named "Surface brush", issue #43), Spawn; on
-  the right one panel (at least 260 points): the tabs Elements (the
+  the right one panel (at least 260 points): the tabs Elements (issue
+  #81: `COPIES` in the level tab, the ground's row; the asset tab's
   folder tree, issue #61: drag a name to reorder, eye and lock, Add
   layer, New folder) | Assets (issue #9, below) |
   Spawns (`PanelTab`, following the selection), then the selection's
@@ -730,6 +733,53 @@ whose column tab is `LAYERS`);
     Sounds and Script setups (the script editor checked by its top-left
     corner only: a text area as large as its script), and `history.rs`'
     proptest (kinds 16-25: values, exposure, health, sounds, script).
+- **The ground in the asset tab (issue #81)** (STATUS.md "Level tab
+  (issues #81, #82, #83)"; `ground.rs`):
+  - **The level tab**: `offers` Select, Spawn and the Haze brush only;
+    `update` refuses the layer actions there (`level_refuses`:
+    `LAYERS_IN_ASSET_TAB`; a tool `EDIT_IN_LEVEL_HINT`). The right panel's
+    first tab is `labels::COPIES`, the ground's row alone (🔒; a click
+    `Select(Selection::Copy(GROUND_COPY))`, a double click `EditGround`);
+    Select on any pixel of the level selects it (`pointer::select_copy`),
+    drawn as `Overlay::Box { locked: true }` without handles; Remove says
+    `GROUND_LOCKED`. Its panel (`ui::properties`): `ground_name`, the size,
+    `labels::EDIT_IN_LEVEL`. The level panel's Lighting has no glow groups
+    (`ui::look::LookScope::Level`) and no Materials. Placing an asset
+    there still lands into the ground (until #82).
+  - **Edit in level** (`EditorAction::EditGround`, `Pending::EditGround`,
+    asking first when the asset tab is unsaved): `Document::ground_of(level)`
+    (`is_ground`; no spawns, `asset: None`, so no asset refusals: distant
+    layers and rasters are allowed) opens in the asset tab
+    (`open_ground_tab`; `EditorState::ground`: the asset session's
+    `changes` at the last apply), titled `asset_title()` "Ground in
+    <level>", drawn under the level's look (`canvas_look()` is the
+    level's), its tile paints the level's theme's; no states, column tabs
+    or previews; `LookScope::Ground` (glow groups) and Materials; Play in
+    its session bar; View ▾ Preview parallax (`ground_open()`). Its size,
+    art scale, name and theme are refused there (`GROUND_IS_THE_LEVELS`).
+  - **Applying** (`apply_ground`): `ShowTab(Level)`, Play, the asset
+    tab's Save and `leave` apply the asset tab's changes since the last
+    time as one level step, `Edit::Ground` (`GroundSnap`, `ground_edit`:
+    the look is the level's with the ground's groups and materials,
+    `merged_look`), the level unsaved; `undo_name()` is `EDIT_GROUND`
+    then (the Undo button's hover). Save there applies and saves the
+    level (`save_asset`), both marks clear (`ground_saved`).
+    `ShowTab(Asset)` follows the level (`sync_ground`: `same_ground` →
+    `follow_level`, else `reopen_ground(GROUND_FOLLOWED)`); an undo or
+    redo of a step holding `Edit::Ground` reopens it
+    (`GROUND_WENT_BACK`), its history cleared, the selection kept where
+    it still exists. `Opened`, `Recovered` and closing the asset tab drop
+    the link (`drop_ground`).
+  - **Tests**: the 0.2 layer tests run in the asset tab, opening the
+    ground with `common::ground` / `ground_at` / `edit_ground` (they read
+    `active_document()`, `active_dirty()`); `common::rename_level` is a
+    level tab's edit; the `Kept` and level-look tests stay in the level
+    tab (`editor_at`); `flows.rs`' `opened()` is the ground, `opened_level()`
+    the level tab (the look panel, spawns, resize, the layout tests over
+    `offered` tools and `BARS`, the level tab's rail);
+    `tests/level_tab.rs` (#81's acceptance tests, also
+    `every_shipped_level_saves_byte_identical`) and `flows.rs`'
+    `paint_the_ground_from_the_level`.
 - **Tests** (`tests/`, one binary): `asset.rs` (issue #9: save, the name
   clash, the rectangle unclipped and hidden layers left out, placing as one
   step with lighting added, join and add, Remove, Import, and the

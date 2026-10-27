@@ -167,6 +167,14 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
 
 ### Changed
 
+- Layers are painted in the asset tab; the level tab places. The level
+  editor's level tab shows a level's ground as one locked copy (the right
+  panel's Copies): select it and press **Edit in level** (or double-click
+  it) to paint it in the asset tab, with every layer tool, distant layers
+  and the level's lighting. Switching back, Play or Save brings your
+  edits to the level as one undoable step, "Edit Ground"; Save there
+  saves the level. The level tab keeps Select, Spawn and the Haze brush,
+  the level's lighting and size.
 - The HUD no longer says "Jump to respawn" while you are dead: the worm
   respawns by itself.
 - The game's window shows only once its first frame is drawn (no white

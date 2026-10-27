@@ -6896,6 +6896,68 @@ skin editor's layout, #79 adds the states panel (`state_ops.rs`,
 - **The script editor does not wrap (#80).** Lines run on and the
   editor scrolls across, so the line-number gutter stays beside them.
 
+## Level tab (issues #81, #82, #83)
+
+No OLX counterpart. The design
+`docs/superpowers/specs/2026-10-26-asset-based-levels-design.md` ("The
+level tab", call 16); the code is `olr-editor`'s `ground.rs` and
+`state.rs`. Part 1 (#81) moves layer painting to the asset tab: the
+level tab shows the ground as one copy.
+
+- **The level tab shows one locked copy, the ground (#81).** The right
+  panel's first tab is Copies (`labels::COPIES`), listing the ground
+  alone (🔒); a click on its row or Select on any pixel of the level
+  selects it (`Selection::Copy`), drawn as one `Overlay::Box` without
+  handles. Remove and moves are refused (`GROUND_LOCKED`). Its panel
+  shows its name, its size and **Edit in level**, a label of its own
+  (the Assets tab's is "Edit asset"); a double click on it does the
+  same.
+- **Edit in level opens a copy of the level's document (#81).**
+  `Document::ground_of` clones the level's layers, folders, originals,
+  glow and surface maps, look, theme, haze and `Kept` glow, without the
+  spawns, into the asset tab (asking first when that tab holds unsaved
+  work), titled "Ground in <level>". Its canvas draws under the level's
+  look (never `preview_look`), its tile paints are the level's theme's,
+  and it takes distant layers and rasters, the Distant switch and View ▾
+  Preview parallax: it is the level's own ground, not a library asset
+  (`asset: None`: no asset refusals). It has no states, properties,
+  sounds, script or previews (a deviation until the ground is an asset
+  like any, #82); its size, art scale, name and theme are the level
+  tab's (`GROUND_IS_THE_LEVELS`), so Resize there grows the ground in
+  one step and the asset tab follows (`sync_ground`).
+- **Edits reach the level as one step, "Edit Ground" (#81).** On a
+  switch to the level tab, Play (from either tab: the asset tab's
+  session bar has Play while it holds the ground) or the asset tab's
+  Save, the ground's changes since the last time become one level step,
+  `Edit::Ground` (`GroundSnap`: items, folders, originals, masks,
+  surface maps, and the look with the ground's glow groups and
+  materials; the level keeps its ambient, occlusion, haze and grade),
+  the level unsaved. The asset tab keeps its own stroke history. Save in
+  the asset tab saves the level pack, both unsaved marks clearing; the
+  level tab's Save saves the ground as last applied. Undo's hover names
+  the step ("Undo Edit Ground").
+- **Undoing "Edit Ground" reopens the ground (#81).** An undo or redo of
+  the step while the asset tab holds the ground makes it again from the
+  level, its history cleared, with the status "The ground went back to
+  before your last edits", so the two tabs never disagree; a level
+  change that the asset tab's copy did not see (a resize, a placed
+  asset) does the same on the way back ("The ground changed in the
+  level: shown as it is now"), and a look edit is just followed.
+- **The level tab keeps Select, Spawn and the Haze brush (#81).** Draw,
+  Pixels, the Glow and Surface brushes, Import image…, the layer
+  properties, folders, merge and split, glass, masks, glow groups and
+  materials are the asset tab's; the level tab refuses those actions
+  with `LAYERS_IN_ASSET_TAB`, a tool with how to reach it. The level
+  panel keeps its Lighting without glow groups, the size fields and
+  Play.
+- **Placing still lands in the ground until #82 (#81).** A library asset
+  placed in the level tab still lands its pieces as layers of the
+  ground, as in 0.2 (the ground copy selected after), until #82 places
+  copies.
+- **A plain level is one locked ground (#81).** It opens split into its
+  three layers as before; its `Kept` glow, beams and clear flags stay
+  while no layer glows or is clear, an Edit Ground included.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`
