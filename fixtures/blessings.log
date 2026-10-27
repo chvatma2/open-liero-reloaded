@@ -297,3 +297,5 @@
   fixtures/render/live-light.png
   fixtures/render/live-start.png
   fixtures/render/live-states.png
+2026-10-27 bless-regression: #91: bots see and avoid live parts
+  fixtures/matches-live/classic-live-test-4dm.ron
