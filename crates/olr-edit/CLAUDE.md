@@ -596,7 +596,8 @@ operations.
   path wrappers (`read_libraries(placed, builtin, user)`: each folder by
   `read_asset_files`, `check_asset`, `None` when it does not; a `Builtin`
   origin read from the built-in library only, a `Yours` from the user's
-  only; `compare_from`, `update_from`, `relink_from`).
+  only; `compare_from`, `update_from`, `relink_from`; issue #83's
+  `read_origins(origins, builtin, user)`, the editor host's `CompareLibrary`).
   `compare(placed, &libs) -> Vec<Link { key, origin, status }>` in
   placement order, `Own` left out: `Same` (`placed::same_asset`: never
   `thumb.png`), `Changed { breaks }`, `Missing` (absent, or does not

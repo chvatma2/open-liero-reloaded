@@ -235,11 +235,22 @@ fn library_dir(origin: &AssetOrigin, builtin: Option<&Path>, user: Option<&Path>
 /// The libraries' version of every linked asset of `placed`, read from
 /// the built-in library `builtin` and the user's `user` ([`Libraries`]).
 pub fn read_libraries(placed: &PlacedSource, builtin: Option<&Path>, user: Option<&Path>) -> Libraries {
+    read_origins(placed.file.assets.iter().map(|a| &a.origin), builtin, user)
+}
+
+/// The libraries' version of each of `origins` (`Own` left out), read as
+/// [`read_libraries`] reads them: what the level editor's host answers
+/// its `CompareLibrary` with (issue #83).
+pub fn read_origins<'a>(
+    origins: impl IntoIterator<Item = &'a AssetOrigin>,
+    builtin: Option<&Path>,
+    user: Option<&Path>,
+) -> Libraries {
     let mut out = Libraries::new();
-    for a in placed.file.assets.iter().filter(|a| a.origin != AssetOrigin::Own) {
-        if !out.contains_key(&a.origin) {
-            let src = library_dir(&a.origin, builtin, user).and_then(|d| read_library_asset(&d));
-            out.insert(a.origin.clone(), src);
+    for o in origins.into_iter().filter(|o| **o != AssetOrigin::Own) {
+        if !out.contains_key(o) {
+            let src = library_dir(o, builtin, user).and_then(|d| read_library_asset(&d));
+            out.insert(o.clone(), src);
         }
     }
     out

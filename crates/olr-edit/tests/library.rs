@@ -480,6 +480,9 @@ fn cores_and_wrappers_agree() {
     ]);
     assert_eq!(library::compare(&p, &read), library::compare(&p, &built));
     assert_eq!(library::compare_from(&p, Some(&b), Some(&u)), library::compare(&p, &built));
+    // Issue #83: the editor's host reads by origins alone.
+    let origins: Vec<AssetOrigin> = p.file.assets.iter().map(|a| a.origin.clone()).collect();
+    assert_eq!(library::read_origins(&origins, Some(&b), Some(&u)), read);
 }
 
 #[test]
