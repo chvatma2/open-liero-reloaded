@@ -148,7 +148,7 @@ fn state_transfer_of_a_live_world() {
         c.build_match(&o).unwrap().world
     };
     let mut src = live_world();
-    assert_eq!(src.live().map(|l| l.len()), Some(7), "the fixture's live copies");
+    assert_eq!(src.live().map(|l| l.len()), Some(9), "the fixture's live copies");
     src.set_live_state(1, 1).unwrap();
     src.set_live_value(3, 0, 5 * olr_sim::LIVE_SUBPIXELS + 3).unwrap();
     let mut a = WorldSim::new(src);
@@ -162,6 +162,116 @@ fn state_transfer_of_a_live_world() {
     assert_eq!(a.world(), b.world());
     let console = b.world().live().unwrap().copy(1).unwrap();
     assert_eq!(console.state_name(), "Alarm");
+}
+
+/// Issue #90: the live fixture's world as every peer builds it, four worms
+/// with worm 0 (a human's, pressing nothing) starting on the lift.
+struct LiftWorlds {
+    world: olr_sim::World,
+}
+
+impl LiftWorlds {
+    fn new(c: &Content) -> Self {
+        let o = MatchOptions {
+            level_id: "olr-level-live-test".into(),
+            players: vec![
+                Player::Human,
+                Player::Bot(Default::default()),
+                Player::Bot(Default::default()),
+                Player::Bot(Default::default()),
+            ],
+            ..options(7)
+        };
+        let m = c.load_mod(&o.mod_id).unwrap();
+        let level = c.load_level(&o.level_id).unwrap();
+        let theme = c.load_theme(&level.theme).unwrap();
+        let packs = c.replay_packs(&o.mod_id, &o.level_id).unwrap();
+        let assets = olr_content::MatchAssets { m: &m, level: &level, theme: &theme, packs: &packs };
+        // The lift's platform spans x 60..84 at y 120 when it starts.
+        let world = olr_content::build_match_spawning(assets, &o, Some((72, 112))).unwrap().world;
+        LiftWorlds { world }
+    }
+}
+
+/// [`Scripted`]'s keys for the other worms; worm 0 rides.
+struct Rider;
+
+impl Driver<WorldSim> for Rider {
+    fn local_inputs(&mut self, _sim: &WorldSim, tick: u32, slots: &[u8], out: &mut [Keys]) {
+        let all = keys(tick);
+        for (&s, k) in slots.iter().zip(out.iter_mut()) {
+            *k = if s == 0 { Keys(0) } else { all[s as usize] };
+        }
+    }
+}
+
+impl Factory<WorldSim> for LiftWorlds {
+    fn sim(&mut self, _peer: PeerId) -> WorldSim {
+        WorldSim::new(self.world.clone())
+    }
+
+    fn driver(&mut self, _peer: PeerId, _seat: Option<Seat>) -> Box<dyn Driver<WorldSim>> {
+        Box::new(Rider)
+    }
+}
+
+/// Where the host's worm 0 stood while the lift carried it.
+#[derive(Default)]
+struct Ride {
+    xs: Vec<f32>,
+}
+
+impl Observer<WorldSim> for Ride {
+    fn on_frame(&mut self, peer: PeerId, session: &mut Session<WorldSim>) {
+        let w = &session.sim().world().worms()[0];
+        if peer == harness::HOST && w.alive && w.on_ground {
+            self.xs.push(w.pos.x);
+        }
+    }
+}
+
+/// Issue #90: two peers on the live fixture under the bad profile, the
+/// press, the door and the lift moving their rock parts and a worm riding
+/// the lift, end with equal checksums (the verdict: the client's confirmed
+/// checksums are the host's, and both are an offline replay's).
+#[test]
+fn a_worm_rides_the_lift_alike_on_two_peers() {
+    let Some(dir) = std::env::var("OLR_CONTENT_DIR").ok().filter(|d| std::path::Path::new(d).is_dir()) else {
+        eprintln!("OLR_CONTENT_DIR not set or missing; skipping");
+        return;
+    };
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/live/levels");
+    let c = Content::open_layers(&[std::path::Path::new(&dir), &fixtures]).unwrap();
+    let sc = Scenario {
+        seed: 7,
+        slots: 4,
+        peers: vec![PeerPlan {
+            id: 1,
+            seat: Seat::Player(3),
+            profile: Profile::BAD,
+            clock_ppm: 0,
+            input_delay: input_delay(Profile::BAD.ping_ms),
+            frame_us: 6_944,
+            join_tick: None,
+            freeze: None,
+        }],
+        ticks: 600,
+        settle_ticks: 100,
+        outages: vec![],
+        expect_no_stalls: false,
+        corrupt: vec![],
+        host_freeze: None,
+        exits: vec![],
+        migration: None,
+        profile_changes: vec![],
+    };
+    let mut f = LiftWorlds::new(&c);
+    let mut ride = Ride::default();
+    let r = harness::run_observed(&sc, &mut f, &mut ride).unwrap();
+    harness::verdict(&sc, &r, &mut f).unwrap();
+    assert!(r.stats[&1].rollbacks > 0);
+    let (lo, hi) = ride.xs.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &x| (lo.min(x), hi.max(x)));
+    assert!(hi - lo >= 40.0, "worm 0 rode the lift from x {lo} to {hi}");
 }
 
 /// Every peer builds the same world; drivers press scripted keys.
