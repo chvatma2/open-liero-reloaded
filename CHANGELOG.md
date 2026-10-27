@@ -168,7 +168,7 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   copies have ids, Live, a starting state, values and scripts. The copy
   panel names a copy (scripts use the id), makes it Live (hidden when its
   asset drives nothing, disabled with the reason when it holds dirt or
-  is distant: it bakes as placed until a later version moves it), picks
+  is distant), picks
   its starting state, sets its exposed values (Default clears one) and
   opens its script in the middle of the level tab, as the level panel
   opens the level's; script syntax errors are listed as warnings. When
@@ -178,6 +178,12 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   listed and File ▾ Library changes… brings it back. File ▾ Export level…
   writes a `.olrlevel` file and Import level… opens one, its assets
   joining your library.
+- A level saves its Live copies in their played form (`live.ron` and
+  `live/`, part of the level's content, checked when it loads): each
+  state a complete look, split into rock and background parts with
+  their pictures, values, health, sounds and scripts. Live copies are
+  left out of the level's ground; until a later version plays them they
+  are neither drawn nor solid in a match.
 
 ### Changed
 

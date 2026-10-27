@@ -66,6 +66,20 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   shared and named projectiles and their children keep their looks (batch
   A review, Critical 1). The imported packs have no look (`tests/look.rs`;
   `content/reloaded`'s Liero v1.0 Reloaded has one, issue #21).
+- **Live copies** (`live.rs`, issue #85; STATUS.md "Live assets
+  (issues #85-#94)"): `LoadedLevel::live` (`LoadedLive { source, sim }`,
+  `None` without any) holds the played form as read (`LiveSource`:
+  pictures, masks, scripts, sound bytes, for presentation) and
+  `live_level(&source)`'s `olr_sim::LiveLevel`, made once;
+  `live_sim()` is its `Arc`, shared by every world of a match. Filled by
+  `load_level` (`olr_pack::LevelPack::live`; a played form that does not
+  check refuses the level) and by `from_source` (the `LevelSource`'s,
+  checked by `compile_level`). Tests: `tests/live.rs` on
+  `fixtures/live/levels/live-test` (`a_live_level_loads_its_copies`,
+  `a_live_file_that_does_not_check_refuses_the_level`,
+  `a_level_without_live_copies_has_none`,
+  `from_source_gives_the_saved_packs_live_level`: `olr-edit`'s bake in
+  memory, a dev-dependency, equals the saved pack's).
 - **Hostile levels:** `load_level` refuses an art scale above
   `MAX_ART_SCALE` (8) or a colour image above `MAX_COLOR_MAP_BYTES`
   (256 MiB), so a pack cannot make the colour map allocate gigabytes.

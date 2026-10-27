@@ -187,6 +187,17 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   BEAM_EXPLOSION` (-2),
   `World::physics_time()`. `Message` comes from a mode's command,
   `GameOver` once when the match ends.
+- **Live copies** (`live.rs`, issue #85; STATUS.md "Live assets (issues
+  #85-#94)"): `LiveLevel` (`copies`, `scripts`, `level_script`, the
+  sounds' count; `copy(id)`, `copy_by_id(id)`), `LiveCopy` (made by
+  `LiveCopy::new(LiveCopySetup)`: id, place, size, `LiveProp`s with their
+  `LiveTarget`, `LiveState`s each a complete look with its `LivePart`s,
+  each picture's `LiveSolid` (a bit per world pixel; none for a
+  background picture), start, `start_values`, `LiveHealth`, scripts and
+  sounds; `state(name)`, `prop(name)`, `sound(name)` through sorted
+  tables): setup data shared by an `Arc`, never hashed or transferred,
+  made by `olr-content` from the played form. Data only: #86 puts it in
+  the world. Test: `live_level_finds_copies_states_and_props_by_name`.
 - **Checksum** (`checksum.rs`): FNV-1a 64 over all mutable state, through an
   exhaustive destructuring of each type; a new field must be hashed there
   (types with private fields hash themselves in their module, the mode

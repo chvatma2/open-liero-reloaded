@@ -6571,8 +6571,9 @@ until #74 (below).
   these never clash), never written. A ground alone, unstretched at
   `(0, 0)` with the level's groups and materials, bakes byte for byte as
   `compose::bake` of its composition (`a_ground_alone_bakes_as_its_composition`).
-- **Live copies bake as static for now** (a later issue takes them out of
-  the bake; their groups and materials stay counted for the look).
+- **Live copies are left out of the bake** (issue #85: saved as their
+  played form, "Live assets (issues #85-#94)"; until #85 they baked as
+  static); their groups and materials stay counted for the look.
 - **Bounds.** At most `MAX_LEVEL_ASSETS` (256) assets and `MAX_COPIES`
   (1024) copies, checked with every key and id before any path is made;
   each asset within `MAX_ASSET_BYTES`, the whole `editor/` within
@@ -7114,6 +7115,77 @@ import.
 - **A plain level is one locked ground (#81).** It opens split into its
   three layers as before; its `Kept` glow, beams and clear flags stay
   while no layer glows or is clear, an Edit Ground included.
+
+## Live assets (issues #85-#94)
+
+The design is `docs/superpowers/specs/2026-10-26-asset-based-levels-design.md`
+(calls 8, 11, 13 and 19). Issue #85 gives Live copies their played form;
+#86 puts them in the world, #87 draws them, #88 runs their scripts.
+
+- **The played form is play files (#85).** `live.ron` and `live/` sit
+  beside `level.ron`, outside `editor/`, so `olr_pack::content_hash`
+  covers them and downloads, replays and online setups carry and check
+  them; `editor/` stays authoring (`the_live_files_are_in_the_content_hash`).
+  Every path is made of indices (`live/<copy>/<k>[-rock|-glow|-groups|-beam|-glass].png`,
+  `live/<k>.rhai`, `live/<k>.wav|ogg`, `MAX_LIVE_PATH` 22), so the shipped
+  paths' 80 characters hold whatever the assets are named. A played form
+  that does not check refuses the level (`olr_pack::read_level`, the
+  game's lenient read too): live copies are gameplay, not a look; a live
+  sound is checked as a mod's.
+- **Parts (#85).** A layer some value or state targets is a part of its
+  own (`LivePartFile::layer`, its index in the asset); a targeted mixed
+  layer, or a drawn rock layer with back art, is a background part then
+  a rock part driven together; untargeted shown layers flatten in runs of
+  one kind, keeping the stack (a layer joins the part just below it when
+  that is a run of its kind, else starts one). A targeted layer
+  hidden as authored that nothing makes visible gets an unnamed
+  `LayerVisible` value of default 0.
+- **Values (#85).** The exposed ones first (their names), then every
+  property a state sets (unnamed), then `Health` for a destructible asset
+  that does not expose it (0 to its points, default the points). Every
+  value is an `i64`: positions in world pixels, scaled with the copy's
+  stretch (`stretch_offset`, half away from zero, as the static bake),
+  a `Bool` 0 or 1, a `Colour` `0xRRGGBB` (-1 the group's own), an
+  `Animation` an index into the copy's table. **A state is a complete
+  look:** its values are the state's own, else the copy's, else the
+  default, as a static copy's pose (`posed`); `start_values` hold the
+  copy's own values of properties no state sets, applied once after the
+  start's.
+- **Pictures (#85).** Each part's picture is baked at the copy's placed
+  size with the static bake's resampling (`placed::lay` and
+  `compose::bake_elements_with_opacity` on a level of the part's box, a
+  transparent back tile): a rock part's front art at its rock cells and
+  its solid mask, a background part's back art. A state shares the
+  start's picture unless it owns a picture of one of the part's layers.
+  A part's box is the union of its layers' boxes clipped to the copy,
+  never cropped to its pixels, so the Live switch's budget check counts
+  exactly what the bake writes. The glow mask is baked at strength 100
+  (the shown glow is mask × the part's `glow_strength`, the element's as
+  authored for a targeted part, 100 for a run); the groups are the
+  copy's own (two copies change colour apart).
+- **Limits (#85).** 32 parts a state, 128 pictures and 96 values a copy
+  (`LiveRefusal::{Outside, TooManyParts, TooManyPictures, TooManyValues}`,
+  so the Live switch says why), 64 Live copies, 64 sounds and 129 scripts
+  a level, 2048 files (half an archive's 4096) and 64 MiB decoded:
+  `check_live_budget` at the Live switch (`placed::set_copies`) and at
+  the bake.
+- **The ground leaves Live copies out (#85).** `placed::bake` bakes the
+  level without them and sets `level.live` from `live::bake_live`; the
+  thumbnail is drawn from a bake with them as static, and a level lit
+  only by Live copies still gets the default look. **Gap:** until #86
+  and #87 a Live copy is neither solid nor drawn in a match (the editor
+  says "Plays from a later version: left out of play for now").
+- **Loading (#85).** `olr_pack::LevelPack::live` (the `LiveSource`) and
+  `olr_content::LoadedLevel::live` (`LoadedLive { source, sim }`):
+  `live_sim()` is the `Arc<olr_sim::LiveLevel>` a match's worlds share,
+  data only (sorted lookups by copy id, state and value name; each
+  picture's solid pixels as bits). `LoadedLevel::from_source` gives the
+  same `LiveLevel` as the saved pack (`from_source_gives_the_saved_packs_live_level`).
+  `fixtures/live/levels/live-test` (made by `fixtures/live/make-live-test.sh`
+  from the assets beside it) is the test level.
+- **Not yet carried (#85).** A live part has no surface materials (its
+  heat waits for the world, #86/#87) and no glass map (`glass` is never
+  set by the bake).
 
 ## Kept OLX quirks
 

@@ -492,6 +492,35 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   pixel budget, a bad key refused before any file) and `tests/hostile.rs`'
   `the_placed_fixture_reads_and_checks` and the proptest
   `hostile_placements_are_errors`.
+- **Live copies' played form** (`levels/live.rs`, issue #85; STATUS.md
+  "Live assets (issues #85-#94)"; the page `docs/formats/level.md`,
+  `LiveFile`): `live.ron` (`LIVE_FILE`) and `live/` (`LIVE_DIR`), play
+  files outside `editor/`, so `olr_pack::content_hash` covers them.
+  `LiveFile { copies, scripts, level_script, sounds }`, `LiveCopyFile {
+  id, asset, at, size, props, pictures, states, start_state,
+  start_values, animations, groups, scripts, sounds, health }`,
+  `LivePropFile { name, drives: Target, min, max, default }` (`Target`
+  the asset's `PropertySource` with its layer an index; `layer()`,
+  `bounds(animations)`), `LivePictureFile { size, rock, glow, groups,
+  beam, glass }`, `LiveStateFile { name, values, parts, enter_sound,
+  loop_sound }` (a complete look), `LivePartFile { layer, kind: PartKind,
+  picture, at, glow_strength }`, `LiveHealthFile`. In memory
+  `LiveSource { file, pictures: Vec<Vec<LivePicture>>, scripts, sounds }`
+  (`LevelSource::live`, `None` without Live copies; written iff it is
+  some). Paths are indices only (`live_picture_file`, `live_script_file`,
+  `live_sound_file`, `live_paths`; `MAX_LIVE_PATH` 22). `check_live(src,
+  size, art_scale, level_groups)` holds every rule (`check` runs it, so
+  `compile_level` and the readers refuse a level whose played form does
+  not check); `check_live_budget(file, s)` the limits from `live.ron`
+  alone (`MAX_LIVE_COPIES` 64, `MAX_PARTS` 32, `MAX_PICTURES` 128,
+  `MAX_LIVE_PROPS` 96, `MAX_ANIMATIONS` 256, `MAX_LIVE_SOUNDS` 64,
+  `MAX_SCRIPTS` 129, `MAX_LIVE_FILES` 2048 (half `MAX_ARCHIVE_FILES`,
+  `olr-pack`'s test), `MAX_LIVE_BYTES` 64 MiB decoded, `MAX_LIVE_VALUE`
+  2^24), run before any picture is read. `glow_value(strength, mask)` is
+  the level bake's glow. `check_placed` refuses more than 64 Live copies
+  and a Live copy outside the level. Tests: `live.rs`' units
+  `a_live_file_round_trips`, `live_files_refuse_what_does_not_check`;
+  `placed.rs`' `check_placed_refuses_a_live_copy_outside_the_level`.
 - **Themes** (`themes/`): `ThemeSource` is `theme.ron`, `holes/<i>.png` with
   `holes/<i>.mask.png`, `green_ball.png` with `green_ball.mask.png`,
   `stones/`, `misc/`, `front_tile.png` and `back_tile.png`. A stamp is a

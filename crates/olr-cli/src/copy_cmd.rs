@@ -154,7 +154,8 @@ pub(crate) enum CopyCommand {
         /// Its new id (its script file follows; scripts naming it do not).
         #[arg(long = "id", value_name = "NEW")]
         new_id: Option<String>,
-        /// Live: an object in the match (for now baked as static).
+        /// Live: an object in the match, saved as its played form (`live.ron`)
+        /// and left out of the ground.
         #[arg(long, conflicts_with = "static_")]
         live: bool,
         /// Static: baked into the level.

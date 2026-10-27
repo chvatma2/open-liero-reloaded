@@ -404,7 +404,9 @@ operations.
   property's other layers in `sharing`) is the list #72's commands and
   #80's tree share. `live_refusal(asset)` (`LiveRefusal::NothingToDrive`
   first, then `Dirt`: a plain Dirt layer or a mixed layer's dirt cell in
-  any state, then `RasterOrDistant`; `Display` texts). `Summary` gains
+  any state, then `RasterOrDistant`, then issue #85's plan's limits:
+  `Outside(layer)`, `TooManyParts`, `TooManyPictures`, `TooManyValues`;
+  `Display` texts; `Clone`, no longer `Copy`). `Summary` gains
   `states` and `may_be_live` (from `asset.ron` and whether `script.rhai`
   exists). `landed_pieces` (the start posed with its defaults; the
   thumbnail uses it; the editor's landing went with #82, which places
@@ -478,8 +480,8 @@ operations.
   (`check_placed`, the level's art scale within `MAX_ART_SCALE`), decodes
   each asset (`asset::decode_own` for the ground, `check_own_asset`; else
   `decode`), poses each copy (`posed`; a Live copy refused by
-  `live_refusal`, "cannot be Live: …", and otherwise baked as static for
-  now), gathers its posed groups and materials in copy order
+  `live_refusal`, "cannot be Live: …", and otherwise left out: issue
+  #85, below), gathers its posed groups and materials in copy order
   (`olr_format::levels::gather_groups`/`gather_materials`: shared when
   identical, else `<id>-2`, …; `Baked::groups_renamed`/
   `materials_renamed` list the renames) and renumbers its painted surface
@@ -529,8 +531,7 @@ operations.
   `opacity_mixes_a_background_piece_over_the_back_below`,
   `distant_pieces_bake_below_everything`,
   `gathering_shares_equal_groups_and_renames_others`,
-  `a_live_copy_with_dirt_cells_is_refused_by_the_bake`,
-  `live_copies_bake_as_static_for_now`; issue #74's
+  `a_live_copy_with_dirt_cells_is_refused_by_the_bake`; issue #74's
   `converting_a_02_level_keeps_its_bake`,
   `a_02_pack_is_refused_by_ensure_composed`,
   `save_writes_unedited_copies_verbatim`,
@@ -588,6 +589,47 @@ operations.
     `duplicate_copy_lands_above_with_a_new_id` and the proptest
     `every_operation_leaves_a_checked_placement`; `tests/asset.rs`'
     placing tests place copies (`place`: `add_copy`, then `bake_pack`).
+- **`live`, issue #85's bake of the Live copies' played form**
+  (STATUS.md "Live assets (issues #85-#94)"; the format is
+  `olr_format::levels`' `LiveFile`): `bake_live(src, assets, level) ->
+  Result<Option<LiveSource>, PlacedError>` (`None` without a Live copy).
+  `plan(asset)` (crate) makes the copy-independent plan: the values
+  (exposed, then every state-set `property_key` unnamed, then an implicit
+  `Health`, then an implicit `LayerVisible` for a targeted layer hidden
+  as authored), the slots (a targeted layer its own; a targeted mixed or
+  rock-with-back layer a Background then a Rock slot; untargeted shown
+  layers in runs of one kind keeping the stack) and the pictures (per
+  slot and per owning state). `plan_copy` validates the copy's values
+  (`posed`'s rules), scales positions with the stretch
+  (`stretch_offset`), makes each state a complete look (the state's
+  value, else the copy's, else the default) and `start_values` (copy
+  values no state sets), dedups scripts and sounds level-wide by
+  content. `make_picture` lays the slot's layers (`placed::lay`, the
+  state's own pictures swapped in, a targeted glow at strength 100) on
+  a level of the slot's box and bakes it with
+  `compose::bake_elements_with_opacity` (a transparent 1 × 1 back tile):
+  a Rock part's front art, glow, groups and solid mask at its rock cells,
+  a Background part's back art and back glow, groups and beams; no glass,
+  no surface materials. Slot boxes are the layers' boxes clipped to the
+  copy, never cropped, so `check_budget(src, assets, s)` (the Live
+  switch's, `placed::set_copies`) counts what the bake writes
+  (`check_live_budget`); the bake ends with `check_live`.
+  `placed::bake` leaves Live copies out of the ground, sets
+  `level.live`, draws the thumbnail from a bake with them as static and
+  gives a level lit only by Live copies the default look;
+  `compose::differing` (so `stale`) compares every live path. Tests:
+  `tests/live.rs` (`a_live_copy_bakes_to_the_played_form_not_the_ground`,
+  `a_static_copy_still_bakes_into_the_ground`,
+  `a_state_value_on_an_unexposed_layer_makes_it_a_part`,
+  `a_targeted_mixed_layer_gives_two_parts_driven_together`,
+  `untargeted_layers_flatten_in_runs_keeping_the_stack`,
+  `a_state_shares_its_unpainted_pictures`,
+  `a_stretched_copy_scales_every_position_value`,
+  `each_state_is_a_complete_look`,
+  `glow_strength_is_mask_times_value_as_posed`,
+  `live_refusal_names_each_limit`,
+  `a_level_past_the_file_cap_is_refused_at_save`,
+  `a_level_lit_only_by_live_copies_gets_the_default_look`).
 - **`library`, issue #76's library links, export and import** (the
   design's calls 7, 9, 17, 18; STATUS.md "Asset library links, export and
   import (issue #76)"). Pure cores over sources in memory and a

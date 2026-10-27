@@ -40,6 +40,19 @@ header's size); content hashing; validation.
   `distant/<i>.png` and `level.ron`'s list); they are content: in
   `content_hash`, so a replay or download carries them
   (`distant_layers_roundtrip_and_are_content`).
+- **Live copies** (issue #85; STATUS.md "Live assets (issues
+  #85-#94)"): `LevelPack::live` (`olr_format::levels::LiveSource`, `None`
+  without `live.ron`) is read with the level, strictly even by the
+  lenient reader (live copies are gameplay): a played form that does not
+  check, or a live sound that `sounds::check_sound` refuses, refuses the
+  level. `write_level` does not write it (`olr_edit` bakes and writes
+  it). `live.ron` and `live/` are content (`editor/` is not). Tests:
+  `tests/live.rs`' `the_live_files_are_in_the_content_hash` (a value, a
+  script byte and a sound byte of `fixtures/live/levels/live-test` each
+  change it, an `editor/` file does not),
+  `the_fixture_reads_with_its_live_copies`,
+  `the_live_file_cap_leaves_room_in_an_archive` (`MAX_LIVE_FILES` × 2 =
+  `MAX_ARCHIVE_FILES`).
 - **Bounded reads:** every pack file is read with `read_max`: at most
   `MAX_FILE_BYTES` (64 MiB; OLX's largest level art is under 1 MB encoded,
   and `png` decodes at most 64 MiB), RON at most `MAX_RON_BYTES` (4 MiB),

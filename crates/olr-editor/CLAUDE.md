@@ -894,7 +894,10 @@ whose column tab is `LAYERS`);
     off with the reason as hover text and a line under it, `LIVE_DIRT`,
     the refusal's text for a raster or distant layer, `LIVE_DISTANT` on
     a distant copy; a copy Live already is always `Offered`), while on
-    `LIVE_NOT_YET`; `STARTING_STATE` (a picker, hidden for one state:
+    `LIVE_NOT_YET` ("Plays from a later version: left out of play for
+    now": issue #85 leaves Live copies out of the ground; `to_pack`
+    (`document::played`) and `playable()` run `olr_edit::placed::bake_pack`
+    when a copy is Live, so Save writes and Play reads the played form); `STARTING_STATE` (a picker, hidden for one state:
     `labels::asset_start(start)` sets `state: None`, then each state);
     `VALUES` (`ValueRow`s: each exposed property's `parts::value_field`
     by its `property_type` within the exposed limits, named
