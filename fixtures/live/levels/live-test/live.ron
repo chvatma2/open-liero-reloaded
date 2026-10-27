@@ -1,0 +1,433 @@
+(
+    copies: [
+        (
+            id: "lamp",
+            asset: "Lamp",
+            at: (40, 150),
+            size: (4, 12),
+            props: [
+                (
+                    drives: GlowStrength(1),
+                    min: 0,
+                    max: 100,
+                    default: 80,
+                ),
+            ],
+            pictures: [
+                (
+                    size: (2, 8),
+                ),
+                (
+                    size: (4, 4),
+                    rock: true,
+                    glow: true,
+                    groups: true,
+                ),
+            ],
+            states: [
+                (
+                    name: "On",
+                    values: [
+                        (0, 80),
+                    ],
+                    parts: [
+                        (
+                            kind: Background,
+                            picture: 0,
+                            at: (1, 4),
+                        ),
+                        (
+                            layer: 1,
+                            kind: Rock,
+                            picture: 1,
+                            glow_strength: 80,
+                        ),
+                    ],
+                ),
+                (
+                    name: "Off",
+                    values: [
+                        (0, 0),
+                    ],
+                    parts: [
+                        (
+                            kind: Background,
+                            picture: 0,
+                            at: (1, 4),
+                        ),
+                        (
+                            layer: 1,
+                            kind: Rock,
+                            picture: 1,
+                            glow_strength: 80,
+                        ),
+                    ],
+                    enter_sound: 0,
+                ),
+                (
+                    name: "Dim",
+                    values: [
+                        (0, 30),
+                    ],
+                    parts: [
+                        (
+                            kind: Background,
+                            picture: 0,
+                            at: (1, 4),
+                        ),
+                        (
+                            layer: 1,
+                            kind: Rock,
+                            picture: 1,
+                            glow_strength: 80,
+                        ),
+                    ],
+                ),
+            ],
+            start_state: 2,
+            groups: [
+                (
+                    id: "lamp",
+                    colour: Tint("#ffd080"),
+                    intensity: 300,
+                    reach: Pixels(40),
+                ),
+            ],
+            scripts: [
+                0,
+            ],
+            sounds: [
+                ("click.wav", 0),
+            ],
+        ),
+        (
+            id: "console-a",
+            asset: "Console",
+            at: (90, 158),
+            size: (12, 10),
+            props: [
+                (
+                    name: "screen_colour",
+                    drives: GlowColour(1),
+                    min: -1,
+                    max: 16777215,
+                    default: 4259680,
+                ),
+            ],
+            pictures: [
+                (
+                    size: (12, 10),
+                    rock: true,
+                ),
+                (
+                    size: (8, 5),
+                    glow: true,
+                    groups: true,
+                ),
+            ],
+            states: [
+                (
+                    name: "Normal",
+                    values: [
+                        (0, 2162496),
+                    ],
+                    parts: [
+                        (
+                            kind: Rock,
+                            picture: 0,
+                        ),
+                        (
+                            layer: 1,
+                            kind: Background,
+                            picture: 1,
+                            at: (2, 2),
+                            glow_strength: 70,
+                        ),
+                    ],
+                ),
+                (
+                    name: "Alarm",
+                    values: [
+                        (0, 16719904),
+                    ],
+                    parts: [
+                        (
+                            kind: Rock,
+                            picture: 0,
+                        ),
+                        (
+                            layer: 1,
+                            kind: Background,
+                            picture: 1,
+                            at: (2, 2),
+                            glow_strength: 70,
+                        ),
+                    ],
+                ),
+            ],
+            groups: [
+                (
+                    id: "screen",
+                    colour: Tint("#40ff60"),
+                    intensity: 200,
+                    reach: Pixels(24),
+                ),
+            ],
+        ),
+        (
+            id: "console-b",
+            asset: "Console",
+            at: (130, 158),
+            size: (24, 10),
+            props: [
+                (
+                    name: "screen_colour",
+                    drives: GlowColour(1),
+                    min: -1,
+                    max: 16777215,
+                    default: 4259680,
+                ),
+            ],
+            pictures: [
+                (
+                    size: (24, 10),
+                    rock: true,
+                ),
+                (
+                    size: (16, 5),
+                    glow: true,
+                    groups: true,
+                ),
+            ],
+            states: [
+                (
+                    name: "Normal",
+                    values: [
+                        (0, 4227327),
+                    ],
+                    parts: [
+                        (
+                            kind: Rock,
+                            picture: 0,
+                        ),
+                        (
+                            layer: 1,
+                            kind: Background,
+                            picture: 1,
+                            at: (4, 2),
+                            glow_strength: 70,
+                        ),
+                    ],
+                ),
+                (
+                    name: "Alarm",
+                    values: [
+                        (0, 16719904),
+                    ],
+                    parts: [
+                        (
+                            kind: Rock,
+                            picture: 0,
+                        ),
+                        (
+                            layer: 1,
+                            kind: Background,
+                            picture: 1,
+                            at: (4, 2),
+                            glow_strength: 70,
+                        ),
+                    ],
+                ),
+            ],
+            start_state: 1,
+            groups: [
+                (
+                    id: "screen",
+                    colour: Tint("#40ff60"),
+                    intensity: 200,
+                    reach: Pixels(24),
+                ),
+            ],
+        ),
+        (
+            id: "press",
+            asset: "Press",
+            at: (190, 152),
+            size: (10, 16),
+            props: [
+                (
+                    name: "head_y",
+                    drives: OffsetY(1),
+                    min: 0,
+                    max: 6,
+                    default: 0,
+                ),
+            ],
+            pictures: [
+                (
+                    size: (10, 16),
+                    rock: true,
+                ),
+                (
+                    size: (6, 4),
+                    rock: true,
+                ),
+            ],
+            states: [
+                (
+                    name: "Normal",
+                    parts: [
+                        (
+                            kind: Rock,
+                            picture: 0,
+                        ),
+                        (
+                            layer: 1,
+                            kind: Rock,
+                            picture: 1,
+                            at: (2, 2),
+                        ),
+                    ],
+                ),
+            ],
+            start_values: [
+                (0, 3),
+            ],
+        ),
+        (
+            id: "crate",
+            asset: "Crate",
+            at: (230, 160),
+            size: (8, 8),
+            props: [
+                (
+                    drives: LayerVisible(0),
+                    min: 0,
+                    max: 1,
+                    default: 1,
+                ),
+                (
+                    drives: LayerVisible(1),
+                    min: 0,
+                    max: 1,
+                    default: 1,
+                ),
+                (
+                    drives: Health,
+                    min: 0,
+                    max: 40,
+                    default: 40,
+                ),
+            ],
+            pictures: [
+                (
+                    size: (8, 2),
+                ),
+                (
+                    size: (8, 8),
+                    rock: true,
+                ),
+            ],
+            states: [
+                (
+                    name: "Normal",
+                    values: [
+                        (0, 0),
+                        (1, 1),
+                    ],
+                    parts: [
+                        (
+                            layer: 0,
+                            kind: Background,
+                            picture: 0,
+                            at: (0, 6),
+                        ),
+                        (
+                            layer: 1,
+                            kind: Rock,
+                            picture: 1,
+                        ),
+                    ],
+                ),
+                (
+                    name: "Wrecked",
+                    values: [
+                        (0, 1),
+                        (1, 0),
+                    ],
+                    parts: [
+                        (
+                            layer: 0,
+                            kind: Background,
+                            picture: 0,
+                            at: (0, 6),
+                        ),
+                        (
+                            layer: 1,
+                            kind: Rock,
+                            picture: 1,
+                        ),
+                    ],
+                ),
+            ],
+            health: (
+                points: 40,
+                at_zero: 1,
+            ),
+        ),
+        (
+            id: "gate",
+            asset: "Gate",
+            at: (270, 156),
+            size: (12, 12),
+            props: [
+                (
+                    name: "gate_x",
+                    drives: OffsetX(0),
+                    min: -6,
+                    max: 6,
+                    default: 0,
+                ),
+            ],
+            pictures: [
+                (
+                    size: (12, 12),
+                ),
+                (
+                    size: (12, 12),
+                    rock: true,
+                ),
+            ],
+            states: [
+                (
+                    name: "Normal",
+                    parts: [
+                        (
+                            layer: 0,
+                            kind: Background,
+                            picture: 0,
+                        ),
+                        (
+                            layer: 0,
+                            kind: Rock,
+                            picture: 1,
+                        ),
+                    ],
+                ),
+            ],
+            start_values: [
+                (0, -2),
+            ],
+            scripts: [
+                1,
+            ],
+        ),
+    ],
+    scripts: [
+        "live/0.rhai",
+        "live/1.rhai",
+    ],
+    sounds: [
+        "live/0.wav",
+    ],
+)

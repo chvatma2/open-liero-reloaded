@@ -1,0 +1,55 @@
+(
+    name: "Console",
+    size: (12, 10),
+    elements: [
+        (
+            id: "case",
+            name: "Case",
+            kind: Drawn(
+                material: Rock,
+                size: (12, 10),
+            ),
+        ),
+        (
+            id: "screen",
+            name: "Screen",
+            kind: Drawn(
+                material: Background,
+                at: (2, 2),
+                size: (8, 5),
+            ),
+            glow: (
+                strength: 70,
+                group: "screen",
+            ),
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "screen",
+            colour: Tint("#40ff60"),
+            intensity: 200,
+            reach: Pixels(24),
+        ),
+    ],
+    states: [
+        (
+            name: "Normal",
+        ),
+        (
+            name: "Alarm",
+            values: [
+                (
+                    property: GlowColour("screen"),
+                    value: Colour("#ff2020"),
+                ),
+            ],
+        ),
+    ],
+    exposed: [
+        (
+            name: "screen_colour",
+            property: GlowColour("screen"),
+        ),
+    ],
+)

@@ -1,0 +1,32 @@
+(
+    name: "Press",
+    size: (10, 16),
+    elements: [
+        (
+            id: "frame",
+            name: "Frame",
+            kind: Drawn(
+                material: Rock,
+                size: (10, 16),
+            ),
+        ),
+        (
+            id: "head",
+            name: "Head",
+            kind: Drawn(
+                material: Rock,
+                at: (2, 2),
+                size: (6, 4),
+            ),
+        ),
+    ],
+    exposed: [
+        (
+            name: "head_y",
+            property: OffsetY("head"),
+            default: Int(0),
+            min: 0,
+            max: 6,
+        ),
+    ],
+)

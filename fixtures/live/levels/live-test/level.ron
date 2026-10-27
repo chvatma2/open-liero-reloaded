@@ -1,0 +1,11 @@
+(
+    name: "Live Test",
+    size: (320, 200),
+    theme: "olx-theme-dirt",
+    look: (
+        ambient: (
+            colour: "#304060",
+            intensity: 30,
+        ),
+    ),
+)

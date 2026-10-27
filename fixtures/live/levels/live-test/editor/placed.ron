@@ -1,0 +1,88 @@
+(
+    assets: [
+        (
+            key: "ground",
+            origin: Own,
+        ),
+        (
+            key: "a",
+            origin: Own,
+        ),
+        (
+            key: "b",
+            origin: Own,
+        ),
+        (
+            key: "c",
+            origin: Own,
+        ),
+        (
+            key: "d",
+            origin: Own,
+        ),
+        (
+            key: "e",
+            origin: Own,
+        ),
+    ],
+    copies: [
+        (
+            id: "ground",
+            asset: "ground",
+            locked: true,
+        ),
+        (
+            id: "lamp",
+            asset: "a",
+            at: (40, 150),
+            live: true,
+            state: "Dim",
+        ),
+        (
+            id: "console-a",
+            asset: "b",
+            at: (90, 158),
+            live: true,
+            values: {
+                "screen_colour": Colour("#20ff40"),
+            },
+        ),
+        (
+            id: "console-b",
+            asset: "b",
+            at: (130, 158),
+            size: (24, 10),
+            free_aspect: true,
+            live: true,
+            state: "Alarm",
+            values: {
+                "screen_colour": Colour("#4080ff"),
+            },
+        ),
+        (
+            id: "press",
+            asset: "c",
+            at: (190, 152),
+            live: true,
+            values: {
+                "head_y": Int(3),
+            },
+        ),
+        (
+            id: "crate",
+            asset: "d",
+            at: (230, 160),
+            live: true,
+        ),
+        (
+            id: "gate",
+            asset: "e",
+            at: (270, 156),
+            live: true,
+            values: {
+                "gate_x": Int(-2),
+            },
+            script: true,
+        ),
+    ],
+)

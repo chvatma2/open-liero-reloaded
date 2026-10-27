@@ -1,0 +1,62 @@
+(
+    name: "Lamp",
+    size: (4, 12),
+    elements: [
+        (
+            id: "post",
+            name: "Post",
+            kind: Drawn(
+                material: Background,
+                at: (1, 4),
+                size: (2, 8),
+            ),
+        ),
+        (
+            id: "bulb",
+            name: "Bulb",
+            kind: Drawn(
+                material: Rock,
+                size: (4, 4),
+            ),
+            glow: (
+                strength: 80,
+                group: "lamp",
+            ),
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "lamp",
+            colour: Tint("#ffd080"),
+            intensity: 300,
+            reach: Pixels(40),
+        ),
+    ],
+    states: [
+        (
+            name: "On",
+        ),
+        (
+            name: "Off",
+            values: [
+                (
+                    property: GlowStrength("bulb"),
+                    value: Int(0),
+                ),
+            ],
+            enter_sound: "click.wav",
+        ),
+        (
+            name: "Dim",
+            values: [
+                (
+                    property: GlowStrength("bulb"),
+                    value: Int(30),
+                ),
+            ],
+        ),
+    ],
+    sounds: [
+        "click.wav",
+    ],
+)

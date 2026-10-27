@@ -1,0 +1,24 @@
+(
+    name: "Gate",
+    size: (12, 12),
+    elements: [
+        (
+            id: "gate",
+            name: "Gate",
+            kind: Drawn(
+                material: Background,
+                size: (12, 12),
+                mixed: true,
+            ),
+        ),
+    ],
+    exposed: [
+        (
+            name: "gate_x",
+            property: OffsetX("gate"),
+            default: Int(0),
+            min: -6,
+            max: 6,
+        ),
+    ],
+)

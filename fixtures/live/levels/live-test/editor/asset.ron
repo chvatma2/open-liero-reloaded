@@ -1,0 +1,11 @@
+(
+    name: "Ground",
+    size: (320, 200),
+    elements: [
+        (
+            id: "base",
+            name: "Base",
+            kind: Raster,
+        ),
+    ],
+)

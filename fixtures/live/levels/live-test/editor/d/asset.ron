@@ -1,0 +1,47 @@
+(
+    name: "Crate",
+    size: (8, 8),
+    elements: [
+        (
+            id: "debris",
+            name: "Debris",
+            kind: Drawn(
+                material: Background,
+                at: (0, 6),
+                size: (8, 2),
+            ),
+        ),
+        (
+            id: "box",
+            name: "Box",
+            kind: Drawn(
+                material: Rock,
+                size: (8, 8),
+            ),
+        ),
+    ],
+    states: [
+        (
+            name: "Normal",
+            values: [
+                (
+                    property: LayerVisible("debris"),
+                    value: Bool(false),
+                ),
+            ],
+        ),
+        (
+            name: "Wrecked",
+            values: [
+                (
+                    property: LayerVisible("box"),
+                    value: Bool(false),
+                ),
+            ],
+        ),
+    ],
+    health: (
+        points: 40,
+        at_zero: "Wrecked",
+    ),
+)
