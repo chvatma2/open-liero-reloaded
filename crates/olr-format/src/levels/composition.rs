@@ -828,13 +828,11 @@ pub fn check_stacked_elements(
     if let Some(e) = too_many(elements.len()) {
         return Err(e);
     }
-    let art = (size.0.saturating_mul(art_scale), size.1.saturating_mul(art_scale));
     let mut ids = BTreeSet::new();
     let mut layers = BTreeMap::new();
     // Each original's name folded to lowercase, with its spelling.
     let mut sources: BTreeMap<String, &str> = BTreeMap::new();
     let mut pixels = 0u64;
-    let art_pixels = u64::from(art.0) * u64::from(art.1);
     // The distant elements so far and their art's pixels (issue #11).
     let (mut distant, mut distant_pixels) = (0usize, 0u64);
     for (i, e) in elements.iter().enumerate() {
@@ -885,32 +883,18 @@ pub fn check_stacked_elements(
             image_io::check_size(aw, ah, LEVEL_ART)
                 .map_err(|why| bad("size", format!("its art at art scale {art_scale}: {why}")))?;
         }
-        pixels = pixels.saturating_add(match &e.kind {
-            ElementKind::Image { size, pixel_size, .. } => {
-                let side = |v: u32| u64::from(v.saturating_mul(art_scale).div_ceil((*pixel_size).max(1)));
-                side(size.0) * side(size.1)
+        if let ElementKind::Drawn { size: boxed, .. } = &e.kind {
+            let (w, h) = boxed.unwrap_or(size);
+            // Stacked pictures (an asset's states, issue #71): every
+            // sheet decodes whole.
+            let n = pictures(e).max(1);
+            if n > 1 {
+                let tall = (h.saturating_mul(art_scale)).saturating_mul(n);
+                image_io::check_size(w.saturating_mul(art_scale), tall, LEVEL_ART)
+                    .map_err(|why| bad("size", format!("its {n} stacked pictures: {why}")))?;
             }
-            ElementKind::Drawn { size: boxed, mixed, back, .. } => {
-                let (w, h) = boxed.unwrap_or(size);
-                let cells = u64::from(w) * u64::from(h);
-                let art = cells * u64::from(art_scale) * u64::from(art_scale);
-                // Stacked pictures (an asset's states, issue #71): every
-                // sheet decodes whole, its glow mask too.
-                let n = u64::from(pictures(e).max(1));
-                if n > 1 {
-                    let tall = (h.saturating_mul(art_scale)).saturating_mul(n as u32);
-                    image_io::check_size(w.saturating_mul(art_scale), tall, LEVEL_ART)
-                        .map_err(|why| bad("size", format!("its {n} stacked pictures: {why}")))?;
-                }
-                let mask = if n > 1 && e.glow.as_ref().is_some_and(|g| g.mask) { art } else { 0 };
-                n * (art * (1 + u64::from(*back)) + if *mixed { cells } else { 0 } + mask)
-            }
-            ElementKind::Raster => 2 * art_pixels + u64::from(size.0) * u64::from(size.1),
-        });
-        // Painted surface maps decode with the element (issue #37).
-        let (mw, mh) = surface_map_size(&e.kind, size);
-        let maps = u64::from(e.surface_map) + u64::from(e.back_surface_map);
-        pixels = pixels.saturating_add(maps * u64::from(mw) * u64::from(mh));
+        }
+        pixels = pixels.saturating_add(decoded_pixels(e, size, art_scale, pictures(e)));
         if pixels > MAX_COMPOSED_PIXELS {
             return Err(FormatError::invalid(
                 COMPOSITION_FILE,
@@ -1064,6 +1048,36 @@ pub fn check_stacked_elements(
     }
     check_folders(c)?;
     Ok(pixels)
+}
+
+/// The pixels element `e` decodes to in a level of `size` at `art_scale`
+/// (the composition's pixel budget): an image's element grid, a drawn
+/// layer's art, back art, cells and (stacked `pictures` high, issue #71)
+/// glow mask, a raster's front, back and material, and the painted
+/// surface maps (issue #37).
+pub(crate) fn decoded_pixels(e: &Element, size: (u32, u32), art_scale: u32, pictures: u32) -> u64 {
+    let art_pixels =
+        u64::from(size.0.saturating_mul(art_scale)) * u64::from(size.1.saturating_mul(art_scale));
+    let own = match &e.kind {
+        ElementKind::Image { size, pixel_size, .. } => {
+            let side = |v: u32| u64::from(v.saturating_mul(art_scale).div_ceil((*pixel_size).max(1)));
+            side(size.0) * side(size.1)
+        }
+        ElementKind::Drawn { size: boxed, mixed, back, .. } => {
+            let (w, h) = boxed.unwrap_or(size);
+            let cells = u64::from(w) * u64::from(h);
+            let art = cells * u64::from(art_scale) * u64::from(art_scale);
+            // Every stacked sheet decodes whole, its glow mask too.
+            let n = u64::from(pictures.max(1));
+            let mask = if n > 1 && e.glow.as_ref().is_some_and(|g| g.mask) { art } else { 0 };
+            n.saturating_mul(art * (1 + u64::from(*back)) + if *mixed { cells } else { 0 } + mask)
+        }
+        ElementKind::Raster => 2 * art_pixels + u64::from(size.0) * u64::from(size.1),
+    };
+    // Painted surface maps decode with the element (issue #37).
+    let (mw, mh) = surface_map_size(&e.kind, size);
+    let maps = u64::from(e.surface_map) + u64::from(e.back_surface_map);
+    own.saturating_add(maps * u64::from(mw) * u64::from(mh))
 }
 
 /// The folders holding `folder` and itself, innermost first: `folder`,
