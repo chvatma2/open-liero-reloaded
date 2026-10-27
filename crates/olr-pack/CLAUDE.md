@@ -92,7 +92,8 @@ header's size); content hashing; validation.
 - **Sounds** (`sounds`, moved from `olr-content` in issue #19):
   `check_sound` (at most `MAX_SOUND_BYTES` 2 MiB and `MAX_SOUND_SECONDS`
   60 s by the header) and `is_sound` (`OggS` or `RIFF`…`WAVE`), for the
-  game's loads and the editors' imports alike.
+  game's loads and the editors' imports alike; `sound_seconds` (issue
+  #72) is the header's length `check_sound` reads.
 - `validate` never panics and reports `file:line:col` for RON errors.
   Errors: unknown references, cycles, missing assets. Warnings: unused items;
   `<path>: not read by the format` for each file outside the kind's

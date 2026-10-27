@@ -22,16 +22,22 @@ pub fn check_sound(bytes: &[u8]) -> Result<(), String> {
     if bytes.len() > MAX_SOUND_BYTES {
         return Err(format!("{} bytes, more than {MAX_SOUND_BYTES}", bytes.len()));
     }
-    let seconds = if bytes.starts_with(b"OggS") {
+    match sound_seconds(bytes) {
+        Some(s) if s > MAX_SOUND_SECONDS => Err(format!("{s:.0} s long, more than {MAX_SOUND_SECONDS} s")),
+        _ => Ok(()),
+    }
+}
+
+/// Sound file `bytes`' length in seconds as its header gives it (issue
+/// #72: `olr-cli asset info`); `None` for a file not recognised or cut
+/// short.
+pub fn sound_seconds(bytes: &[u8]) -> Option<f64> {
+    if bytes.starts_with(b"OggS") {
         ogg_seconds(bytes)
     } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WAVE") {
         wav_seconds(bytes)
     } else {
         None
-    };
-    match seconds {
-        Some(s) if s > MAX_SOUND_SECONDS => Err(format!("{s:.0} s long, more than {MAX_SOUND_SECONDS} s")),
-        _ => Ok(()),
     }
 }
 
