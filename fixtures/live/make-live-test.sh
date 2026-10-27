@@ -105,7 +105,7 @@ S value "$A/crate" Wrecked box.visible false
 "$OLR" asset check "$A"/*
 
 # The level: a lit cave with a rock floor.
-"$OLR" pack new level live-test --out "$P" --name "Live Test" --size 320x200
+"$OLR" pack new level olr-level-live-test --out "$P" --name "Live Test" --size 320x200
 "$OLR" level look "$P" --ambient 304060:30
 "$OLR" level carve "$P" --rect 8,8,304,160
 add() { "$OLR" level copy add "$P" "$A/$1" --id "$2" --at "$3" "${@:4}"; }

@@ -1,6 +1,6 @@
 (
     format_version: 5,
-    id: "live-test",
+    id: "olr-level-live-test",
     name: "Live Test",
     version: "0.1.0",
     kind: Level,
