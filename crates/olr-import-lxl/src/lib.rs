@@ -78,6 +78,7 @@ pub fn import_lxl(olx: &dyn ContentSource, path: &VPath, origin: Origin) -> Resu
             distant: Vec::new(),
             surface: None,
             distant_surface: Vec::new(),
+            live: None,
         },
         warnings,
     })

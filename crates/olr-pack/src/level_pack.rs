@@ -56,6 +56,10 @@ pub struct LevelPack {
     /// renderer heats a layer by it), 0 none; past its end, none. Not
     /// written by [`write_level`].
     pub distant_surface: Vec<u8>,
+    /// The played form of its live copies (`live.ron` and `live/`, issue
+    /// #85; their sounds checked as a mod's), `None` without any. Not
+    /// written by [`write_level`].
+    pub live: Option<olr_format::levels::LiveSource>,
     /// What [`read_level`] left out of a look that did not check.
     pub warnings: Vec<String>,
 }
@@ -148,6 +152,13 @@ pub fn read_level(src: &dyn ContentSource) -> Result<LevelPack, PackError> {
     let level = compile_level(&src)?;
     let look = olr_format::levels::compile_look(&src)?;
     let distant_surface = olr_format::levels::distant_surface_values(&src);
+    // Issue #85: a live sound that does not play refuses the level, as
+    // the rest of its played form does.
+    if let Some(live) = &src.live {
+        for (file, bytes) in live.file.sounds.iter().zip(&live.sounds) {
+            crate::sounds::check_sound(bytes).map_err(|e| PackError::invalid(file, e))?;
+        }
+    }
     Ok(LevelPack {
         manifest,
         level,
@@ -161,6 +172,7 @@ pub fn read_level(src: &dyn ContentSource) -> Result<LevelPack, PackError> {
         distant: src.distant,
         surface: src.surface,
         distant_surface,
+        live: src.live,
         warnings,
     })
 }
@@ -206,6 +218,7 @@ pub(crate) mod tests {
             distant: Vec::new(),
             surface: None,
             distant_surface: Vec::new(),
+            live: None,
             warnings: Vec::new(),
         }
     }

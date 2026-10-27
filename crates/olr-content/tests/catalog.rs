@@ -50,6 +50,7 @@ fn level(dir: &Path, id: &str, name: &str) -> DirFs {
         distant: Vec::new(),
         surface: None,
         distant_surface: Vec::new(),
+        live: None,
     };
     olr_pack::write_level(&mut fs, &pack).unwrap();
     fs
