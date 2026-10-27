@@ -272,3 +272,9 @@
 2026-10-27 bless-render: #87: live assets drawn by state
   fixtures/render/live-start.png
   fixtures/render/live-states.png
+2026-10-27 bless-render: #93: live light: console-a red and the lamp dimmed by their values, the spot's beam worked out each frame; the fixture's new spot in the live goldens
+  fixtures/render/live-beam-turned.png
+  fixtures/render/live-beam.png
+  fixtures/render/live-light.png
+  fixtures/render/live-start.png
+  fixtures/render/live-states.png
