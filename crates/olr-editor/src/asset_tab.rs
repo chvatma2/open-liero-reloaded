@@ -272,6 +272,7 @@ impl Document {
             distant_items: Vec::new(),
             distant_masks: Vec::new(),
             distant_generation: 0,
+            bake_generation: 0,
             holes: 0,
             asset: Some(Box::new(parts)),
         };

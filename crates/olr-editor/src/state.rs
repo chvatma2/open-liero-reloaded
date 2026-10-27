@@ -956,6 +956,12 @@ impl EditorState {
         self.asset_key.as_ref()
     }
 
+    /// Whether a pointer drag (a stroke, a move, a shape) is in progress
+    /// (issue #78: the asset tab's previews wait for its release).
+    pub fn dragging(&self) -> bool {
+        self.drag.is_some()
+    }
+
     /// Counts the times the canvas's document was replaced (a tab switch,
     /// an asset opened): the host then uploads it whole.
     pub fn shown_generation(&self) -> u64 {

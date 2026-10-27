@@ -1533,6 +1533,7 @@ impl Document {
 
     /// Applies (`forward`) or reverts `edit`; returns the rectangle it rebaked.
     pub fn apply(&mut self, edit: &Edit, forward: bool) -> Rect {
+        self.bake_generation += 1;
         let dirty = match edit {
             Edit::Pixels { id, rect, before, after } => {
                 let p = if forward { after } else { before };

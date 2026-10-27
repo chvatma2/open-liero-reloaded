@@ -125,6 +125,9 @@ pub struct Document {
     pub(crate) distant_masks: Vec<Option<std::sync::Arc<Vec<u8>>>>,
     /// Counts the changes of the level's distant layers.
     pub(crate) distant_generation: u64,
+    /// Counts the rebakes and applied edits (issue #78: the asset tab's
+    /// previews are made again when it moved).
+    pub(crate) bake_generation: u64,
     /// The back art's see-through pixels (alpha 0), counted.
     pub(crate) holes: u64,
     /// Issue #77: an asset tab's document keeps the asset's states,
@@ -409,6 +412,7 @@ impl Document {
             distant_items: Vec::new(),
             distant_masks: Vec::new(),
             distant_generation: 0,
+            bake_generation: 0,
             holes: 0,
             asset: None,
         };
@@ -469,6 +473,7 @@ impl Document {
     /// its members), and so compares the distant items: hiding a folder of
     /// distant layers makes them again.
     pub fn rebake(&mut self, rect: Rect) {
+        self.bake_generation += 1;
         let baked = self.baked_elements();
         let items: Vec<(&Element, &Decoded)> = match &baked {
             Some(es) => es.iter().zip(&self.items).map(|(e, i)| (e, &i.decoded)).collect(),
@@ -574,6 +579,12 @@ impl Document {
     /// (`level().distant`): the canvas sends them again when it changes.
     pub fn distant_generation(&self) -> u64 {
         self.distant_generation
+    }
+
+    /// Counts the rebakes and the edits applied (issue #78): what the bake
+    /// and the look show may have changed when it moved.
+    pub fn bake_generation(&self) -> u64 {
+        self.bake_generation
     }
 
     /// The whole level's rectangle.
