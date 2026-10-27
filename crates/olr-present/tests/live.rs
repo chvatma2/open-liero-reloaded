@@ -194,23 +194,31 @@ fn a_loaded_state_draws_its_live_states() {
         sim.tick(&idle());
         present.on_tick(sim.world(), sim.events());
     }
-    // Another timeline's state, the lamp off and the first console alarmed.
+    // By tick 20 the level script has alarmed the consoles (the press
+    // moves, #89) and the lamp is lit.
+    let state_of = |w: &World, id: &str| w.live().unwrap().copy_by_id(id).unwrap().state_name().to_string();
+    assert_eq!(state_of(sim.world(), "console-a"), "Alarm");
+    assert_ne!(glow_of(present.color(), sim.world(), "lamp"), 0, "the lamp is lit");
+    // Another timeline's state after one tick, before the scripts change
+    // it (the lamp's first stutter is at tick 2 at the earliest, and the
+    // consoles alarm once the press moves): the lamp off and the first
+    // console normal.
     let mut other = WorldSim::new(world(&c));
     let w = other.world_mut();
     w.set_live_state(copy(w, "lamp"), state(w, "lamp", "Off")).unwrap();
-    w.set_live_state(copy(w, "console-a"), state(w, "console-a", "Alarm")).unwrap();
-    for _ in 0..10 {
-        other.tick(&idle());
-    }
+    w.set_live_state(copy(w, "console-a"), state(w, "console-a", "Normal")).unwrap();
+    other.tick(&idle());
+    assert_eq!(state_of(other.world(), "lamp"), "Off");
+    assert_eq!(state_of(other.world(), "console-a"), "Normal");
     let console = present.color().pixels().to_vec();
     sim.decode_state(&other.encode_state()).unwrap();
     present.state_loaded(sim.world());
     let mut net = NetPresenter::new();
-    net.reset(10);
+    net.reset(1);
     let restored = sim.take_restored_areas();
     net.apply(&mut present, sim.world(), &restored, &[], &mut Vec::new());
     assert_eq!(glow_of(present.color(), sim.world(), "lamp"), 0, "the loaded lamp is off");
-    assert_ne!(present.color().pixels(), &console[..], "the loaded console is alarmed");
+    assert_ne!(present.color().pixels(), &console[..], "the loaded console is normal");
     assert_drawn_as(&present, &p, sim.world(), "after the load");
 }
 
