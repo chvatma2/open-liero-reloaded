@@ -44,6 +44,10 @@ pub const MAX_SCRIPTS: usize = 1 + 2 * MAX_LIVE_COPIES;
 pub const MAX_LIVE_SOUNDS: usize = 64;
 /// The most parts a live copy has in a state.
 pub const MAX_PARTS: usize = 32;
+/// The most rock parts a level's live copies show at once (each copy's
+/// state with the most, summed; issue #90): `olr_sim::MAX_LIVE_SOLID_PARTS`,
+/// the simulation's index keeps a bit per part.
+pub const MAX_LIVE_SOLID_PARTS: usize = 64;
 /// The most pictures a live copy has.
 pub const MAX_PICTURES: usize = 128;
 /// The most values (properties) a live copy has.
@@ -542,6 +546,24 @@ pub fn check_live_budget(f: &LiveFile, s: u32) -> Result<(), FormatError> {
         return Err(invalid(
             "copies",
             format!("{files} files: the played form has at most {MAX_LIVE_FILES}"),
+        ));
+    }
+    // Issue #90: the rock parts the simulation collides with.
+    let rock: usize = f
+        .copies
+        .iter()
+        .map(|c| {
+            c.states
+                .iter()
+                .map(|s| s.parts.iter().filter(|p| p.kind == PartKind::Rock).count())
+                .max()
+                .unwrap_or(0)
+        })
+        .sum();
+    if rock > MAX_LIVE_SOLID_PARTS {
+        return Err(invalid(
+            "copies",
+            format!("{rock} rock parts shown at once: the live copies show at most {MAX_LIVE_SOLID_PARTS}"),
         ));
     }
     if bytes > MAX_LIVE_BYTES {
@@ -1257,6 +1279,16 @@ mod tests {
                 s.file.copies = vec![c; MAX_LIVE_COPIES + 1];
             }),
             &["live copies: at most 64"],
+        );
+        // Issue #90: more rock parts than the simulation indexes.
+        has(
+            with(&|s| {
+                let mut c = s.file.copies[0].clone();
+                let rock = c.states[0].parts.iter().find(|p| p.kind == PartKind::Rock).copied().unwrap();
+                c.states[0].parts = vec![rock; MAX_PARTS];
+                s.file.copies = vec![c; 3];
+            }),
+            &["96 rock parts shown at once", "at most 64"],
         );
         has(
             with(&|s| {

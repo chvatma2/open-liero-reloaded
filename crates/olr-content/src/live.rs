@@ -22,6 +22,9 @@ use olr_sim::{
 };
 use olr_terrain::{LiveArt, LiveFrame, LivePicture, LivePlaced};
 
+// Issue #90: the played form's limit is the simulation's index.
+const _: () = assert!(olr_format::levels::MAX_LIVE_SOLID_PARTS == olr_sim::MAX_LIVE_SOLID_PARTS);
+
 /// A level's live copies: the played form, the simulation's data and
 /// what presentation draws.
 #[derive(Clone, Debug)]
