@@ -86,13 +86,31 @@ fn scaled(art: &RgbaImage, tw: u32, th: u32) -> RgbaImage {
 /// The thumbnail of `level` as it plays (the user's note, 2026-10-19): a
 /// level with a look ([`super::compile_look`]) is drawn lit, else it is
 /// [`thumbnail`] of its front. A look that does not compile gives the
-/// plain thumbnail too.
+/// plain thumbnail too. [`level_lit`] at [`THUMB_SIZE`].
 pub fn level_thumbnail(level: &super::LevelSource) -> RgbaImage {
+    level_lit(level, THUMB_SIZE)
+}
+
+/// [`level_thumbnail`]'s model at any output size (issue #78: the asset
+/// tab's previews): `level` box-filtered into the [`letterbox`] of a `w` ×
+/// `h` image, lit when it has a look. Its glow light's cells are two
+/// output pixels a side up to [`THUMB_SIZE`]'s cell count, larger beyond
+/// (an even number of pixels, so a large output costs about what a
+/// thumbnail does per cell). At [`THUMB_SIZE`] it is the thumbnail byte
+/// for byte.
+pub fn level_lit(level: &super::LevelSource, (w, h): (u32, u32)) -> RgbaImage {
     match super::compile_look(level) {
-        Ok(Some(look)) => lit_thumbnail(level, &look),
-        _ if level.distant.is_empty() => thumbnail(&level.front),
-        _ => thumbnail(&seen(level).0),
+        Ok(Some(look)) => lit(level, &look, (w, h)),
+        _ if level.distant.is_empty() => scaled(&level.front, w, h),
+        _ => scaled(&seen(level).0, w, h),
     }
+}
+
+/// The glow light's cell side (output pixels) for a `w` × `h` output: 2,
+/// or the even side keeping the cells about as many as at [`THUMB_SIZE`].
+fn cell_side(w: u32, h: u32) -> u32 {
+    let k = w.div_ceil(THUMB_SIZE.0).max(h.div_ceil(THUMB_SIZE.1)).max(1);
+    2 * k
 }
 
 /// `level`'s front as seen with the camera at its centre (issue #11):
@@ -155,7 +173,7 @@ fn linear_to_srgb(v: f32) -> u8 {
     (s * 255.0 + 0.5) as u8
 }
 
-/// [`thumbnail`] with `look` at clock 0, a CPU model of the look (the
+/// [`scaled`] with `look` at clock 0, a CPU model of the look (the
 /// renderer's is on the GPU): each thumbnail pixel's light is the ambient
 /// and the glow light (each of
 /// a coarse grid of cells casting its glow by the angle it fills, faded by
@@ -163,9 +181,8 @@ fn linear_to_srgb(v: f32) -> u8 {
 /// a solid, the solid floor, capped at max light; the mean is graded. No
 /// shadows, soak, softness or light steps: a thumbnail is too small for
 /// them.
-fn lit_thumbnail(level: &super::LevelSource, look: &olr_look::LevelLook) -> RgbaImage {
+fn lit(level: &super::LevelSource, look: &olr_look::LevelLook, (tw, th): (u32, u32)) -> RgbaImage {
     use olr_data::level::Material;
-    let (tw, th) = THUMB_SIZE;
     let mut out = RgbaImage::new(tw, th);
     // A distant layer's pixel is lit by the ambient and `1 - depth` of the
     // light beyond it.
@@ -180,7 +197,7 @@ fn lit_thumbnail(level: &super::LevelSource, look: &olr_look::LevelLook) -> Rgba
     let (ww, wh) = level.size;
     let s = level.art_scale.max(1);
     if aw == 0 || ah == 0 || ww == 0 || wh == 0 || aw != ww * s || ah != wh * s {
-        return thumbnail(art);
+        return scaled(art, tw, th);
     }
     let mut frame = olr_look::LookFrame::default();
     frame.begin(Some(look), 0.0);
@@ -216,8 +233,10 @@ fn lit_thumbnail(level: &super::LevelSource, look: &olr_look::LevelLook) -> Rgba
         let x = (((tx * sx + i) * 2 + 1) * aw64 / (w64 * sx * 2)).min(aw64 - 1);
         (x as u32, y as u32)
     };
-    // The glow light's cells: two thumbnail pixels a side.
-    let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
+    // The glow light's cells: two thumbnail pixels a side (`cell_side`).
+    let c = cell_side(tw, th);
+    let c64 = u64::from(c);
+    let (cw, ch) = (w.div_ceil(c), h.div_ceil(c));
     // Directional pixels (the directional-glow design) cast within their
     // cone only: `Some((direction as a unit vector, spread in radians))`.
     type Cone = Option<([f32; 2], f32)>;
@@ -229,8 +248,8 @@ fn lit_thumbnail(level: &super::LevelSource, look: &olr_look::LevelLook) -> Rgba
                 let (mut sum, mut reach, mut n) = ([0.0f32; 3], 0.0f32, 0.0f32);
                 // The cell's directional light by (direction, spread).
                 let mut cones: Vec<((u16, u8), [f32; 3], f32)> = Vec::new();
-                for ty in (cy * 2)..(cy * 2 + 2).min(h64) {
-                    for tx in (cx * 2)..(cx * 2 + 2).min(w64) {
+                for ty in (cy * c64)..(cy * c64 + c64).min(h64) {
+                    for tx in (cx * c64)..(cx * c64 + c64).min(w64) {
                         for j in 0..sy {
                             for i in 0..sx {
                                 let (x, y) = sample(tx, ty, i, j);
@@ -267,8 +286,8 @@ fn lit_thumbnail(level: &super::LevelSource, look: &olr_look::LevelLook) -> Rgba
                 }
                 // The cell's centre in world pixels.
                 let at = [
-                    ((cx * 2 + 1) as f32) * ww as f32 / w as f32,
-                    ((cy * 2 + 1) as f32) * wh as f32 / h as f32,
+                    ((cx * c64 + c64 / 2) as f32) * ww as f32 / w as f32,
+                    ((cy * c64 + c64 / 2) as f32) * wh as f32 / h as f32,
                 ];
                 if n > 0.0 && sum.iter().any(|v| *v > 0.0) {
                     cells.push((sum.map(|v| v / n), reach, at, None));
@@ -284,7 +303,7 @@ fn lit_thumbnail(level: &super::LevelSource, look: &olr_look::LevelLook) -> Rgba
         }
     }
     // A cell's side in world pixels: the angle it fills from `d` away.
-    let side = 2.0 * (ww as f32 / w as f32).max(wh as f32 / h as f32);
+    let side = c as f32 * (ww as f32 / w as f32).max(wh as f32 / h as f32);
     let max = frame.max_light;
     let g = &frame.grade;
     let exposure = 2f32.powf(f32::from(g.exposure) / 100.0);

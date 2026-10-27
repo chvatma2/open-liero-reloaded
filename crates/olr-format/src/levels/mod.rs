@@ -46,7 +46,7 @@ pub use files::{
     file_paths, read_level_files, read_level_files_lenient, read_level_files_without_thumb,
     read_level_header, write_level_files,
 };
-pub use thumb::{THUMB_SIZE, letterbox, level_thumbnail, thumbnail};
+pub use thumb::{THUMB_SIZE, letterbox, level_lit, level_thumbnail, thumbnail};
 
 use crate::image_io::{LEVEL_ART, check_size};
 use crate::look::{LookSource, compile_look_source};

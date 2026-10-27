@@ -1259,3 +1259,29 @@ fn background_glow_beams_count_once() {
     write_level_files(&mut fs, &src).unwrap();
     assert_eq!(read_level_files(&fs).unwrap().glow_beams, src.glow_beams);
 }
+
+/// Issue #78: `level_lit` at `THUMB_SIZE` is the thumbnail, byte for byte:
+/// every committed level's `thumb.png` is made again from its pack.
+#[test]
+fn level_lit_at_thumb_size_is_the_thumbnail() {
+    use olr_format::levels::{THUMB_SIZE, level_lit, level_thumbnail, read_level_files_without_thumb};
+    let content = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+    let mut checked = Vec::new();
+    for top in ["packs", "reloaded"] {
+        let mut dirs: Vec<_> = std::fs::read_dir(content.join(top))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.join("level.ron").is_file() && p.join("thumb.png").is_file())
+            .collect();
+        dirs.sort();
+        for dir in dirs {
+            let level = read_level_files_without_thumb(&olr_vfs::DirFs::new(&dir)).unwrap();
+            let lit = level_lit(&level, THUMB_SIZE);
+            assert!(lit == level_thumbnail(&level), "{dir:?}");
+            let thumb = std::fs::read(dir.join("thumb.png")).unwrap();
+            assert!(image_io::encode_rgba(&lit) == thumb, "{dir:?}: its thumb.png made again differs");
+            checked.push(dir);
+        }
+    }
+    assert!(checked.len() >= 6, "{checked:?}");
+}

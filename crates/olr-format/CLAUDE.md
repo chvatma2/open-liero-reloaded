@@ -520,6 +520,12 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   (`the_thumbnail_keeps_directional_light_in_its_cone`). Without a look, or with one that does not compile, it is
   `thumbnail(front)` (`tests/look.rs`: the plain one kept, a dark level,
   glow spilling, the solid floor; the occlusion left out, issue #10).
+  Issue #78: `level_lit(level, (w, h))` is that model at any output size
+  (the asset tab's previews); its cells stay two output pixels a side up
+  to `THUMB_SIZE`'s cell count and grow by even sides beyond
+  (`cell_side`). `level_thumbnail` is `level_lit` at `THUMB_SIZE`, byte
+  for byte (`level_lit_at_thumb_size_is_the_thumbnail`: every committed
+  level's `thumb.png` made again from its pack).
 - **`canonical_text(path, text)`** (plan 13d): one authoring file (by its
   path in the pack: `mod.ron`, `weapons/<id>.ron` with a valid id,
   `level.ron`, ...) parsed as its type and written again canonically; it
