@@ -195,11 +195,7 @@ fn copy_light(
     let patches = drawn
         .iter()
         .map(|p| {
-            let s = if p.size.0 == 0 {
-                0
-            } else {
-                (p.art.len() / 4 / p.size.1.max(1) as usize) as u32 / p.size.0
-            };
+            let s = ((p.art.len() / 4 / p.size.1.max(1) as usize) as u32).checked_div(p.size.0).unwrap_or(0);
             match (&p.beam, &p.glow, &p.groups) {
                 (Some(beams), Some(glow), Some(groups)) => {
                     let layer = BeamLayer { world: p.size, art_scale: s, groups, glow, art: &p.art, beams };
