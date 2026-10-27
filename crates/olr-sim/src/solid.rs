@@ -332,19 +332,23 @@ pub struct Solid<'a> {
 }
 
 impl<'a> Solid<'a> {
+    #[inline]
     pub fn new(terrain: &'a Terrain, live: Option<SolidParts<'a>>) -> Solid<'a> {
         Solid { terrain, live }
     }
 
+    #[inline]
     pub fn width(&self) -> u32 {
         self.terrain.width()
     }
 
+    #[inline]
     pub fn height(&self) -> u32 {
         self.terrain.height()
     }
 
     /// [`Terrain::flags`], but `PX_ROCK` where a live rock part is.
+    #[inline]
     pub fn flags(&self, x: i64, y: i64) -> u8 {
         match self.live {
             Some(parts) => OnParts { terrain: self.terrain, parts }.flags(x, y),
@@ -353,6 +357,7 @@ impl<'a> Solid<'a> {
     }
 
     /// [`Terrain::material`], but rock where a live rock part is.
+    #[inline]
     pub fn material(&self, x: i64, y: i64) -> Option<Material> {
         match self.live {
             Some(parts) => OnParts { terrain: self.terrain, parts }.material(x, y),
@@ -361,6 +366,7 @@ impl<'a> Solid<'a> {
     }
 
     /// Whether a live rock part (not the ground) is rock at `(x, y)`.
+    #[inline]
     pub fn live_rock(&self, x: i64, y: i64) -> bool {
         self.live.is_some_and(|p| p.rock(x, y))
     }

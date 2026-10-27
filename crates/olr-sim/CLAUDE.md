@@ -300,6 +300,20 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   carving only the ground, no spawn inside a part, the step through a
   restore and a transfer, more than 64 parts refused) and
   `tests/no_alloc.rs`' `moving_rock_parts_push_and_crush_without_allocating`.
+- **Reach** (issue #91, for the bots): `LiveReach { copy, layer, rect }`,
+  computed once in `LiveLevel::new` (`LiveLevel::reach`,
+  `LiveView::reach_rects`; setup data, in no checksum or transfer): per
+  copy and layer of solid rock parts that can move or appear (a
+  position, `Facing`, `Visible` or the layer's `LayerVisible` whose
+  limits differ, or states showing them differently; a fixed part has
+  none), the rectangle (ends exclusive) every place they can take covers:
+  the copy's `X`/`Y` limits, the layer's `OffsetX`/`OffsetY` limits,
+  mirrored places (`part_place`'s, a pixel wider for its two roundings)
+  and every state's pictures. `LiveCopyView::motion(target)` reads a
+  value's motion. Test: `tests/live.rs`'
+  `reach_covers_every_place_a_part_can_take` (every combination of the
+  values' limits and between-pixel values, every state, each copy alone,
+  every live rock pixel inside its reach).
 - **Scripts' state** (`script.rs`, issue #88; `olr-script` runs them):
   `Director` (`Debug + Send + Sync`, `box_clone`, `timer_functions(script)`,
   `run(&self, &mut LiveCtx)`) is **stateless**; `MatchSetup::director:

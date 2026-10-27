@@ -260,3 +260,123 @@ fn live_state_round_trips_through_a_state_transfer() {
     assert_eq!(dst.live().unwrap().copy(2).unwrap().state_name(), "Wrecked");
     assert_eq!(values(&dst, 1), values(&src, 1));
 }
+
+// Issue #91: where a part can be.
+
+/// A copy whose rock part (layer 0) is mirrored by `Facing`, moved by `X`
+/// and its layer's `OffsetX`, and drawn differently in its two states.
+fn mirrored() -> olr_sim::LiveCopy {
+    let part = |at: (i32, i32), picture: u16| LivePart {
+        kind: LivePartKind::Rock,
+        layer: Some(0),
+        at,
+        picture,
+        glow_strength: 0,
+    };
+    let prop = |target, min, max| LiveProp { name: None, target, min, max, default: 0 };
+    LiveCopy::new(LiveCopySetup {
+        id: "flag".into(),
+        at: (40, 30),
+        size: (11, 9),
+        props: vec![
+            prop(LiveTarget::Facing, 0, 1),
+            prop(LiveTarget::X, -3, 3),
+            prop(LiveTarget::OffsetX(0), -2, 2),
+        ],
+        states: vec![
+            LiveState {
+                name: "A".into(),
+                values: vec![],
+                parts: vec![part((1, 0), 0)],
+                enter_sound: None,
+                loop_sound: None,
+            },
+            LiveState {
+                name: "B".into(),
+                values: vec![],
+                parts: vec![part((0, 4), 1)],
+                enter_sound: None,
+                loop_sound: None,
+            },
+        ],
+        pictures: vec![
+            LiveSolid::new((4, 3), true, |x, y| x == 0 || y == 2),
+            LiveSolid::new((7, 5), true, |x, _| x == 6),
+        ],
+        start_state: 0,
+        start_values: Vec::new(),
+        health: None,
+        scripts: Vec::new(),
+        sounds: Vec::new(),
+    })
+}
+
+/// The world's values each prop of `copy` is tried at: a position at its
+/// limits, between pixels and at 0; another value at its limits.
+fn tried(p: &LiveProp) -> Vec<i64> {
+    if p.target.is_position() {
+        vec![p.min * PX, p.min * PX + 128, 0, p.max * PX - 1, p.max * PX]
+    } else {
+        vec![p.min, p.max]
+    }
+}
+
+#[test]
+fn reach_covers_every_place_a_part_can_take() {
+    let level = live_level();
+    // The console's part never moves or changes: no reach; the press's
+    // frame and head and the crate (Whole, then Wrecked) have one each.
+    let reach = level.reach();
+    assert!(reach.iter().all(|r| r.copy != 0), "{reach:?}");
+    assert_eq!(reach.iter().filter(|r| r.copy == 1).count(), 2);
+    assert_eq!(reach.iter().filter(|r| r.copy == 2).count(), 1);
+    let copies: Vec<LiveCopy> = level.copies.iter().cloned().chain([mirrored()]).collect();
+    for c in copies {
+        // The copy alone: every live rock pixel is its own.
+        let alone = std::sync::Arc::new(LiveLevel::new(vec![c.clone()], Vec::new(), None, 0));
+        let reach = alone.reach().to_vec();
+        let inside = |x: i32, y: i32| {
+            reach.iter().any(|r| (r.rect.0..r.rect.2).contains(&x) && (r.rect.1..r.rect.3).contains(&y))
+        };
+        // Every combination of the copy's values, in every state.
+        let combos = c.props.iter().map(tried).fold(vec![vec![]], |acc: Vec<Vec<i64>>, vs| {
+            acc.iter().flat_map(|a| vs.iter().map(move |&v| [a.clone(), vec![v]].concat())).collect()
+        });
+        let mut seen = 0;
+        for state in 0..c.states.len() as u16 {
+            for combo in &combos {
+                let mut w = world::world_live(1, 400, 300, alone.clone());
+                w.set_live_state(0, state).unwrap();
+                for (k, &v) in combo.iter().enumerate() {
+                    w.set_live_value(0, k as u16, v).unwrap();
+                }
+                // A part without a reach stays where it is: its place now.
+                let cv = w.live().unwrap().copy(0).unwrap();
+                let fixed: Vec<(i32, i32, i32, i32)> = cv
+                    .rock_parts()
+                    .filter(|(p, _)| !reach.iter().any(|r| r.layer == p.layer))
+                    .map(|(p, (x, y))| {
+                        let s = c.pictures[p.picture as usize].size;
+                        (x, y, x + s.0 as i32, y + s.1 as i32)
+                    })
+                    .collect();
+                let solid = w.solid();
+                for y in 0..300 {
+                    for x in 0..400 {
+                        if solid.live_rock(i64::from(x), i64::from(y)) {
+                            seen += 1;
+                            let still =
+                                fixed.iter().any(|r| (r.0..r.2).contains(&x) && (r.1..r.3).contains(&y));
+                            assert!(
+                                inside(x, y) || still,
+                                "{} state {state} {combo:?}: ({x}, {y}) outside {reach:?}",
+                                c.id
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert!(seen > 0, "{}", c.id);
+    }
+}

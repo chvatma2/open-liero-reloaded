@@ -273,6 +273,123 @@ pub struct LiveLevel {
     pub sounds: u16,
     /// `(copy id, index)` sorted by id.
     ids: Vec<(String, u16)>,
+    /// Each part that can move or appear: where it can be (issue #91).
+    reach: Vec<LiveReach>,
+}
+
+/// Where the live rock parts of one copy's layer (or of its unlayered
+/// parts) can ever be (issue #91, for the bots): the rectangle every place
+/// they can take covers, from the copy's `X`/`Y` limits, the layer's
+/// `OffsetX`/`OffsetY` limits, a `Facing` that can mirror them and every
+/// state's rock parts of that layer, in world pixels. Only parts that can
+/// move or appear have one: a position, a mirroring or a visibility that
+/// is not fixed, or states that show them differently. No OLX counterpart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LiveReach {
+    /// The copy (an index into [`LiveLevel::copies`]).
+    pub copy: u16,
+    /// The asset layer its parts show (none: the unlayered parts).
+    pub layer: Option<u16>,
+    /// `(x0, y0, x1, y1)`, world pixels, the ends exclusive.
+    pub rect: (i32, i32, i32, i32),
+}
+
+/// The whole-pixel range value `target` of `c` can take: its first prop's
+/// limits (a broken range keeps its `max`, as [`within`] does); none
+/// without a prop driving it.
+fn range_of(c: &LiveCopy, target: LiveTarget) -> Option<(i64, i64)> {
+    let p = c.props.iter().find(|p| p.target == target)?;
+    Some(if p.min > p.max { (p.max, p.max) } else { (p.min, p.max) })
+}
+
+/// State `s` of `c`'s solid rock parts of `layer`: place and picture.
+fn rock_of<'a>(
+    c: &'a LiveCopy,
+    s: &'a LiveState,
+    layer: Option<u16>,
+) -> impl Iterator<Item = ((i32, i32), u16)> + 'a {
+    s.parts
+        .iter()
+        .filter(move |p| {
+            p.kind == LivePartKind::Rock
+                && p.layer == layer
+                && c.pictures.get(usize::from(p.picture)).is_some_and(|s| s.bits.is_some())
+        })
+        .map(|p| (p.at, p.picture))
+}
+
+/// The reaches of `copies` ([`LiveReach`]), in copy order, the unlayered
+/// parts first, then by layer.
+fn reaches(copies: &[LiveCopy]) -> Vec<LiveReach> {
+    let mut out = Vec::new();
+    for (i, c) in copies.iter().enumerate() {
+        let Ok(copy) = u16::try_from(i) else { break };
+        let solid = |p: &&LivePart| {
+            p.kind == LivePartKind::Rock
+                && c.pictures.get(usize::from(p.picture)).is_some_and(|s| s.bits.is_some())
+        };
+        let mut layers: Vec<Option<u16>> =
+            c.states.iter().flat_map(|s| s.parts.iter().filter(solid).map(|p| p.layer)).collect();
+        layers.sort_unstable();
+        layers.dedup();
+        let varies = |t| range_of(c, t).is_some_and(|(lo, hi)| lo < hi);
+        let zero = (0, 0);
+        let (rx, ry) =
+            (range_of(c, LiveTarget::X).unwrap_or(zero), range_of(c, LiveTarget::Y).unwrap_or(zero));
+        // Which mirrorings `Facing` allows: unmirrored, mirrored.
+        let facing = range_of(c, LiveTarget::Facing)
+            .map_or((true, false), |(lo, hi)| (lo <= 0 && 0 <= hi, lo != 0 || hi != 0));
+        for layer in layers {
+            let parts = |s| rock_of(c, s, layer);
+            let same = c.states.windows(2).all(|w| parts(&w[0]).eq(parts(&w[1])));
+            let mut moves = !same
+                || varies(LiveTarget::X)
+                || varies(LiveTarget::Y)
+                || varies(LiveTarget::Visible)
+                || (facing.0 && facing.1);
+            if let Some(l) = layer {
+                moves |= varies(LiveTarget::OffsetX(l))
+                    || varies(LiveTarget::OffsetY(l))
+                    || varies(LiveTarget::LayerVisible(l));
+            }
+            if !moves {
+                continue;
+            }
+            let off = |t: fn(u16) -> LiveTarget| layer.and_then(|l| range_of(c, t(l))).unwrap_or(zero);
+            let (ox, oy) = (off(LiveTarget::OffsetX), off(LiveTarget::OffsetY));
+            let (cx, cy, cw) = (i64::from(c.at.0), i64::from(c.at.1), i64::from(c.size.0));
+            let mut r: Option<(i64, i64, i64, i64)> = None;
+            for s in &c.states {
+                for (at, picture) in parts(s) {
+                    let Some(pic) = c.pictures.get(usize::from(picture)) else { continue };
+                    let (px, py) = (i64::from(at.0), i64::from(at.1));
+                    let (pw, ph) = (i64::from(pic.size.0), i64::from(pic.size.1));
+                    let y0 = cy + ry.0 + py + oy.0;
+                    let y1 = cy + ry.1 + py + oy.1 + ph;
+                    let mut xs = [None, None];
+                    if facing.0 {
+                        xs[0] = Some((cx + rx.0 + px + ox.0, cx + rx.1 + px + ox.1 + pw));
+                    }
+                    if facing.1 {
+                        // `part_place`'s mirroring, a pixel wider for its
+                        // two roundings down.
+                        xs[1] = Some((cx + rx.0 + cw - px - ox.1 - pw - 1, cx + rx.1 + cw - px - ox.0 + 1));
+                    }
+                    for (x0, x1) in xs.into_iter().flatten() {
+                        r = Some(match r {
+                            None => (x0, y0, x1, y1),
+                            Some(u) => (u.0.min(x0), u.1.min(y0), u.2.max(x1), u.3.max(y1)),
+                        });
+                    }
+                }
+            }
+            let narrow = |v: i64| v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+            if let Some((x0, y0, x1, y1)) = r {
+                out.push(LiveReach { copy, layer, rect: (narrow(x0), narrow(y0), narrow(x1), narrow(y1)) });
+            }
+        }
+    }
+    out
 }
 
 impl LiveLevel {
@@ -284,7 +401,14 @@ impl LiveLevel {
         sounds: u16,
     ) -> LiveLevel {
         let ids = table(copies.iter().map(|c| Some(c.id.as_str())));
-        LiveLevel { copies, scripts, level_script, sounds, ids }
+        let reach = reaches(&copies);
+        LiveLevel { copies, scripts, level_script, sounds, ids, reach }
+    }
+
+    /// Where each rock part that can move or appear can be (issue #91),
+    /// in copy order: computed once, here.
+    pub fn reach(&self) -> &[LiveReach] {
+        &self.reach
     }
 
     /// The index of copy `id`.
@@ -1141,6 +1265,12 @@ impl<'a> LiveView<'a> {
         self.copy(self.world.level.copy(id)?)
     }
 
+    /// Where each rock part that can move or appear can be
+    /// ([`LiveLevel::reach`], issue #91).
+    pub fn reach_rects(&self) -> &'a [LiveReach] {
+        self.world.level.reach()
+    }
+
     /// Every copy, bottom to top.
     pub fn copies(&self) -> impl Iterator<Item = LiveCopyView<'a>> + 'a {
         let v = *self;
@@ -1213,6 +1343,13 @@ impl<'a> LiveCopyView<'a> {
     /// `Opacity` or `GlowStrength`).
     pub fn target(&self, target: LiveTarget) -> Option<i64> {
         self.setup.value_of(self.values, target)
+    }
+
+    /// The motion of the value driving `target` (the first value that
+    /// does), if one drives it (issue #91: where a part heads).
+    pub fn motion(&self, target: LiveTarget) -> Option<LiveMotion> {
+        let i = self.setup.props.iter().position(|p| p.target == target)?;
+        self.motions.get(i).copied()
     }
 
     /// Where the copy is, world pixels: its placed top-left moved by its
