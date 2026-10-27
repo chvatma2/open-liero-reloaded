@@ -289,8 +289,12 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   `a_level_without_materials_writes_no_surface`, `composition.rs`'
   `element_surfaces_follow_their_rules`.
 - **Level composition** (`levels/composition.rs`, plan 14a): `Composition`
-  is `editor/composition.ron` (`COMPOSITION_FILE`; `EDITOR_DIR` is
-  `editor`), its `Element`s bottom to top (`id` a `valid_id` slug, `name`,
+  was `editor/composition.ron` (`COMPOSITION_FILE`; `EDITOR_DIR` is
+  `editor`). Issue #74: a level's layers are now its ground asset's
+  (`editor/asset.ron`, placed by `editor/placed.ron`, below; `as_composition`
+  gives them as a `Composition`), and the file is read only to convert an
+  OLR 0.2 level (`olr_edit::placed::from_composition`, `olr-cli level
+  convert`); `docs/formats/level.md` no longer documents it. Its `Element`s bottom to top (`id` a `valid_id` slug, `name`,
   `visible`, `locked`, `ElementKind::Image { material, source, at, size,
   pixel_size, colours, dither, alpha_threshold, mask } | Drawn { material,
   at, size, mixed, back } | Raster`; plan 14d: a drawn layer's box, `at`
@@ -463,7 +467,12 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   without `placed.ron`; every asset's files at most `MAX_ASSET_BYTES`,
   everything at most `MAX_PLACED_BYTES`, `olr_pack::archive::
   MAX_UNPACKED`, a test holding them equal) and `write_placed_files`
-  (names checked first). The path budget (80 characters, `xtask`'s
+  (names checked first). Issue #74: `placed_paths(src)` lists the files
+  `write_placed_files` writes (`placed.ron`, each asset's under its folder,
+  `assets::asset_paths`, the scripts), sorted equal in
+  `a_placement_round_trips_through_its_files` (`olr-pack`'s read paths,
+  `olr-edit`'s owned files); `canonical_text` takes the ground's
+  `editor/asset.ron`. The path budget (80 characters, `xtask`'s
   `the_shipped_content_keeps_its_paths_short`) under
   `content/reloaded/olr-level-liero-factory-reloaded/` with a 2-character
   key:

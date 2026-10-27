@@ -6,7 +6,8 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
 `determinism`, `dist`, `flatpak`, `publish`, `format-docs`.
 
 - `format-docs [--check]` (`format_docs.rs`, plan 13d R4; the level page
-  also documents `editor/composition.ron`, plan 14a) writes
+  also documents `editor/placed.ron`, issue #73; issue #74 dropped
+  `editor/composition.ron`, plan 14a's) writes
   `docs/formats/{mod,level,skin,theme,core,asset,material,pack}.md`
   (`asset.md`: the level editor's asset folders, issue #9; `material.md`:
   a surface material's file, issue #37) from the authoring
@@ -173,8 +174,9 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   the same way in a data directory of its own (a new level "E2E Level", a
   drawn layer painted, a spawn, Play (ticking) and Stop, Play and Esc,
   Save, Close), then its `editor-painted.png` (`canvas_problem`: not the
-  canvas's black at the picture's centre) and the pack it saved, `data/packs/e2e-level` (`editor_pack_problems`: a `Drawn` layer in
-  `editor/composition.ron`, `level.ron` named "E2E Level" with one spawn)
+  canvas's black at the picture's centre) and the pack it saved, `data/packs/e2e-level` (`editor_pack_problems`, issue #74: one copy in
+  `editor/placed.ron`, a `Drawn` layer in the ground's `editor/asset.ron`,
+  `level.ron` named "E2E Level" with one spawn)
   and `olr-cli pack check` on it exiting 0. Then the online run
   (plan 10 task 15, plan 12b task 10, `online`, in `target/e2e/online`):
   the run's own Nostr relay, `olr-cli nostr-relay --listen 127.0.0.1:0`

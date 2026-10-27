@@ -6,7 +6,10 @@ layer with back art (plan 14d). Its
 bake guards the image pipeline and the bake against change:
 `olr-edit`'s `the_fixture_is_baked` holds its baked files equal to what its
 composition bakes to, and `cargo xtask determinism` compares its bake's
-digest (`olr-detcheck --bake`) on every platform.
+digest (`olr-detcheck --bake`) on every platform. Issue #74 converted it
+(`olr-cli level convert fixtures/edit/composed-level`, the bake unchanged):
+its layers are the ground asset's, `editor/asset.ron`, placed alone by
+`editor/placed.ron`, as the commands below now write them.
 
 Made with `olr-cli` from the repository root (`badge.png` from
 `python3 badge.py badge.png`, a 16 × 16 disc with a half-transparent rim):

@@ -72,7 +72,19 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   user's note 2026-10-19, `a_look_shows_in_the_saved_thumbnail`); a layer file whose pixels did not change is
   saved as opened (another program's encoding kept); stray files in
   `editor/` are never overwritten by a new element's (ids and names skip
-  them); `diagnostics` are R6's cheap checks.
+  them); `diagnostics` are R6's cheap checks. Issue #74 (until issue
+  #82's level tab): the editor's scope is the ground placed alone, its
+  layers the items; `open` refuses a level placing other assets
+  (`PLACED_ASSETS`, "This level has placed assets: the level tab opens
+  it (issue #82)") and converts an OLR 0.2 level
+  (`olr_edit::placed::from_composition`; `converted()`): `opened` then
+  leaves it unsaved with the status bar's `CONVERTED` ("Converted from
+  OLR 0.2: save to keep it"), and saving writes the placement
+  (`placed.ron`, the ground's `asset.ron`) without `composition.ron`.
+  The document keeps the placement and the other assets' files as
+  opened (`placed`, `verbatim`) for `to_pack`. Tests: `document.rs`'
+  `opening_a_02_level_converts_it_unsaved`,
+  `a_level_with_placed_assets_is_refused_with_the_reason`.
 - **Edits** (`ops.rs`, `history.rs`): every operation checks first, then
   builds an `Edit` and runs it through `Document::apply`, the one path
   undo and redo take (a refusal changes nothing; an edit of no change,

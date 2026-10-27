@@ -57,10 +57,16 @@ header's size); content hashing; validation.
   first component is `editor` in any case (a level's composition). `content_hash` and
   `archive::encode` leave them out, `archive::decode` refuses one
   (`BadPath`), so players download only the bake. `validate` on a level
-  reads its composition (`read_composition_files`, `check_composition`):
-  an error is a diagnostic; the files `composition.ron` names count as
-  read (`read_composition`, so a missing one is one error), any other
-  `editor/` file is "not read by the format". A mod's `editor/mod.ron`
+  reads its placement (issue #74, `check_placement`: `read_placed_files`,
+  `check_placed`): an error is a diagnostic; the files it holds count as
+  read (`placed_paths`; when it cannot be read, every authoring file, so
+  a missing one is one error), a script no copy lists is a warning
+  (`STRAY_SCRIPT_WARNING`), any other `editor/` file is "not read by the
+  format". An OLR 0.2 level (`editor/composition.ron`, no placement) is a
+  warning (`UNCONVERTED_WARNING`: the editors refuse it until `olr-cli
+  level convert`; the bake plays), its files counted read; one left
+  beside a placement is a warning too (`LEFTOVER_WARNING`). Tests:
+  `validate_checks_the_placement`, `a_leftover_composition_is_a_warning`. A mod's `editor/mod.ron`
   (issue #17, the mod editor's file) counts as read; one that does not
   parse as `ModEditorFile` is a warning.
 - **Surface materials** (issue #37): a level's `look/surface.png` and

@@ -101,7 +101,36 @@ operations.
   after every operation.
 - **Level composition** (plan 14a; decisions in `docs/porting/STATUS.md`,
   "Level composition decisions"). `Pack::composition` holds a level's
-  `editor/` (`None` for the other kinds; `files` refuses one there).
+  `editor/` layers (`None` for the other kinds; `files` refuses one there).
+  Issue #74 (STATUS.md "Asset-based levels: the level format (issues
+  #73, #74)"): they are the ground asset's (`editor/asset.ron`), in
+  memory as a composition so `element`, `level element …`, `asset
+  save`/`place` and the editor work on the ground unchanged:
+  - **`Pack`** gains `placed: Option<PlacedSource>` (`editor/placed.ron`,
+    `read_placed_files`), `legacy_composition` and `verbatim` (`Verbatim`:
+    the other assets' files as read); `Pack::new(manifest, source)`.
+    `load` never reads `editor/composition.ron`: without a placement such
+    a pack loads with `legacy_composition` set (the file kept in `other`;
+    beside a placement it is a leftover there). `composition` is the
+    ground's (`ground_composition`) when the placement is the ground
+    alone (`ground_alone`: one `Own` ground, one copy of it at the origin,
+    the level's size and art scale, nothing Live, no state, values or
+    script), else `None`. `placement(pack)` is the placement to write:
+    the composition's elements, folders and files in the ground (as
+    `GROUND_NAME` "Ground", the level's size and art scale), synthesized
+    for a composition without one (`ground_placement`), and while the
+    ground is alone its glow groups and materials the look's (so
+    `level.ron`'s look and `asset.ron` agree). `files` writes it
+    (`write_placed_files`) and every other asset's files byte for byte
+    while unedited (`verbatim`); `save` bakes nothing itself.
+  - **The refusal**: `Pack::ground_refusal()` is `UNCONVERTED` ("editor/
+    composition.ron: a level from OLR 0.2: run olr-cli level convert
+    <pack>") for a legacy pack and `NOT_THE_GROUND_ALONE` for a placement
+    of more than the ground; `element::ensure_composed`, `commit`,
+    `resize` (`ElementError::NotTheGround`), `asset::DecodedLevel::of_pack`
+    (so `asset save`/`place`) and `placed::bake_pack` refuse it.
+    `ensure_composed` gives a plain level its ground and a placement of it
+    alone; `new`'s template stays plain.
   - **`pixelate`**: `process(original, art_size, Pixelation)` (and the
     crate's `process_grid`, the unscaled element grid): area resample,
     alpha threshold, median cut (exact colours when they fit; splits at a
@@ -125,7 +154,8 @@ operations.
     all, entries
     fingerprinted by their bytes; `Baker::new_cached` shares one);
     `stale(pack, tile)` lists
-    the baked files that differ from the composition's bake.
+    the baked files that differ from the composition's bake (`differing`
+    of two levels, which `placed::stale` shares).
   - **`element`**: `add_image` (`add_image_with` takes settings applied
     in the same step), `add_layer`, `set(Property)` (`set_all` for
     several, checked once), `remove`,
@@ -419,7 +449,7 @@ operations.
   `the_thumbnail_shows_the_starting_state`.
 - **`placed`, issue #73's bake of a level's placed copies** (the format
   is `olr_format::levels`' `PlacedFile`; STATUS.md "Asset-based levels:
-  the level format (issues #73, #74)"; no pack reads it until #74):
+  the level format (issues #73, #74); issue #74's pack functions below):
   `bake(level, src, back_tile) -> Result<Baked, PlacedError>` checks
   (`check_placed`, the level's art scale within `MAX_ART_SCALE`), decodes
   each asset (`asset::decode_own` for the ground, `check_own_asset`; else
@@ -448,7 +478,21 @@ operations.
   its back pixels over the back below as glass does (straight alpha,
   `round(opacity × 255 / 100)`) and never over a see-through (alpha 0)
   pixel; `bake_elements_with` passes none, so every composition bakes as
-  before. Tests: `tests/placed.rs`
+  before.
+  Issue #74, on a `Pack`: `bake_pack(pack, tile)` bakes `pack::placement`
+  into the level and keeps it (refusing an unconverted level);
+  `stale(pack, tile)` lists the baked files differing from the
+  placement's bake, and `level.ron` when its look's groups or materials
+  are not the ground's (`asset.ron` edited by hand); `from_composition
+  (pack)` converts an OLR 0.2 level (`Conversion::{Converted, Already,
+  Plain}`): the ground "Ground" of the level's size and art scale, the
+  composition's elements, folders and files (paths kept), the look's
+  groups and materials, one locked copy `ground`; `composition.ron` left
+  out of `other`. `edit_ground(pack, f)` runs a look edit on the ground
+  asset's groups and materials (by id) when other copies are placed,
+  `brought_by(pack, id, material)` names the copy whose asset alone
+  brings one (`brought_by_message`: "it comes with copy <id>'s asset:
+  edit that asset"). Tests: `tests/placed.rs`
   (`a_ground_alone_bakes_as_its_composition`, byte for byte against
   `compose::bake` on two levels, `a_stretched_copy_maps_columns_by_floor`,
   `an_art_scale_change_resamples_nearest`,
@@ -457,7 +501,14 @@ operations.
   `distant_pieces_bake_below_everything`,
   `gathering_shares_equal_groups_and_renames_others`,
   `a_live_copy_with_dirt_cells_is_refused_by_the_bake`,
-  `live_copies_bake_as_static_for_now`).
+  `live_copies_bake_as_static_for_now`; issue #74's
+  `converting_a_02_level_keeps_its_bake`,
+  `a_02_pack_is_refused_by_ensure_composed`,
+  `save_writes_unedited_copies_verbatim`,
+  `a_ground_edit_lands_in_the_ground_asset`,
+  `stale_lists_level_ron_when_its_groups_drift`,
+  `the_editor_scope_is_the_ground_alone`,
+  `hostile_placed_levels_never_panic`).
 - **Issue #16, the mod operations** (`mods`; `olr-cli mod`; STATUS.md
   "Mod editing operations (issue #16)"), on a loaded mod `Pack`
   (`source(pack)`, else `ModError::NotAMod`):

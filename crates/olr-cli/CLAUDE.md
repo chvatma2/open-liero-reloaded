@@ -90,18 +90,33 @@ The headless command-line tool. Its commands:
   theme in `--content`, `content/packs` by default) and saves; the first
   on a plain level composes it (raster `base`). `list` prints `<i>: <id>
   <Image|Drawn|Raster> <material|->[ "<name>"][ hidden][ locked][ distant N%][ glow S% <group>[ masked]][ surface <id>][ back-surface <id>][ surface-map][ back-surface-map]`, bottom
-  first, from `composition.ron` alone (`read_composition`); `add-image`
+  first, from the ground's `editor/asset.ron` alone (issue #74; an
+  unconverted level's `composition.ron`, `read_composition`); `add-image`
   reads its file bounded (`level_cmd::read_bounded`), applies its settings
   with the image (`add_image_with`) and prints `added element <id>`; `set`
   applies its flags in one step (`set_all`), unlocking first and locking
-  last; `bake` prints `baked <pack>` and refuses a
-  level without a composition. `level carve|fill|paint|stamp` refuse a
+  last; `bake` prints `baked <pack>` (`olr_edit::placed::bake_pack`, the
+  placement's bake) and refuses a level without a placement. Issue #74:
+  every command that changes or bakes a level (`level element …`,
+  `level group`, `level material add`, `bake`, `carve|fill|paint|stamp`,
+  `asset save`/`place`) refuses an OLR 0.2 level (`load_level`:
+  "editor/composition.ron: a level from OLR 0.2: run olr-cli level
+  convert <path>"); `level convert <pack>…` (`convert_cmd`,
+  `olr_edit::placed::from_composition`) converts, bakes and saves, but
+  writes nothing when a file outside `editor/` would change; it prints
+  `converted <pack>: 1 asset, 1 copy`, `<pack>: already converted` or
+  `<pack>: a plain level: nothing to convert` (exit 0). Tests:
+  `level_convert_converts_a_02_pack`,
+  `level_commands_refuse_an_unconverted_level`,
+  `add_layer_on_a_converted_level_writes_the_ground`,
+  `level_group_set_on_a_converted_level_changes_both`. `level carve|fill|paint|stamp` refuse a
   composed level (ruling R1, message naming `level element draw|erase`);
   object commands keep its composition; `level resize --content` resizes
   the composition first (`element::resize`), then the level, then bakes.
   `pack check --content DIR` adds, for each valid composed level, an
-  error per stale baked file (`<file>: differs from the composition's
-  bake (run olr-cli level bake)`) or a warning when its theme is missing;
+  error per stale baked file (`<file>: differs from the placement's bake
+  (run olr-cli level bake)`, `olr_edit::placed::stale`; `level.ron` when
+  its look's groups or materials are not the ground's) or a warning when its theme is missing;
   both count in the summary. Issue #59, layer folders: `group <pack>
   [--name N] <id>…` (elements and folders, `element::group`) prints
   `added folder <id>`, `ungroup <pack> <folder>`, `set <id> --folder
@@ -127,7 +142,12 @@ The headless command-line tool. Its commands:
   level's light): the `olr_edit::look`
   operations, each checked by `compile_level` on a copy before it is kept,
   then the thumbnail refreshed, lit by the look (the user's note,
-  2026-10-19; `look_commands_refresh_the_lit_thumbnail`).
+  2026-10-19; `look_commands_refresh_the_lit_thumbnail`). Issue #74:
+  `level group …` and `level material add` edit the ground asset's
+  groups and materials by id (`olr_edit::placed::edit_ground`) and, with
+  other copies placed, rebake (`group add|set --content`); a group or
+  material only another copy's asset brings is refused ("it comes with
+  copy <id>'s asset: edit that asset", `refuse_brought`).
   `level look` sets the given fields (a look made when the level has
   none; issue #10: `--occlusion STRENGTH[,REACH]`, the reach 12 when not
   given, sets the ambient occlusion and `--no-occlusion` removes it, both

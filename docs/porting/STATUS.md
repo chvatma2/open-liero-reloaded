@@ -78,7 +78,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Mod authoring format (spec 2026-10-16 formats §2): authoring types, canonical writer, compile to `ModDef`, lift from it | — | `olr-format::mods` | done (plan 13a); the packs' format (plan 13c) | `bundled_mods_survive_lift_write_read_and_compile`, `authoring_values_round_trip_canonically`, `mutated_files_never_panic`, the compile and lift unit tests |
 | Level, theme, skin and core-pack authoring formats (spec 2026-10-16 formats §§3-6): authoring types, canonical files, compile to the runtime structs, lift from them | — | `olr-format::{levels, themes, skins, core_pack, image_io}` | done (plan 13b); the packs' format (plan 13c) | `bundled_levels_survive_lift_write_read_and_compile`, `the_bundled_theme_survives_lift_write_read_and_compile`, `the_bundled_core_pack_survives_lift_write_read_and_compile`, `every_bundled_skin_draws_the_same` |
 | Pack tooling (spec 2026-10-16 formats §6): `olr-cli pack check\|fmt\|new`, the level operations and preview, the schema docs | — | `olr-edit`, `olr-cli` (`pack_cmd.rs`, `level_cmd.rs`), `xtask format-docs` | done (plan 13d) | `load_then_files_reproduces_every_bundled_pack`, `bundled_packs_are_canonical`, `the_background_invariant_holds_at_every_art_scale`, `every_guide_example_parses_and_is_canonical`, `format-docs` check step |
-| Level composition (spec 2026-10-17 editor §1-3, §7): `editor/composition.ron` of image, drawn and raster elements, baked into `material.png`, `front.png`, `back.png` and `thumb.png`; JPEG originals; `olr-cli level element …`, `level bake`, stale bakes in `pack check` | — | `olr-format` (`levels::composition`, `image_io::decode_image_within`), `olr-pack` (`is_authoring`), `olr-edit` (`pixelate`, `compose`, `element`), `olr-cli` (`element_cmd.rs`), `olr-detcheck --bake` | done (plan 14a) | `every_bundled_level_round_trips_through_a_raster_base`, `region_bakes_equal_the_full_bake_and_keep_the_invariant`, `editor_files_are_not_content`, `the_fixture_is_baked`, `cargo xtask determinism`'s bake digest |
+| Level composition (spec 2026-10-17 editor §1-3, §7): `editor/composition.ron` (issue #74: the ground asset's `editor/asset.ron`, placed by `editor/placed.ron`; `olr-cli level convert` converts the old file) of image, drawn and raster elements, baked into `material.png`, `front.png`, `back.png` and `thumb.png`; JPEG originals; `olr-cli level element …`, `level bake`, stale bakes in `pack check` | — | `olr-format` (`levels::composition`, `image_io::decode_image_within`), `olr-pack` (`is_authoring`), `olr-edit` (`pixelate`, `compose`, `element`), `olr-cli` (`element_cmd.rs`), `olr-detcheck --bake` | done (plan 14a) | `every_bundled_level_round_trips_through_a_raster_base`, `region_bakes_equal_the_full_bake_and_keep_the_invariant`, `editor_files_are_not_content`, `the_fixture_is_baked`, `cargo xtask determinism`'s bake digest |
 | Level editor core (spec 2026-10-17 editor §4-§5, §8): the document (elements decoded, an image cache, one bake), reversible edits and a 256 MiB history, the tools (select, brush, eraser, rectangle, ellipse, line, spawn, eyedropper), the panels and shortcuts, tested headless; hosted in the game (the Editor screen, the canvas drawn by `olr-render`, Play, the file browser, recovery, `olr --edit`) | — | `olr-format` (`image_io::jpeg_orientation`, `levels::check_elements`), `olr-edit` (`level::{draw_art, erase_art, rescale_art, Shape::{Ellipse, Line}}`, `compose::{Decoded, ImageCache, bake_elements}`, `new::pack_id`), `olr-editor` (`browser`), `olr-terrain` (`ColorMap::replace_rect`), `olr-content` (`LoadedLevel::{from_source, first_spawn}`, `build_match_spawning`), `olr-ui` (`screens::editor`), `olr-game` (`editor`) | done (plans 14b-14c) | `undo_and_redo_restore_everything_exactly`, `every_operation_undoes_to_the_same_files`, `opening_and_saving_changes_nothing`, `art_painting_is_clipped_and_total`, `a_brush_stroke_is_one_step`, `locked_elements_are_not_changed_by_the_canvas`, `history_drops_the_oldest_steps_over_the_cap`, the `flows` tests; plan 14c: `a_bundled_level_is_edited_as_a_copy`, `recovery_survives_a_missing_original`, `a_damaged_recovery_is_discarded_not_fatal`, `a_later_session_keeps_the_crash_copy`, `imports_are_bounded_before_reading`, `closing_the_window_asks_when_unsaved`, `quitting_without_asking_keeps_a_recovery_copy`, `the_first_spawn_is_used_only_when_inside_the_level`, `the_canvas_draws_the_bake`, the `browser` tests, `cargo xtask e2e`'s editor run |
 | Skin editor (issue #14; no OLX counterpart): the Editor screen's Skin tab (New blank skin, Edit yours, Edit a copy), the 21-frame grid, onion skin, frame copy, paste to a frame, row or column, flip and shift, the paint tools (pencil 1 and 2 × 2, eraser, fill, eyedropper, line, rectangle) on the Colour, Player colour and Glow targets, the colour picker and recent colours, undo and redo per stroke, zoom and pan, the skin light, Make double resolution, a live preview (walking, aiming, both ways, light and dark), saving to `packs/` | `src/common/CWorm.cpp:1225-1244` (the preview's frame) | `olr-skin-editor`, `olr-edit` (`skin::preview_frame`), `olr-ui` (`screens::editor`'s Skin tab), `olr-game` (`editor::skin`) | done (issue #14) | the `olr-skin-editor` `state` and `flows` tests, `a_preview_frame_is_the_previews_cell`, `the_skin_tab_edits_yours_and_copies_the_others`, `a_copy_is_saved_to_your_packs_and_offered_by_the_skin_picker`, `a_bad_skin_pack_is_refused_with_a_message`, `closing_the_window_asks_when_unsaved` (skin) |
 | Mod editing operations (issue #16; no OLX counterpart): get and set any field by path (through shared projectiles), weapons added (blank or from another mod with their projectiles and files), removed, moved, copied and renamed with the presets and loadouts following, shared projectiles listed, inlined and shared, every error located; `olr-cli mod` | — | `olr-format` (`mods::mod_errors`), `olr-edit` (`mods`), `olr-cli` (`mod_cmd.rs`) | done (issue #16) | `set_changes_exactly_the_fields_set`, `every_leaf_round_trips_through_set`, `a_cycle_and_two_effects_in_an_event_are_refused_with_a_path`, `weapons_add_remove_move_copy_and_rename`, `a_weapon_of_another_mod_brings_its_projectiles_and_files`, `used_by_matches_the_files`, `inline_and_share_round_trip`, `check_lists_every_error_with_its_path`, `mod_errors_lists_every_error_and_compile_mod_the_first`, `olr-cli`'s `tests/mods.rs` |
@@ -6484,7 +6484,8 @@ No OLX counterpart. The design
 format's page is `docs/formats/level.md` (`PlacedFile`). #73 is the format, its checks and
 the bake (`olr_edit::placed`), tested on placements built in code; #74
 and #75 bring the packs, the conversion, the editor and the CLI. Nothing in
-a pack on disk changes in #73: the committed levels stay compositions.
+a pack on disk changes in #73: the committed levels stayed compositions
+until #74 (below).
 
 - **The ground lives in `editor/` itself.** A level's own painted asset
   (key `ground`, always an `Own` asset) is an asset
@@ -6579,6 +6580,48 @@ a pack on disk changes in #73: the committed levels stay compositions.
   equal: `olr-format` sits below `olr-pack`), counted as it is read.
   `valid_asset_id` moved into `olr_format::assets` (an origin's folder is
   one; `olr_edit::asset` re-exports it).
+
+Issue #74 brings the packs: `olr_edit::pack` reads and writes
+`editor/placed.ron` and never reads `editor/composition.ron`; the shipped
+Liero Factory After Dark and Castle Strike Reloaded, and
+`fixtures/edit/composed-level`, are converted (their files outside
+`editor/` byte for byte as before; the goldens and lit hashes unchanged).
+The plain OLX levels stay plain.
+
+- **The ground stays a composition in memory.** `Pack::composition` is
+  the ground asset's layers while the placement is the ground alone (one
+  `Own` ground copied once at the origin, at the level's size and art
+  scale, nothing Live or posed), so every composition operation, `level
+  element …`, `asset save`/`place` and the editor work on the ground
+  unchanged; save writes them into `editor/asset.ron` (its other fields
+  kept), every other asset's files byte for byte unless edited, and bakes
+  the placement (`olr_edit::placed::bake`, equal to the composition's bake
+  for a ground alone). While the ground is alone, `level.ron`'s
+  `look.glow_groups` and `look.materials` are the ground's: save writes
+  the look's into `asset.ron`, so the look stays where every editor edits
+  it; a hand edit of `asset.ron`'s groups shows as `level.ron` stale in
+  `pack check`. `level group …` and `level material add` edit the ground
+  asset's by id; one only another copy brings is refused ("it comes with
+  copy <id>'s asset: edit that asset").
+- **The conversion** (`olr_edit::placed::from_composition`, `olr-cli level
+  convert`, the level editor on opening): the ground "Ground" of the
+  level's size and art scale, the composition's elements, folders and
+  files at their paths, the look's groups and materials; `placed.ron`
+  lists `(key: "ground", origin: Own)` and the locked copy `ground`;
+  `composition.ron` goes. The command bakes and writes nothing when a
+  file outside `editor/` would change (a 0.2 level whose bake was stale).
+- **An unconverted level is refused, never guessed at.** A pack with
+  `editor/composition.ron` and no placement loads (`legacy_composition`)
+  and plays its bake, but every command that changes or bakes it, `asset
+  save`/`place` and `ensure_composed` refuse with "editor/composition.ron:
+  a level from OLR 0.2: run olr-cli level convert <pack>"; `pack check`
+  and `validate` warn. A `composition.ron` left beside a placement is
+  not read, a warning too.
+- **The editor's interim scope** (until issue #82's level tab): the level
+  editor opens a level whose ground is placed alone (an OLR 0.2 level
+  converted on opening, unsaved: "Converted from OLR 0.2: save to keep
+  it") and refuses one placing other assets: "This level has placed
+  assets: the level tab opens it (issue #82)".
 
 ## Kept OLX quirks
 
