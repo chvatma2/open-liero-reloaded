@@ -7229,9 +7229,9 @@ The design is `docs/superpowers/specs/2026-10-26-asset-based-levels-design.md`
   once (#92).
 - **Drawn into the terrain (#87).** Live copies are composited into the
   colour map the renderer uploads (`olr_terrain::ColorMap`'s live layer,
-  `set_live_art`, `set_live`), never drawn as sprites: every lit pass
-  (the glow light, occlusion, soak, heat, beams' shadows) and the unlit
-  renderer read their pictures as they read the ground's, so a live
+  `set_live_art`, `set_live`), never drawn as sprites: the lit passes
+  (the glow light and its occlusion through the solid map) and the
+  unlit renderer read their pictures as they read the ground's, so a live
   lamp is exactly a static one in another state, with no second path to
   keep in step. A rock part (where its mask is solid) replaces the
   ground's colour, glows and is solid in the look's solid map (it
