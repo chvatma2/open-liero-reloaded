@@ -72,11 +72,17 @@ const PAGES: &[Page] = &[
             "crates/olr-format/src/levels/mod.rs",
             "crates/olr-format/src/levels/files.rs",
             "crates/olr-format/src/levels/composition.rs",
+            "crates/olr-format/src/levels/placed.rs",
+            "crates/olr-format/src/assets/states.rs",
             "crates/olr-format/src/look.rs",
             "crates/olr-format/src/materials.rs",
             "crates/olr-format/src/colour.rs",
         ],
-        roots: &[("LevelFile", "level.ron"), ("Composition", "editor/composition.ron")],
+        roots: &[
+            ("LevelFile", "level.ron"),
+            ("Composition", "editor/composition.ron"),
+            ("PlacedFile", "editor/placed.ron"),
+        ],
         maps: &[],
         files: &[
             "material.png",
@@ -92,6 +98,12 @@ const PAGES: &[Page] = &[
             "look/surface-back.png",
             "distant/<i>.png",
             "distant/<i>-glow.png",
+            // Issue #73: the ground (an asset folder rooted at `editor/`),
+            // the other assets, the scripts.
+            "[`editor/asset.ron`](asset.md)",
+            "editor/<key>/",
+            "editor/scripts/<id>.rhai",
+            "editor/level.rhai",
         ],
     },
     Page {
@@ -351,7 +363,8 @@ fn render_page(root: &Path, page: &Page) -> anyhow::Result<String> {
         .iter()
         .map(|(ty, file)| format!("`{file}` ([{ty}](#{}))", ty.to_lowercase()))
         .chain(page.maps.iter().map(|(file, _, _)| format!("[`{file}`](#{})", file.replace('.', "-"))))
-        .chain(page.files.iter().map(|f| format!("`{f}`")))
+        // A file given as a link (`[…](page.md)`) is written as it is.
+        .chain(page.files.iter().map(|f| if f.starts_with('[') { f.to_string() } else { format!("`{f}`") }))
         .collect();
     out += &format!("Files: {}.\n\n", files.join(", "));
     for p in paragraphs(&doc_lines(&module.attrs)) {

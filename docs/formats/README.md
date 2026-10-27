@@ -352,6 +352,78 @@ an imported sign and a tunnel drawn as background:
 )
 ```
 
+A level made of placed assets (issue #73) has `editor/placed.ron`
+instead: the assets it holds a copy of (the ground, the level's own
+painted asset, in `editor/` itself; the others in `editor/<key>/`) and
+the copies placed from them, bottom to top. A copy has an id scripts
+use, a place, a size (the asset stretched to it), a Live switch, a
+starting state, its own exposed values, an optional script
+(`editor/scripts/<id>.rhai`) and a distance for a parallax layer; the
+level script is `editor/level.rhai`:
+
+<!-- file: level/editor/placed.ron -->
+```ron
+(
+    assets: [
+        (
+            key: "ground",
+            origin: Own,
+        ),
+        (
+            key: "a",
+            origin: Builtin("strip-light"),
+        ),
+        (
+            key: "b",
+            origin: Yours("crane"),
+        ),
+        (
+            key: "c",
+            origin: Own,
+        ),
+    ],
+    copies: [
+        (
+            id: "ground",
+            asset: "ground",
+            locked: true,
+        ),
+        (
+            id: "lamp-1",
+            asset: "a",
+            at: (120, 80),
+        ),
+        (
+            id: "lamp-2",
+            asset: "a",
+            at: (200, 80),
+            size: (58, 4),
+            free_aspect: true,
+        ),
+        (
+            id: "crane",
+            asset: "b",
+            at: (400, 60),
+            size: (64, 40),
+            live: true,
+            state: "Moving",
+            values: {
+                "claw_x": Int(20),
+            },
+            script: true,
+            default_script: false,
+        ),
+        (
+            id: "hills",
+            asset: "c",
+            at: (-200, 0),
+            distant: 80,
+        ),
+    ],
+    script: true,
+)
+```
+
 ### An asset
 
 Not a pack: the level editor's ready-made piece of a level, a folder
