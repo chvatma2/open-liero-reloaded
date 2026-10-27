@@ -6435,8 +6435,8 @@ its checks and the decoded model (`olr_edit::asset`).
   an `Own` group without a default" to be an error): none means the
   layer's own setting; an `Own` group's colour has none, so exposing it
   needs one.
-- **Landing an asset** (`land`, `place_in_pack`, the editor's placing,
-  until #75 and #82): the starting state posed with its defaults, as
+- **Landing an asset** (`land`, the editor's placing, until #82;
+  `place_in_pack`, `olr-cli asset place`'s, until #75): the starting state posed with its defaults, as
   ordinary elements in one folder, its own folders flattened; its states,
   values, sounds, health and script stay behind and the status line says
   so. An `Opacity` below 100 is not expressible in a level's elements and
@@ -6622,6 +6622,63 @@ The plain OLX levels stay plain.
   converted on opening, unsaved: "Converted from OLR 0.2: save to keep
   it") and refuses one placing other assets: "This level has placed
   assets: the level tab opens it (issue #82)".
+
+Issue #75 brings the operations on copies (`olr_edit::placed`'s
+`add_copy`, `duplicate_copy`, `move_copy`, `resize_copy`, `set_copy`/
+`set_copies`, `set_copy_script`, `set_level_script`, `raise_copy`,
+`lower_copy`, `remove_copy`), shared by the level tab (#82, #84) and
+`olr-cli level copy …`/`level script`, which replace `olr-cli asset
+place` (`olr_edit::asset::place_in_pack` is gone). Each edits a copy of
+the placement, runs `check_placed` and keeps it only then; none bakes.
+
+- **An asset joins a level once.** `add_copy` reuses an asset of the
+  level with the same origin and the same files (#76's comparison:
+  `asset.ron`, the element files, sounds and script; never the
+  thumbnail, never the ground); otherwise it copies the folder in under
+  a new key. `--key` (`add_copy`'s `key`) names the key of an asset new
+  to the level, checked as #73's keys are (`valid_key`, not `ground`, not
+  taken, stray folders in `editor/` counting as taken), and is refused
+  when the asset is reused; without it the key is `next_key`'s first
+  free (1 or 2 characters, the path budget above). A chosen key's length
+  is the author's to keep short.
+- **Copy ids number from the asset's name.** `new_copy_id`: the asset's
+  `asset_slug` (`copy-<slug>` when it does not start with a letter, a
+  copy id's rule; cut to 32 bytes), then `<slug>-2`, `-3`, … the first
+  free among the copies and stray scripts in `editor/scripts/`. A
+  duplicate (`duplicate_copy`, the level tab's Copy and Paste) numbers
+  from the copy's own id without a trailing `-<n>` (`lamp-2`'s is
+  `lamp-3`), as `element::copy_name` numbers names; it keeps every
+  setting but its place, id and lock (a duplicate starts unlocked) and
+  lands directly above. Numbering always terminates (one more candidate
+  than there are ids).
+- **`keep_aspect(asset_size, Size)`** (public, the level tab's handles
+  compute what the command would): `Width(w)` takes height `max(1,
+  round(w × h0 / w0))`, rounded half up, `Height` alike; `Width`/`Height`
+  clear `free_aspect`, `Free(w, h)` sets it, `Natural` leaves the size
+  none and the flag as it was; `FreeAspect(false)` snaps the height to
+  the width's aspect.
+- **Live is refused with the asset's reason** (`live_refusal`'s text,
+  `LiveRefusal::NothingToDrive` first): the cell-level check
+  `check_placed` cannot make. #85's limits will refuse here too.
+- **A locked copy** refuses moves, resizes, its script, removal and every
+  setting but `Locked`, as a locked element does; its order is not its
+  content (`raise_copy`/`lower_copy` move it). `set_copies` applies an
+  unlocking first and a locking last, so one `level copy set --unlocked
+  …` edits a locked copy.
+- **The order is the stack's.** `raise_copy`/`lower_copy` move a copy one
+  place, whatever the copy it passes; a distant copy's pieces bake below
+  the rest wherever it stands, so the order matters among distant and
+  among near copies only.
+- **Removing a copy's last copy removes its asset** (an `Own` one too:
+  removing the ground's only copy, once unlocked, removes the ground);
+  `Removed` gives the copy, its place, its script and the asset back for
+  the editor's undo. A placement emptied of copies is a level of no
+  copies (it bakes to background).
+- **The ground alone again** is the editors' composition again: when an
+  operation leaves the ground placed alone, the pack's composition is the
+  ground's and the look's groups and materials are set to the ground's
+  (what the next bake gathers), so a removed copy's groups do not stay
+  in the ground.
 
 ## Kept OLX quirks
 

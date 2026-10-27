@@ -1,6 +1,6 @@
 //! An asset (issue #9): a ready-made piece of a level saved once and
-//! dropped into any level by the editor's Assets tab or `olr-cli asset
-//! place`. It is a folder, `<asset-id>/`, holding `asset.ron` (its name,
+//! dropped into any level by the editor's Assets tab or `olr-cli level
+//! copy add` (issue #75). It is a folder, `<asset-id>/`, holding `asset.ron` (its name,
 //! the art scale it was made at, its size, its elements and folders, the
 //! glow groups and surface materials they name, and (issue #71) its
 //! states, exposed properties, sounds and health), the elements' files
@@ -22,8 +22,10 @@
 //! `layers/<id>.back.png` and `glow/<id>.png` stack the same way, while
 //! surface maps and image masks are the starting state's in every state.
 //! An asset without states, exposed properties, sounds, health or script
-//! is written exactly as before them. A placed asset is ordinary
-//! elements: no level refers to its folder. An asset folder is untrusted
+//! is written exactly as before them. A level places an asset as
+//! copies of it: it holds its own copy of the folder (`editor/<key>/`,
+//! issue #73), naming where it came from, never the library's folder
+//! itself. An asset folder is untrusted
 //! content: reading checks it with the level format's limits.
 
 use std::collections::{BTreeMap, BTreeSet};

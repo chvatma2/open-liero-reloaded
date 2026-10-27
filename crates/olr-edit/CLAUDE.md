@@ -361,8 +361,8 @@ operations.
   (`decode_element`, `decode_glow_masks`). `load_dir`, `read_dir`,
   `save_dir` (`replace_dir`), `summary` (`asset.ron` and the thumbnail
   only: the Assets tab's entry). `DecodedLevel::of_pack` (a plain level
-  as its three layers) and `place_in_pack` (`olr-cli asset place`: one
-  checked edit of a copy, the caller bakes). The library:
+  as its three layers; issue #75 removed `place_in_pack`, `olr-cli asset
+  place`'s: a level places an asset as a copy, `placed::add_copy`). The library:
   `MAX_USER_ASSETS` (256), `valid_asset_id`, `asset_slug`,
   `list_library`, `add_to_library` (a new folder named after it, or over
   `replace`), `import_into_library` (read and checked whole, written
@@ -395,16 +395,16 @@ operations.
   first, then `Dirt`: a plain Dirt layer or a mixed layer's dirt cell in
   any state, then `RasterOrDistant`; `Display` texts). `Summary` gains
   `states` and `may_be_live` (from `asset.ron` and whether `script.rhai`
-  exists). Landing until #75/#82: `landed_pieces` (the start posed with
-  its defaults; `place_in_pack`, the editor's `place_asset` and the
-  thumbnail use it) and `left_behind` (`Placement::note`: "<name>'s
-  states, values, sounds and script stay in the asset"). `plain` keeps
+  exists). Landing until #82: `landed_pieces` (the start posed with
+  its defaults; the editor's `place_asset` and the thumbnail use it) and
+  `left_behind` (the editor's status bar: "<name>'s states, values,
+  sounds and script stay in the asset"). `plain` keeps
   glass. Tests: `asset.rs`' `decode_and_encode_round_trip_states`,
   `posed_takes_the_state_then_the_copy_then_the_default`,
   `a_state_is_a_complete_look`, `posed_mirrors_offsets_hides_and_tints`,
   `the_starting_state_poses_as_the_pieces`, `live_refusal_says_why`,
   `offers_follow_the_design`, `asset_sound_limit_is_the_mods`,
-  `landing_a_stated_asset_lands_its_start`; `glass.rs`'
+  `a_copy_of_a_stated_asset_bakes_its_start`; `glass.rs`'
   `an_asset_of_glass_keeps_its_glass`.
   Issue #72 (`asset/edit.rs`; STATUS.md "Asset-based levels"): the
   operations the asset tab (#79, #80) and `olr-cli asset` share, each on
@@ -509,6 +509,56 @@ operations.
   `stale_lists_level_ron_when_its_groups_drift`,
   `the_editor_scope_is_the_ground_alone`,
   `hostile_placed_levels_never_panic`).
+- **Issue #75, the copy operations** (`placed/ops.rs`, re-exported by
+  `placed`; STATUS.md "Asset-based levels: the level format (issues
+  #73, #74)", issue #75's part), shared by the level tab (#82, #84) and
+  `olr-cli level copy`. Each edits a copy of `pack::placement` (an
+  unconverted level `UNCONVERTED`, a plain one refused: callers give it
+  its ground first, `element::ensure_composed`), runs `check_placed` and
+  keeps it only then (`PlacedError`, naming the copy; the pack
+  unchanged); the pack's composition is then the ground's when the
+  result is the ground alone (the look's groups and materials set to the
+  ground's, as the bake would gather them), else none. None bakes.
+  - **`add_copy(pack, asset, origin, at, id, key) -> Added`**: an asset of
+    the level with the same origin and `same_asset` (#76's comparison:
+    `asset.ron`, element files, sounds and script, never the thumbnail;
+    never the ground) is reused, and then a `key` is refused; else it is
+    copied in under `key` (`valid_key`, not `ground`, not taken by an
+    asset or a stray folder in `editor/`) or `next_key`'s first free; the
+    asset is decoded (`decode_own` for `Own`, else `decode`) and the copy
+    lands at `at`, natural size, on top, its id `id` or `new_copy_id`
+    (`asset_slug`, `copy-<slug>` when it does not start with a letter,
+    at most 32 bytes, then `-2`, `-3`, …; stray scripts skipped; always
+    terminates). `Added { id, key, new_asset, groups_added,
+    materials_added, added_look }`: the asset's start posed with its
+    defaults gathered after the level's look (`gather_groups`).
+  - `duplicate_copy(pack, id, offset)` (everything but the id, `at +
+    offset` and the lock, unlocked; directly above; its script copied;
+    the id's stem numbered), `move_copy`, `resize_copy(pack, id, Size)`
+    (`Natural`, `Width`/`Height` keeping the aspect, `free_aspect` false,
+    `Free` true; returns the placed size) with the public
+    `keep_aspect(asset_size, Size)` (`max(1, round(w × h0 / w0))`, half
+    up), `set_copy`/`set_copies(pack, id, &[CopyProperty])` (`Id` (its
+    script renamed; scripts naming it are text), `Live` (refused by
+    `live_refusal`'s text, "cannot be Live: …"), `State`, `Value`,
+    `DefaultScript`, `Distant`, `FreeAspect` (false snaps the height),
+    `Locked`; checked once, an unlocking first and a locking last),
+    `set_copy_script`, `set_level_script` (`MAX_SCRIPT_BYTES`, not
+    parsed), `raise_copy`/`lower_copy` (one place in the stack; refused
+    at the edge) and `remove_copy -> Removed { copy, index, script,
+    asset }` (its asset and folder too when no copy uses it, the ground
+    included). A locked copy refuses `move`, `resize`, `remove`, its
+    script and every set but `Locked`; its order is not its content.
+  - Tests: `tests/placed.rs`' `adding_the_same_asset_twice_reuses_it`,
+    `keys_are_generated_short_and_chosen_keys_are_checked`,
+    `keep_aspect_rounds_and_never_reaches_zero`,
+    `free_aspect_off_snaps_the_height`, `live_is_refused_with_the_reason`,
+    `renaming_a_copy_moves_its_script`,
+    `removing_the_last_copy_removes_its_asset`,
+    `a_locked_copy_refuses_moves_resizes_sets_and_removal`,
+    `duplicate_copy_lands_above_with_a_new_id` and the proptest
+    `every_operation_leaves_a_checked_placement`; `tests/asset.rs`'
+    placing tests place copies (`place`: `add_copy`, then `bake_pack`).
 - **Issue #16, the mod operations** (`mods`; `olr-cli mod`; STATUS.md
   "Mod editing operations (issue #16)"), on a loaded mod `Pack`
   (`source(pack)`, else `ModError::NotAMod`):
@@ -611,8 +661,8 @@ operations.
     the flags follow the maps. `land` still strips surfaces (the editor's
     paste); `with_materials` (`MaterialChange`: joined by id, the level's
     settings kept, or added; `renumbering`) and `land_surfaces` give a
-    landed element its surfaces and re-numbered maps: `place_in_pack` and
-    the editor's `place_asset` use them. `encode`/`decode` write and read
+    landed element its surfaces and re-numbered maps: the editor's
+    `place_asset` uses them. `encode`/`decode` write and read
     `surface/<id>.png` and `.back.png`; an asset without materials is
     byte for byte as before.
   - **`element`**: `Property::Surface`/`BackSurface` (an id the look
@@ -672,8 +722,8 @@ operations.
     the element's own flags (a folder's visibility rebakes, never
     re-decodes); `asset::DecodedLevel::of_pack` folds too; `asset::plain`
     and `land` clear `folder` (`Landing::folders` keeps landed ids off
-    the folders'); `place_in_pack` groups two pieces or more in a folder
-    named after the asset (`Placement::folder`).
+    the folders'); the editor's `place_asset` groups two pieces or more
+    in a folder named after the asset.
   - Tests: `tests/folders.rs` (group contiguous, scattered and nested,
     ungroup, move in and out, raise and lower at folder edges, distant
     layers, remove, `tidy`, equal trees writing alike, cycle-safe walks,

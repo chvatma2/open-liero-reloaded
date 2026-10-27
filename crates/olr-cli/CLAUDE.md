@@ -99,7 +99,7 @@ The headless command-line tool. Its commands:
   placement's bake) and refuses a level without a placement. Issue #74:
   every command that changes or bakes a level (`level element …`,
   `level group`, `level material add`, `bake`, `carve|fill|paint|stamp`,
-  `asset save`/`place`) refuses an OLR 0.2 level (`load_level`:
+  `asset save`; issue #75's `level copy …` and `level script`) refuses an OLR 0.2 level (`load_level`:
   "editor/composition.ron: a level from OLR 0.2: run olr-cli level
   convert <path>"); `level convert <pack>…` (`convert_cmd`,
   `olr_edit::placed::from_composition`) converts, bakes and saves, but
@@ -217,8 +217,7 @@ The headless command-line tool. Its commands:
   imported OLX packs have none, so the frame goldens are unchanged).
   Use it to see what a change does; view the PNG.
 - `olr-cli asset save <level-pack> (--elements <id,…> | --rect X,Y,W,H
-  [--layers <id,…>]) --name <name> --out <dir>`, `asset place
-  <level-pack> <asset-dir> --at X,Y [--content DIR]` and `asset check
+  [--layers <id,…>]) --name <name> --out <dir>` and `asset check
   <asset-dir>…` (`asset_cmd.rs`, issue #9: the level editor's assets,
   `olr_edit::asset`). `save` decodes the level (`DecodedLevel::of_pack`:
   a plain level as its three layers), cuts the elements
@@ -227,27 +226,19 @@ The headless command-line tool. Its commands:
   encodes it with its lit thumbnail and writes the folder anew; it prints
   `saved asset "<name>" (W × H, N elements[, glow groups …][, materials
   …]) to <dir>` (issue #38: the surface materials its elements name, and
-  their painted maps, travel with it). `place` is one save, baked as
-  `level element …` (`place_in_pack`), printing `added element <id>` per
-  piece, `added glow group <g>`, `joined glow group <g>`, `added material
-  <m>`, `joined material <m>` (the level's copy kept; after the pieces,
-  `added folder <id>`: issue #59, an asset of two pieces or more lands
-  in a folder named after it) and, for a level
-  that had no look, `ADDED_LIGHTING` (or, with materials and no glow,
-  `added a look to hold the asset's materials …`); issue #71: an asset
-  lands in its starting state with its defaults, and one with states,
-  values, sounds, health or a script prints `<name>'s states, values,
-  sounds and script stay in the asset` (`Placement::note`). `check` reads each
+  their painted maps, travel with it). Issue #75 removed `asset place`
+  (and `olr_edit::asset::place_in_pack`): a level places an asset as a
+  copy, `olr-cli level copy add` (below; `asset place` is an unknown
+  subcommand, `copy.rs`' `asset_place_is_gone`). `check` reads each
   folder whole (`load_dir`), prints `<dir>: "<name>", W × H, N
   elements[, N states][, materials …]` (`N states` only past one, issue
   #71) or `<dir>: error: …`, and exits 1
   if any fails. The built-in assets (`content/assets/`) are made with
   `save` from `content/reloaded/` (their commands in its README). Tests:
   `tests/asset.rs` (every built-in asset checks and is what its README
-  command makes, the torch carries `flames` and not `sky`, save and place
-  round trip, bad folders and arguments refused; issue #59's
-  `cli_places_a_multi_piece_asset_in_a_folder`; issue #71's
-  `asset_check_counts_states`).
+  command makes, the torch carries `flames` and not `sky`, bad folders
+  and arguments refused; issue #71's `asset_check_counts_states`; its
+  place tests are `copy.rs`' now).
   Issue #72 (`olr_edit::asset`'s operations): `asset state add <dir>
   <name> [--from <state>]` (`added state <name>`), `state remove <dir>
   <name>`, `state set <dir> <name> [--name <new>] [--start] [--loop-sound
@@ -286,6 +277,54 @@ The headless command-line tool. Its commands:
   keeps every state's look; the same edits the same bytes) and
   `cli_refuses_and_leaves_the_folder`; `asset_cmd.rs`'
   `cli_parses_property_and_value_syntax` (every form, a dotted id).
+- `olr-cli level copy add|list|move|resize|set|script|raise|lower|remove
+  <pack> …` and `level script <pack> (--set <file.rhai> | --clear)`
+  (`copy_cmd.rs`, issue #75): a level's placed copies of assets, through
+  `olr_edit::placed`'s copy operations (shared with the level tab). Each
+  command loads the level (`load_level`: an OLR 0.2 composition refused,
+  "run olr-cli level convert"), gives a plain level its ground first
+  (`ensure_composed`, as `level element` does), applies, bakes and saves
+  (`element_cmd`'s `bake_pack`, `save_and_print`), printing a line a
+  change; a refusal writes nothing and exits 1. `add <pack> <asset-dir>
+  --at X,Y [--id ID] [--key KEY] [--width W | --height H | --size WxH]
+  [--content DIR] [--user DIR]` reads the folder (`asset::read_dir`),
+  takes its origin from where it is (a folder of `olr_content::
+  assets_dir(<content>)` `Builtin(<folder>)`, of the user's library
+  (`--user`, default `<data>/assets`, as `material`'s `--user`)
+  `Yours(<folder>)`, elsewhere `Own`), adds the copy (`add_copy`: an
+  asset of the same origin and files reused, then `--key` refused) and
+  sizes it, printing `added copy <id> of "<name>" (asset <key>[, new])`,
+  then `added glow group <g>` and `added material <m>` per new one and,
+  for a level that had no look, `ADDED_LIGHTING` (or, with materials
+  only, `added a look to hold the asset's materials (the level plays
+  lit)`). `list <pack>` prints a copy a line, bottom first: `<id>:
+  "<name>" <key> (<own|built-in F|yours F>) at X,Y W × H[ free][ live][
+  state S][ <name>=<value>…][ script][ no-default-script][ distant D][
+  locked]`, then `level script: N lines` when there is one. `move <id>
+  --at X,Y` (`moved copy <id> to X,Y`), `resize <id> (--width W |
+  --height H | --size WxH | --natural)` (`resized copy <id> to W × H`),
+  `set <id> [--id <new>] [--live | --static] [--state <name> |
+  --start-state] [--value <name>=<value>]… [--unset <name>]…
+  [--default-script on|off] [--distant <depth> | --near] [--locked |
+  --unlocked]` (values in `asset::parse_value`'s syntax, checked by the
+  exposed property; all at once through `set_copies`, an unlocking first
+  and a locking last; `renamed copy <a> to <b>`, then `copy <id>: live`,
+  `state S`, `<name> = <v>`, `<name> unset`, `default script on|off`,
+  `distant D`, `near`, `locked`/`unlocked`), `script <id> (--set <file> |
+  --clear)` (`copy <id>: set the script: N lines`, `… cleared the
+  script`), `raise|lower <id>` (one place; `raised copy <id>`), `remove
+  <id>` (`removed copy <id>`, then `removed asset <key>` when it went) and
+  `level script` (`set the level script: N lines`, `cleared the level
+  script`). Scripts are read bounded (`MAX_SCRIPT_BYTES`), UTF-8. Tests:
+  `tests/copy.rs` (`cli_places_moves_resizes_and_removes_copies` on a
+  copy of Castle Strike Reloaded, `pack check --content` clean after
+  each step and the level as it was once both torches are gone;
+  `cli_sets_live_state_values_and_scripts` with `asset.rs`' `build_lamp`;
+  `cli_add_detects_the_origin`; `cli_refuses_an_unconverted_level`;
+  `cli_gives_a_plain_level_its_ground_first`; `asset_place_is_gone`;
+  `cli_saves_and_places_an_asset`: `asset save`, then `level copy add`,
+  the copy's folder the saved one but its thumbnail, and a multi-piece
+  asset one copy).
 - `olr-cli skin new <out-dir> [--from <skin>] [--double] --name <name>
   [--id ID]`, `skin double <skin> --out <dir> [--name N] [--id ID]`,
   `skin check <dir>…` and `skin preview <skin> --colour RRGGBB --out

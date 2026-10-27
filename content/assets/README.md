@@ -16,6 +16,12 @@ Each was cut from OLR's own Reloaded levels (`content/reloaded/`) with
 repository's root. They carry the surface materials their pixels have
 there (issue #46), so placed in a level they heat as they did in it.
 
+A level places one as a copy (issue #75): `olr-cli level copy add <pack>
+content/assets/<id> --at X,Y` (the level holds its own copy of the
+folder, `editor/<key>/`, and records it as built-in); `olr-cli level
+copy list|move|resize|set|remove` edit the copies. `olr-cli asset place`
+is gone.
+
 - `torch/`: **Torch**, a cavern torch of Castle Strike Reloaded, its
   flame glowing in group `flames` (`Flicker`). Cut from the layers under
   the torch only: `background-2` holds no pixels there (the torch shows

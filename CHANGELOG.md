@@ -147,6 +147,12 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   glowing distant layers and scroll slower than the level; both levels
   are lit as before. `olr-cli level element erase` (and every shape
   option) takes `--mask FILE`, a PNG's pixels.
+- `olr-cli level copy` places assets as copies: `add` (an asset placed
+  again is reused, not copied twice), `list`, `move`, `resize` (keeping
+  the aspect or not), `set` (id, Live, starting state, values, default
+  script, depth, lock), `script`, `raise`, `lower` and `remove` (an asset
+  no copy uses leaves the level); `olr-cli level script` sets the level
+  script.
 
 ### Changed
 
@@ -196,6 +202,7 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
 ### Removed
 
 - `olr-cli validate`: use `olr-cli pack check`.
+- `olr-cli asset place`: use `olr-cli level copy add`.
 - Bonuses in play: the Bonuses checkbox, `olr --bonuses`, the server's
   `bonuses` rotation field (ignored, with a warning) and `/settings
   bonuses`. `olr-cli` keeps them for tests. Also gone: Local Play's

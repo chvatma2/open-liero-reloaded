@@ -654,7 +654,7 @@ pub fn land(
 }
 
 /// What a placing that gave a level its first look says (the editor's
-/// status bar, `olr-cli asset place`): the default look is full bright, so
+/// status bar, `olr-cli level copy add`): the default look is full bright, so
 /// the glow shows only once the ambient light is lowered (the maintainer's
 /// choice over darkening the level unasked).
 pub const ADDED_LIGHTING: &str =
