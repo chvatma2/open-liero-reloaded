@@ -1,8 +1,8 @@
 //! Issue #73: a level of placed copies baked (`olr_edit::placed`): a
 //! ground alone bakes as its composition, stretched and rescaled copies
 //! resample nearest, positions scale with the copy, opacity mixes, distant
-//! pieces lie below, the gathering shares and renames, Live copies bake
-//! static and refuse dirt cells.
+//! pieces lie below, the gathering shares and renames, Live copies
+//! refuse dirt cells (issue #85's `live.rs` bakes them).
 
 use std::sync::Arc;
 
@@ -661,19 +661,6 @@ fn a_live_copy_with_dirt_cells_is_refused_by_the_bake() {
     src.file.copies[0].live = false;
     let l = baked(&level, &src);
     assert_eq!(&l.material[..2], [Material::Rock, Material::Dirt]);
-}
-
-#[test]
-fn live_copies_bake_as_static_for_now() {
-    let a = lamp("Wood");
-    let copy = PlacedCopy::new("lamp", "a", (1, 0));
-    let level = blank((3, 1), 1, None);
-    let still = baked(&level, &placement(vec![("a", &a)], vec![copy.clone()]));
-    let live = baked(&level, &placement(vec![("a", &a)], vec![PlacedCopy { live: true, ..copy }]));
-    assert_eq!(still, live);
-    assert_eq!(live.material[1], Material::Rock);
-    // Its groups count: a level lit only by a Live copy gets a look.
-    assert!(live.look.is_some());
 }
 
 // Issue #74: packs of placed copies, the conversion and the refusal.

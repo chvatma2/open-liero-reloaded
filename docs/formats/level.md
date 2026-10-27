@@ -305,7 +305,7 @@ A live copy: a placed copy that stays an object in the match.
 | `pictures` | list of [LivePictureFile](#livepicturefile) | required | Its pictures, at most `MAX_PICTURES` (128); the `k`-th one's files are `live/<copy>/<k>.png` and its optional masks. |
 | `states` | list of [LiveStateFile](#livestatefile) | required | Its states, 1 to 32, in the asset's order. |
 | `start_state` | integer | `0` | The index of its starting state. Default 0. |
-| `start_values` | list of (integer, integer) | `[]` | The copy's own values (prop index, value), applied once after its starting state's: only properties the starting state does not set. Default none. |
+| `start_values` | list of (integer, integer) | `[]` | The copy's own values (prop index, value) of properties no state sets, applied once after its starting state's (the others are in every state's values). Default none. |
 | `animations` | list of [AnimationSource](#animationsource) | `[]` | The copy's animation table: every distinct animation its defaults, states and values name, in order of first appearance, at most `MAX_ANIMATIONS` (256); an `Animation` value is an index into it. Default none. |
 | `groups` | list of [GlowGroupSource](#glowgroupsource) | `[]` | The asset's glow groups, the copy's own at run time (two copies change colour apart); a picture's groups name them 1-based. The level's groups and every copy's are at most 255 together. Default none. |
 | `scripts` | list of integer | `[]` | The scripts run on the copy, in order (indices into the level's `scripts`): the asset's default unless the copy switched it off, then the copy's own. Default none. |
@@ -336,7 +336,7 @@ A copy of an asset placed in the level.
 | `at` | (integer, integer) | `(0, 0)` | Its top-left, world pixels, each within 16384 (`4 × MAX_SIDE`) of 0. Default `(0, 0)`. |
 | `size` | (integer, integer) (optional) | none | Its placed size, world pixels, each 1 to `MAX_SIDE` (4096): the asset stretched to it, nearest neighbour. Default none: the asset's size. |
 | `free_aspect` | boolean | `false` | The copy panel's free resize (the aspect not kept); any `size` is taken either way. Default false. |
-| `live` | boolean | `false` | Live: the copy stays an object in the match, driven by its states, values and scripts (for now it bakes as a static copy). Only an asset with more than one state, exposed values, sounds or a script, holding no dirt, raster or distant layer, and not placed distant. Default false: static, baked into the level in its starting state. |
+| `live` | boolean | `false` | Live: the copy stays an object in the match, driven by its states, values and scripts (issue #85: saved as the level's played form, `live.ron` and `live/`, not baked into the ground). Only an asset with more than one state, exposed values, sounds or a script, holding no dirt, raster or distant layer, and not placed distant. Default false: static, baked into the level in its starting state. |
 | `state` | string (optional) | none | The name of its starting state, one of its asset's states. Default none: the asset's `start`. |
 | `values` | map of name → [ValueSource](#valuesource) | `{}` | Its own values of the asset's exposed properties, by exposed name, each of the property's type within its `min` to `max`: the copy's defaults (a state's own value comes first). Default none. |
 | `script` | boolean | `false` | The copy has its own script, `editor/scripts/<id>.rhai` (UTF-8 Rhai, at most 64 KiB). Default false. |
@@ -457,7 +457,7 @@ A state of a live copy: a complete look.
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `name` | string | required | The asset's state name (unique in the copy, case aside); scripts name the state by it. |
-| `values` | list of (integer, integer) | `[]` | (prop index, value) for every property any state of the asset sets: this state's value, else the property's default. Entering the state sets them all. Default none. |
+| `values` | list of (integer, integer) | `[]` | (prop index, value) for every property any state of the asset sets: this state's value, else the copy's own, else the property's default (a static copy's pose). Entering the state sets them all. Default none. |
 | `parts` | list of [LivePartFile](#livepartfile) | required | Its parts, bottom to top, at most `MAX_PARTS` (32). |
 | `enter_sound` | integer (optional) | none | An index into the level's `sounds`, played once when the state is entered. Default none. |
 | `loop_sound` | integer (optional) | none | An index into the level's `sounds`, looped while the state lasts. Default none. |

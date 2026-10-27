@@ -403,7 +403,8 @@ pub fn set_copy(pack: &mut Pack, id: &str, property: CopyProperty) -> Result<(),
 /// after it). A locked copy takes only `Locked`. `Id`: a free
 /// `valid_copy_id`, its script renamed with it. `Live(true)`: refused with
 /// `live_refusal`'s reason (the cell-level check `check_placed` cannot
-/// make). `FreeAspect(false)` snaps the height to the width's aspect.
+/// make), or (issue #85) when the level's played form would pass its
+/// file or byte cap (`live::check_budget`). `FreeAspect(false)` snaps the height to the width's aspect.
 /// The rest are checked by `check_placed`.
 pub fn set_copies(pack: &mut Pack, id: &str, properties: &[CopyProperty]) -> Result<(), PlacedError> {
     let stray = stray(pack);
@@ -411,6 +412,8 @@ pub fn set_copies(pack: &mut Pack, id: &str, properties: &[CopyProperty]) -> Res
     let rest = properties.iter().filter(|p| !matches!(p, CopyProperty::Locked(_)));
     let lock = properties.iter().filter(|p| matches!(p, CopyProperty::Locked(true)));
     let ordered: Vec<&CopyProperty> = unlock.chain(rest).chain(lock).collect();
+    let s = level(pack)?.art_scale;
+    let going_live = properties.iter().any(|p| matches!(p, CopyProperty::Live(true)));
     commit(pack, |src| {
         let mut id = id.to_string();
         for p in ordered {
@@ -421,8 +424,26 @@ pub fn set_copies(pack: &mut Pack, id: &str, properties: &[CopyProperty]) -> Res
             set_one(src, &stray, i, p)?;
             id = src.file.copies[i].id.clone();
         }
+        if going_live {
+            live_budget(src, s).map_err(|e| copy_err(&id, format!("cannot be Live: {e}")))?;
+        }
         Ok(())
     })
+}
+
+/// Whether `src`'s Live copies' played form keeps within its caps at art
+/// scale `s` (issue #85, `live::check_budget`), their assets decoded.
+fn live_budget(src: &PlacedSource, s: u32) -> Result<(), PlacedError> {
+    let mut assets = BTreeMap::new();
+    for c in src.file.copies.iter().filter(|c| c.live) {
+        if assets.contains_key(c.asset.as_str()) {
+            continue;
+        }
+        let Some(a) = src.file.assets.iter().find(|a| a.key == c.asset) else { continue };
+        let Some(asset) = src.assets.get(&a.key) else { continue };
+        assets.insert(a.key.as_str(), super::decoded_asset(&a.key, &a.origin, asset)?);
+    }
+    crate::live::check_budget(src, &assets, s)
 }
 
 fn set_one(src: &mut PlacedSource, stray: &[String], i: usize, p: &CopyProperty) -> Result<(), PlacedError> {

@@ -88,7 +88,7 @@ pub struct Posed {
 
 /// `asset.ron`'s fields of `asset` but its folders (elements as the pieces
 /// hold them): what the format's property rules read.
-pub(super) fn header(asset: &Asset) -> AssetFile {
+pub(crate) fn header(asset: &Asset) -> AssetFile {
     AssetFile {
         art_scale: asset.art_scale,
         folders: asset.folders.clone(),
@@ -468,7 +468,7 @@ pub fn value_in_state(file: &AssetFile, state: usize, p: &PropertySource) -> Opt
 
 /// Why a copy of an asset cannot be Live (the design's call 2; #84's
 /// switch hides itself for the first, disables itself for the others).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LiveRefusal {
     /// A single state, no exposed values, no sounds and no script.
     NothingToDrive,
@@ -476,6 +476,14 @@ pub enum LiveRefusal {
     Dirt,
     /// A raster or a distant layer.
     RasterOrDistant,
+    /// Issue #85: a layer wholly outside the asset's box (by id).
+    Outside(String),
+    /// Issue #85: more parts in a state than `MAX_PARTS` (32).
+    TooManyParts(usize),
+    /// Issue #85: more pictures than `MAX_PICTURES` (128).
+    TooManyPictures(usize),
+    /// Issue #85: more values than `MAX_LIVE_PROPS` (96).
+    TooManyValues(usize),
 }
 
 impl std::fmt::Display for LiveRefusal {
@@ -486,6 +494,16 @@ impl std::fmt::Display for LiveRefusal {
             }
             LiveRefusal::Dirt => "it holds dirt",
             LiveRefusal::RasterOrDistant => "it holds a raster or distant layer",
+            LiveRefusal::Outside(id) => return write!(f, "its layer {id:?} lies outside it"),
+            LiveRefusal::TooManyParts(n) => {
+                return write!(f, "it plays as {n} parts, more than {}", olr_format::levels::MAX_PARTS);
+            }
+            LiveRefusal::TooManyPictures(n) => {
+                return write!(f, "it needs {n} pictures, more than {}", olr_format::levels::MAX_PICTURES);
+            }
+            LiveRefusal::TooManyValues(n) => {
+                return write!(f, "it has {n} values, more than {}", olr_format::levels::MAX_LIVE_PROPS);
+            }
         })
     }
 }
@@ -508,7 +526,9 @@ pub(super) fn plain_dirt(e: &Element) -> bool {
 
 /// Why a copy of `asset` cannot be Live, if it cannot: nothing to drive
 /// first, then dirt (a plain Dirt layer, or a dirt cell of a mixed layer in
-/// any state), then a raster or distant layer.
+/// any state), then a raster or distant layer, then (issue #85, the played
+/// form's plan, `crate::live`) a layer wholly outside the asset's box and
+/// the parts', pictures' and values' limits.
 pub fn live_refusal(asset: &Asset) -> Option<LiveRefusal> {
     if !drives(asset) {
         return Some(LiveRefusal::NothingToDrive);
@@ -533,7 +553,7 @@ pub fn live_refusal(asset: &Asset) -> Option<LiveRefusal> {
     if asset.pieces.iter().any(|p| matches!(p.element.kind, ElementKind::Raster) || p.element.is_distant()) {
         return Some(LiveRefusal::RasterOrDistant);
     }
-    None
+    crate::live::plan(asset).err()
 }
 
 /// What a landing (`land`, the editor's placing; until #82 makes it a

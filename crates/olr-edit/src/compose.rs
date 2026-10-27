@@ -1732,7 +1732,8 @@ pub fn stale(pack: &Pack, back_tile: &RgbaImage) -> Result<Vec<String>, ComposeE
 }
 
 /// The baked files of `level` that differ from `baked`'s, as [`stale`]
-/// lists them (`olr_edit::placed::stale` shares it).
+/// lists them (`olr_edit::placed::stale` shares it), then (issue #85)
+/// the live copies' played form's files that differ, either side's.
 pub fn differing(level: &LevelSource, baked: &LevelSource) -> Result<Vec<String>, ComposeError> {
     let files = |l: &LevelSource| -> Result<MemFs, ComposeError> {
         let mut fs = MemFs::new();
@@ -1757,5 +1758,11 @@ pub fn differing(level: &LevelSource, baked: &LevelSource) -> Result<Vec<String>
         let files = [olr_format::levels::distant_file(i), olr_format::levels::distant_glow_file(i)];
         out.extend(files.into_iter().filter(|f| differs(f)));
     }
+    // Issue #85: the live copies' played form, every file either names.
+    let live = |l: &LevelSource| l.live.as_ref().map(|x| olr_format::levels::live_paths(&x.file));
+    let mut paths: Vec<String> = live(level).into_iter().chain(live(baked)).flatten().collect();
+    paths.sort();
+    paths.dedup();
+    out.extend(paths.into_iter().filter(|f| differs(f)));
     Ok(out)
 }

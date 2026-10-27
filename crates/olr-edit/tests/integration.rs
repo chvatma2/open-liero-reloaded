@@ -15,6 +15,7 @@ mod glow_beams;
 mod guide;
 mod level;
 mod library;
+mod live;
 mod look;
 mod mask;
 mod material;

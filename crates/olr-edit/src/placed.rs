@@ -9,8 +9,9 @@
 //! [`bake_pack`] bakes a pack's placement (`pack::placement`), [`stale`]
 //! lists the baked files that differ from it, [`from_composition`]
 //! converts a level of OLR 0.2, and [`edit_ground`] scopes the look's
-//! group and material edits to the ground. Live copies bake as static for
-//! now (#85 takes them out). Issue #75: the operations on the copies
+//! group and material edits to the ground. Issue #85: Live copies stay
+//! out of the ground; [`bake`] writes their played form (`level.live`,
+//! [`crate::live::bake_live`]). Issue #75: the operations on the copies
 //! (`ops`: [`add_copy`], [`move_copy`], [`resize_copy`], [`set_copy`],
 //! [`remove_copy`], …), shared by the level tab and `olr-cli level copy`.
 
@@ -147,12 +148,12 @@ fn expanded(grid: &RgbaImage, pixel_size: u32, art: (u32, u32)) -> Option<RgbaIm
 
 /// The copy's frame: the asset's size and art scale, where it is placed,
 /// its placed size and the level's art scale.
-struct Frame {
-    size: (u32, u32),
-    art_scale: u32,
-    at: (i32, i32),
-    to: (u32, u32),
-    s: u32,
+pub(crate) struct Frame {
+    pub(crate) size: (u32, u32),
+    pub(crate) art_scale: u32,
+    pub(crate) at: (i32, i32),
+    pub(crate) to: (u32, u32),
+    pub(crate) s: u32,
 }
 
 impl Frame {
@@ -164,7 +165,7 @@ impl Frame {
 }
 
 /// A piece's glow mask, surface map and back surface map.
-type Maps = [Option<Arc<Vec<u8>>>; 3];
+pub(crate) type Maps = [Option<Arc<Vec<u8>>>; 3];
 
 /// Posed piece `p` laid in the level by copy frame `f`: its box mapped
 /// (`stretch_span` of its box before the positions moved it, then the
@@ -173,7 +174,7 @@ type Maps = [Option<Arc<Vec<u8>>>; 3];
 /// back art, glow mask, painted maps); kept as it is when `f` is
 /// untouched. `None` for a piece stretched to nothing or whose data does
 /// not fit it.
-fn lay(p: &PosedPiece, f: &Frame) -> Option<(Element, Decoded, Maps)> {
+pub(crate) fn lay(p: &PosedPiece, f: &Frame) -> Option<(Element, Decoded, Maps)> {
     let Piece { element, decoded, glow_mask, surface_map, back_surface_map, .. } = &p.piece;
     let mut e = element.clone();
     let maps = [glow_mask.clone(), surface_map.clone(), back_surface_map.clone()];
@@ -316,8 +317,8 @@ pub struct LaidCopy {
 }
 
 /// Copy `c` of `asset` posed in its state (none: the asset's start) with
-/// its values (a Live copy as a static one, its `live_refusal` an error
-/// naming it) and laid in a level of art scale `s` ([`bake`]'s placing):
+/// its values (a Live copy as a static one, as the thumbnail shows it;
+/// its `live_refusal` an error naming it) and laid in a level of art scale `s` ([`bake`]'s placing):
 /// each piece's box mapped by the copy's stretch, its data resampled
 /// nearest, folders folded, ids `<copy id>.<element id>`, distant at the
 /// copy's depth. A piece stretched to nothing is left out.
@@ -423,8 +424,10 @@ pub fn gather_copy(
 /// checked first (`check_placed`, then each asset decoded: `Own` ones by
 /// `check_own_asset`, library copies by `check_asset`); each copy posed
 /// and laid ([`lay_copy`]: in its state (none: the asset's start) with its
-/// values (a Live copy as a static one, its
-/// `live_refusal` an error naming it); placed in level coordinates (art
+/// values (issue #85: a Live copy left out, its played form in
+/// `level.live`, [`crate::live::bake_live`], and shown as a static one in
+/// the thumbnail only; its `live_refusal` an error naming it; its glow
+/// groups give a level without a look the default one); placed in level coordinates (art
 /// resampled nearest from the asset's art scale to the level's; a box
 /// `[b, b + n)` of an asset `w` wide placed `W` wide becoming `[at +
 /// floor(b × W / w), at + floor((b + n) × W / w))`, its data resampled
@@ -460,11 +463,50 @@ pub fn bake(
         let Some(asset) = src.assets.get(&a.key) else { continue };
         assets.insert(a.key.as_str(), decoded_asset(&a.key, &a.origin, asset)?);
     }
+    // Issue #85: Live copies stay out of the ground (their played form
+    // is `level.live`), but the thumbnail shows them as placed, and their
+    // glow groups give a level without a look the default one.
+    let live: Vec<&PlacedCopy> = src.file.copies.iter().filter(|c| c.live).collect();
+    let live_lit = live.iter().any(|c| assets.get(c.asset.as_str()).is_some_and(|a| !a.groups.is_empty()));
+    let shown = if live.is_empty() {
+        None
+    } else {
+        let mut shown = level.clone();
+        bake_copies(&mut shown, src, &assets, back_tile, true, live_lit)?;
+        Some(shown)
+    };
+    let baked = bake_copies(level, src, &assets, back_tile, false, live_lit)?;
+    level.live = crate::live::bake_live(src, &assets, level)?;
+    match shown {
+        Some(mut shown) => {
+            refresh_thumb(&mut shown);
+            level.thumb = shown.thumb;
+        }
+        None => refresh_thumb(level),
+    }
+    Ok(baked)
+}
+
+/// [`bake`]'s copies into `level` (no thumbnail): every copy, the Live
+/// ones too when `with_live`; a look made for `live_lit` (a Live copy
+/// glows) as for gathered groups.
+fn bake_copies(
+    level: &mut LevelSource,
+    src: &PlacedSource,
+    assets: &BTreeMap<&str, Asset>,
+    back_tile: &RgbaImage,
+    with_live: bool,
+    live_lit: bool,
+) -> Result<Baked, PlacedError> {
+    let (size, s) = (level.size, level.art_scale);
     let mut groups: Vec<GlowGroupSource> = Vec::new();
     let mut materials: Vec<MaterialSource> = Vec::new();
     let mut baked = Baked::default();
     let (mut distant, mut near): (Vec<Flat>, Vec<Flat>) = (Vec::new(), Vec::new());
     for c in &src.file.copies {
+        if c.live && !with_live {
+            continue;
+        }
         let Some(asset) = assets.get(c.asset.as_str()) else { continue };
         let laid = lay_copy(c, asset, s)?;
         let ids = gather_copy(&mut groups, &mut materials, &c.id, &laid.groups, &laid.materials);
@@ -493,7 +535,7 @@ pub fn bake(
     // The look: the level's own settings, the gathered groups and
     // materials.
     let before = level.look.clone();
-    if before.is_some() || !groups.is_empty() || !materials.is_empty() {
+    if before.is_some() || !groups.is_empty() || !materials.is_empty() || live_lit {
         baked.added_look = before.is_none();
         let had_group =
             |id: &String| before.as_ref().is_some_and(|l| l.glow_groups.iter().any(|g| g.id == *id));
@@ -539,7 +581,6 @@ pub fn bake(
     let opacity: Vec<u8> = flat.iter().map(|f| f.opacity).collect();
     let all = Rect { x: 0, y: 0, w: size.0, h: size.1 };
     bake_elements_with_opacity(level, &items, &opacity, &masks, &painted, back_tile, all);
-    refresh_thumb(level);
     Ok(baked)
 }
 

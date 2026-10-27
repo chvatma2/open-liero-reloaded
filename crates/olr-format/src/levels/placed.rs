@@ -142,7 +142,8 @@ pub struct PlacedCopy {
     #[serde(default, skip_serializing_if = "d::is_false")]
     pub free_aspect: bool,
     /// Live: the copy stays an object in the match, driven by its states,
-    /// values and scripts (for now it bakes as a static copy). Only an
+    /// values and scripts (issue #85: saved as the level's played form,
+    /// `live.ron` and `live/`, not baked into the ground). Only an
     /// asset with more than one state, exposed values, sounds or a
     /// script, holding no dirt, raster or distant layer, and not placed
     /// distant. Default false: static, baked into the level in its
@@ -528,7 +529,9 @@ fn plain_dirt(e: &Element) -> bool {
 /// elements what a distant element may be, no glass, beam or painted
 /// surface map; an asset holding a raster placed at `(0, 0)`, unstretched,
 /// not distant, not Live, of the level's size; one holding distant layers
-/// unstretched, not distant, not Live; every script a copy or the level
+/// unstretched, not distant, not Live; at most `MAX_LIVE_COPIES` (64) Live
+/// copies, each's box inside the level, running at most `MAX_SCRIPTS`
+/// scripts together (issue #85); every script a copy or the level
 /// says it has present, within `MAX_SCRIPT_BYTES`, and no other; the
 /// copies' pixels after stretching (stacked state pictures counted)
 /// within `MAX_COMPOSED_PIXELS`; the glow groups gathered from the

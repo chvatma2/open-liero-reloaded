@@ -118,9 +118,9 @@ pub struct LiveCopyFile {
     /// The index of its starting state. Default 0.
     #[serde(default, skip_serializing_if = "d::is_default")]
     pub start_state: u16,
-    /// The copy's own values (prop index, value), applied once after its
-    /// starting state's: only properties the starting state does not set.
-    /// Default none.
+    /// The copy's own values (prop index, value) of properties no state
+    /// sets, applied once after its starting state's (the others are in
+    /// every state's values). Default none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub start_values: Vec<(u16, i64)>,
     /// The copy's animation table: every distinct animation its defaults,
@@ -298,8 +298,9 @@ pub struct LiveStateFile {
     /// name the state by it.
     pub name: String,
     /// (prop index, value) for every property any state of the asset
-    /// sets: this state's value, else the property's default. Entering the
-    /// state sets them all. Default none.
+    /// sets: this state's value, else the copy's own, else the property's
+    /// default (a static copy's pose). Entering the state sets them all.
+    /// Default none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub values: Vec<(u16, i64)>,
     /// Its parts, bottom to top, at most `MAX_PARTS` (32).
@@ -468,8 +469,9 @@ fn invalid(path: &str, message: impl Into<String>) -> FormatError {
 
 /// What can be checked from `live.ron` alone before any other file is
 /// read: the counts, the scripts' and sounds' paths, each picture's size,
-/// the files' count and the pictures' decoded bytes at art scale `s`.
-fn check_names(f: &LiveFile, s: u32) -> Result<(), FormatError> {
+/// the files' count and the pictures' decoded bytes at art scale `s`
+/// (the level editor's Live switch checks a planned played form so).
+pub fn check_live_budget(f: &LiveFile, s: u32) -> Result<(), FormatError> {
     if f.copies.len() > MAX_LIVE_COPIES {
         return Err(invalid("copies", format!("{} live copies: at most {MAX_LIVE_COPIES}", f.copies.len())));
     }
@@ -832,7 +834,7 @@ pub fn check_live(
 ) -> Result<(), FormatError> {
     let f = &src.file;
     let s = art_scale.max(1);
-    check_names(f, s)?;
+    check_live_budget(f, s)?;
     if src.scripts.len() != f.scripts.len() || src.sounds.len() != f.sounds.len() {
         return Err(invalid("scripts", "the scripts and sounds read are not the ones listed"));
     }
@@ -953,7 +955,7 @@ pub fn read_live_files(
     }
     let file: LiveFile = from_canonical(LIVE_FILE, &read_text(src, LIVE_FILE)?)?;
     let s = art_scale.max(1);
-    check_names(&file, s)?;
+    check_live_budget(&file, s)?;
     let mut scripts = Vec::with_capacity(file.scripts.len());
     for p in &file.scripts {
         let bytes = read_file(src, p, MAX_SCRIPT_BYTES)?;
