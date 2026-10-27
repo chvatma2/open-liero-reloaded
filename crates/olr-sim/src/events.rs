@@ -205,6 +205,10 @@ pub enum EventKind {
     Message(Message),
     /// The match ended (`GameServer::GameOver`), once.
     GameOver(MatchResult),
+    /// Live copy `copy` (an index into [`crate::LiveLevel::copies`])
+    /// entered its state `state` (issue #86): at setup, its starting state
+    /// (with the first tick's events), or a setup call's. No OLX counterpart.
+    LiveState { copy: u16, state: u16 },
 }
 
 impl EventKind {

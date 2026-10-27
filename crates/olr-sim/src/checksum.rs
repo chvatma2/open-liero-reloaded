@@ -104,12 +104,14 @@ impl World {
     /// serial) and the pool's indices and spawn counter, the generators, the
     /// entity counter and the `RotIncrement` bumps, both bonus arrays
     /// with the messages between them, then the game mode's state and the
-    /// match's end. Two worlds that evolve identically
+    /// match's end, and last, only in a world with live copies, each
+    /// copy's state and values (issue #86). Two worlds that evolve identically
     /// have equal checksums, and any change to that state changes it
     /// (barring a hash collision).
     ///
     /// Left out: what only setup sets (the settings, the mod, the theme's
-    /// holes, the green-dirt mask and the setup's worm count), events (output, not state: setup
+    /// holes, the green-dirt mask, the setup's worm count and the live
+    /// copies' setup), events (output, not state: setup
     /// events waiting for the next tick too), the spawn work counter and
     /// scratch and spare buffers.
     pub fn checksum(&self) -> u64 {
@@ -147,6 +149,7 @@ impl World {
             others: _,
             spare: _,
             setup_worms: _,
+            live,
         } = self;
         let mut h = Fnv::new();
         h.u32(terrain.width());
@@ -164,6 +167,11 @@ impl World {
         draws.hash(&mut h);
         bonuses.hash(&mut h);
         referee.hash(&mut h);
+        // Only when the world has live copies, so every world without them
+        // hashes exactly as before (match goldens, oracle traces).
+        if let Some(live) = live {
+            live.hash(&mut h);
+        }
         h.finish()
     }
 }

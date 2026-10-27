@@ -15,8 +15,9 @@ use crate::netsim::{NetSpec, WorldFactory};
 pub const BUNDLE_MAGIC: [u8; 4] = *b"OLDS";
 /// 2: `NetSpec` gained its migration fields (plan 12c). 3: withdrawals
 /// (`DesyncBundle::gone`, plan 12d). 4: 16-bit keys (issue #23). 5: the
-/// keys' bits 11-15 are Weapon 1-5 (issue #48).
-pub const BUNDLE_VERSION: u16 = 5;
+/// keys' bits 11-15 are Weapon 1-5 (issue #48). 6: the states' live
+/// copies (`WorldState`'s last field, issue #86).
+pub const BUNDLE_VERSION: u16 = 6;
 
 /// A peer's record of a desync.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -113,6 +114,7 @@ pub const FIELDS: &[&str] = &[
     "over_frame",
     "game_over_sent",
     "gone",
+    "live",
 ];
 
 /// Replays the bundle's inputs from the start world, withdrawing each

@@ -91,7 +91,18 @@ fn build(worms: usize, w: u32, h: u32, hit: ActionKind) -> World {
     build_with(worms, w, h, hit, SimSettings::lx56())
 }
 
+/// [`world_carving`] on a level with the live copies `live`.
+pub fn world_live(worms: usize, w: u32, h: u32, live: Arc<olr_sim::LiveLevel>) -> World {
+    let mut setup = setup_with(worms, w, h, ActionKind::Carve, SimSettings::lx56());
+    setup.live = Some(live);
+    World::new(setup, Box::new(OracleMode)).expect("the live world")
+}
+
 fn build_with(worms: usize, w: u32, h: u32, hit: ActionKind, settings: SimSettings) -> World {
+    World::new(setup_with(worms, w, h, hit, settings), Box::new(OracleMode)).expect("the bench world")
+}
+
+fn setup_with(worms: usize, w: u32, h: u32, hit: ActionKind, settings: SimSettings) -> MatchSetup {
     let cells = (0..w * h)
         .map(|i| {
             let (x, y) = (i % w, i / w);
@@ -124,6 +135,5 @@ fn build_with(worms: usize, w: u32, h: u32, hit: ActionKind, settings: SimSettin
             WormSetup { team: 0, loadout: loadout.clone(), spawn: Some((x, (h / 2) as i32)) }
         })
         .collect();
-    let setup = MatchSetup { holes, seed: 7, worms, ..MatchSetup::new(settings, sim_mod(hit), terrain) };
-    World::new(setup, Box::new(OracleMode)).expect("the bench world")
+    MatchSetup { holes, seed: 7, worms, ..MatchSetup::new(settings, sim_mod(hit), terrain) }
 }

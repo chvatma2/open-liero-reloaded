@@ -320,3 +320,101 @@ proptest! {
         }
     }
 }
+
+// Issue #86: a state's live part.
+
+fn live_world() -> World {
+    world::world_live(8, 400, 300, crate::live_level::live_level())
+}
+
+/// A live world played a while, its press moved by a sub-pixel.
+fn live_played() -> World {
+    let mut w = live_world();
+    w.set_live_state(0, 1).unwrap();
+    w.set_live_value(1, 0, 3 * olr_sim::LIVE_SUBPIXELS + 5).unwrap();
+    let mut ev = TickEvents::new();
+    for t in 0..40 {
+        w.tick(&keys(t), &mut ev);
+    }
+    w
+}
+
+/// `dst.load_state(s)` is refused as `Live` and changes nothing.
+fn refused(mut dst: World, s: WorldState) {
+    let before = dst.clone();
+    assert_eq!(dst.load_state(s), Err(StateError::Live));
+    assert_eq!(dst, before, "a refused state changes nothing");
+}
+
+#[test]
+fn a_live_part_must_fit_the_receivers_level() {
+    let src = live_played();
+    // A live part for a world without one, and none for a world with one.
+    refused(world::world_carving(8, 400, 300), src.state());
+    let mut plain = world::world_carving(8, 400, 300);
+    let mut ev = TickEvents::new();
+    plain.tick(&keys(0), &mut ev);
+    refused(live_world(), plain.state());
+    // Another copy count: a level of the first two copies.
+    let mut two = (*crate::live_level::live_level()).clone();
+    two.copies.truncate(2);
+    refused(world::world_live(8, 400, 300, std::sync::Arc::new(two)), src.state());
+    // A state out of range, a value outside its limits.
+    for (state, value) in [
+        (Some((0, 2)), None),
+        (Some((2, u16::MAX)), None),
+        (None, Some((0, 0x100_0000))),
+        (None, Some((2, 21 * olr_sim::LIVE_SUBPIXELS))),
+        (None, Some((5, 41))),
+        (None, Some((5, -1))),
+    ] {
+        let mut s = src.state();
+        s.live_mut_for_test().as_mut().unwrap().edit_for_test(state, value);
+        refused(live_world(), s);
+    }
+    // Values at their limits are taken.
+    let mut s = src.state();
+    s.live_mut_for_test().as_mut().unwrap().edit_for_test(Some((2, 1)), Some((5, 40)));
+    live_world().load_state(s).unwrap();
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 256, failure_persistence: None, ..ProptestConfig::default() })]
+
+    /// Hostile host: a live part with any state and value, or dropped.
+    #[test]
+    fn hostile_live_parts_never_panic(
+        state in (0usize..4, any::<u16>()),
+        value in (0usize..7, any::<i64>()),
+        small in -30i64 * 256..30 * 256,
+        drop in 0u8..8,
+    ) {
+        let src = live_played();
+        let mut s = src.state();
+        let value = (value.0, if value.1 % 2 == 0 { small } else { value.1 });
+        let state = (state.0, state.1 % 4);
+        if drop == 0 {
+            *s.live_mut_for_test() = None;
+        } else {
+            s.live_mut_for_test().as_mut().unwrap().edit_for_test(Some(state), Some(value));
+        }
+        let mut w = live_world();
+        let before = w.clone();
+        match w.load_state(s) {
+            Ok(()) => {
+                let mut ev = TickEvents::new();
+                for t in 0..10 {
+                    w.tick(&keys(t), &mut ev);
+                }
+                let live = w.live().unwrap();
+                for c in live.copies() {
+                    let _ = (c.rect(), c.rock_parts().count(), c.state_name());
+                }
+            }
+            Err(e) => {
+                prop_assert_eq!(e, StateError::Live);
+                prop_assert_eq!(w, before, "a refused state changes nothing");
+            }
+        }
+    }
+}

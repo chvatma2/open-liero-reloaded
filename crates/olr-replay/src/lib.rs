@@ -136,6 +136,7 @@ impl ReplaySetup {
             worms,
             pool_capacity,
             bonus_weapons,
+            live: _,
         } = setup;
         ReplaySetup {
             packs,
@@ -171,6 +172,7 @@ impl ReplaySetup {
             worms: self.worms.clone(),
             pool_capacity: self.pool_capacity,
             bonus_weapons: self.bonus_weapons.clone(),
+            live: None,
         }
     }
 }

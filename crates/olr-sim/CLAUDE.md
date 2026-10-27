@@ -55,7 +55,10 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   a new state field must be added to `WorldState` (the destructuring forces it)
   and validated if it indexes anything. `WorldState` holds what `checksum`
   hashes (postcard, then deflate; `MAX_INFLATED`), the mode as
-  `GameMode::save_state` bytes. The sender may be a stranger: `validate`
+  `GameMode::save_state` bytes; last, `live: Option<LiveWire>` (issue
+  #86), refused (`StateError::Live`) when present without live copies
+  or the reverse, with another copy or value count, a state out of
+  range or a value outside its limits (`LiveWorld::can_load`). The sender may be a stranger: `validate`
   refuses (`StateError`, nothing changed) anything that could index out of
   bounds, outgrow a `Buf`, overflow a clock or counter, or stall a tick
   (projectile clocks, rope speed, aim), and every float of a worm (rope,
@@ -196,13 +199,44 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   background picture), start, `start_values`, `LiveHealth`, scripts and
   sounds; `state(name)`, `prop(name)`, `sound(name)` through sorted
   tables): setup data shared by an `Arc`, never hashed or transferred,
-  made by `olr-content` from the played form. Data only: #86 puts it in
-  the world. Test: `live_level_finds_copies_states_and_props_by_name`.
+  made by `olr-content` from the played form. Test:
+  `live_level_finds_copies_states_and_props_by_name`.
+  **In the world** (issue #86): `MatchSetup::live:
+  Option<Arc<LiveLevel>>` (`None` by default; `validate` refuses more
+  copies, states or values than a `u16` indexes, `SetupError::Live`)
+  gives `World::live: Option<LiveWorld>`, present exactly then: per copy
+  its state and its values (one `i64` a `LiveProp`, flat in a `Buf` with
+  setup-only offsets; a tick allocates nothing). Positions (`X`, `Y`,
+  `OffsetX`, `OffsetY`, `LiveTarget::is_position`) are kept in 1/256
+  world pixel (`LIVE_SUBPIXELS`; the level's numbers are whole pixels,
+  scaled on entry), a part's place rounded down. Entering a state sets
+  every value its complete look names and emits `EventKind::LiveState {
+  copy, state }` (gameplay class); `World::build` enters each copy's
+  start, then applies its `start_values`, after the worms (setup events,
+  with the first tick's). A set value is clamped into its limits
+  (`Health` also `0..=points`; never `i64::clamp`, which panics on a bad
+  range). Setup calls `set_live_state(copy, state)` and
+  `set_live_value(copy, prop, value)` (indices, the world's units;
+  `LiveError` for an unknown copy, state or prop, nothing changed);
+  tests and tools may call them between ticks. `World::live()` is a
+  `LiveView` (`copy`, `copy_by_id`, `copies`) of `LiveCopyView`s: id,
+  `rect`, `state`/`state_name`, `values`/`value(name)`, `visible_parts`
+  and `rock_parts` at whole-pixel places (copy place + `X`/`Y` + part
+  place + its layer's offsets; `Visible` and `LayerVisible` 0 hide).
+  Nothing reads the parts in play yet (#90, #91, #94). `LiveWorld` is
+  where #88 (script state) and #89 (motion) extend: each adds to the
+  struct, `LiveWorld::hash` and `LiveWire` (exhaustive destructurings).
+  Tests: `tests/live.rs` (`tests/common/live.rs`'s console, press and
+  crate), `tests/state.rs`' live refusals and proptest, `tests/no_alloc.rs`'s
+  `a_live_world_ticks_without_allocating`.
 - **Checksum** (`checksum.rs`): FNV-1a 64 over all mutable state, through an
   exhaustive destructuring of each type; a new field must be hashed there
   (types with private fields hash themselves in their module, the mode
   through `GameMode::checksum` with the public `Fnv`). Every NaN hashes as
-  one canonical NaN. Tick-time buffers are `buf::Buf`, whose clone keeps
+  one canonical NaN. The live copies' part (`LiveWorld::hash`) comes
+  last and only in a world with them, so every world without live copies
+  hashes exactly as before (`a_world_without_live_copies_hashes_as_before`
+  pins a synthetic world's checksums). Tick-time buffers are `buf::Buf`, whose clone keeps
   the capacity, so a cloned world ticks without allocating too.
 
 Bench: `benches/tick.rs` (divan, `cargo xtask bench`): a tick with OLX's

@@ -2,7 +2,8 @@
 //! with firing, explosions, dirt, bleeding, deaths and respawns, and with
 //! bonuses spawned, placed, picked up and exploded; nor do its events, also
 //! in a cloned world; nor do a game mode's commands (weapons given mid-match,
-//! a worm spawned mid-match). (`olr-scenario`'s `tests/no_alloc.rs` fires every
+//! a worm spawned mid-match), nor a world with live copies (issue #86).
+//! (`olr-scenario`'s `tests/no_alloc.rs` fires every
 //! weapon of the imported Classic mod.)
 
 use std::collections::BTreeMap;
@@ -16,6 +17,12 @@ use olr_sim::{
     SimSettings, Slot, TickEvents, World, WormSetup, olx_kill_credit,
 };
 use olr_terrain::{GreenMask, Stamp, Terrain};
+
+#[path = "common/world.rs"]
+mod synthetic;
+
+#[path = "common/live.rs"]
+mod live_level;
 
 /// A plain pixel projectile: explodes on terrain, injures worms.
 fn pellet() -> ProjectileDef {
@@ -351,4 +358,34 @@ fn give_weapon_mid_match_does_not_allocate() {
     // The last tick's give: worm 400 % 2, slot 400 % 5, weapon 400 % 4.
     assert_eq!(w.worms()[0].slots[0].weapon, 0);
     assert_eq!(w.worms()[1].slots[4].weapon, 3, "tick 399's give");
+}
+
+/// Issue #86: a world with live copies ticks, and is cloned and ticks,
+/// without allocating.
+#[test]
+fn a_live_world_ticks_without_allocating() {
+    let mut w = synthetic::world_live(8, 400, 300, live_level::live_level());
+    w.set_live_state(0, 1).unwrap();
+    let keys: Vec<Vec<Keys>> = (0..300u32)
+        .map(|t| {
+            (0..8u32)
+                .map(|i| Keys(if (t + i) % 5 < 3 { Keys::FIRE | Keys::LEFT } else { Keys::UP | Keys::JUMP }))
+                .collect()
+        })
+        .collect();
+    let mut out = TickEvents::new();
+    let info = allocation_counter::measure(|| {
+        for k in &keys[..200] {
+            w.tick(k, &mut out);
+        }
+    });
+    assert_eq!(info.count_total, 0, "a live world's tick allocated");
+    assert_eq!(w.live().unwrap().copy(0).unwrap().state_name(), "Alarm");
+    let mut c = w.clone();
+    let info = allocation_counter::measure(|| {
+        for k in &keys[200..] {
+            c.tick(k, &mut out);
+        }
+    });
+    assert_eq!(info.count_total, 0, "a cloned live world's tick allocated");
 }

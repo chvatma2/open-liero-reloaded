@@ -11,6 +11,7 @@ use olr_terrain::{GreenMask, Stamp, Terrain};
 
 use crate::bonus::Bonuses;
 use crate::buf::Buf;
+use crate::live::{LiveLevel, LiveWorld};
 use crate::mod_rt::SimMod;
 use crate::mode::{GameMode, ModeCtx};
 use crate::projectile::ProjectilePool;
@@ -67,6 +68,10 @@ pub struct MatchSetup {
     /// missing from the restriction file (`CWpnRest::updateList`). Ids
     /// outside the mod are left out.
     pub bonus_weapons: Option<Vec<i32>>,
+    /// The level's live copies (issue #86), shared by every world of the
+    /// match; `None` (the default) for a level without them, whose world
+    /// hashes, transfers and plays exactly as before.
+    pub live: Option<Arc<LiveLevel>>,
 }
 
 impl MatchSetup {
@@ -94,13 +99,15 @@ impl MatchSetup {
             worms: Vec::new(),
             pool_capacity: Self::DEFAULT_POOL_CAPACITY,
             bonus_weapons: None,
+            live: None,
         }
     }
 
     /// Checks what the simulation cannot run with: settings outside OLX's
     /// ranges ([`SimSettings::validate`]), more than [`MAX_WORMS`] worms, a
     /// pool size outside `1..=MAX_POOL_CAPACITY`, a loadout of more than
-    /// [`MAX_SLOTS`] slots.
+    /// [`MAX_SLOTS`] slots, live copies, states or values past what a
+    /// `u16` index reaches.
     pub fn validate(&self) -> Result<(), SetupError> {
         self.settings.validate().map_err(SetupError::Settings)?;
         if self.worms.len() > MAX_WORMS {
@@ -114,6 +121,13 @@ impl MatchSetup {
         {
             return Err(SetupError::TooManySlots { worm, slots: w.loadout.slots.len() });
         }
+        if let Some(live) = &self.live {
+            let max = usize::from(u16::MAX);
+            let fits = |c: &crate::LiveCopy| c.states.len() <= max && c.props.len() <= max;
+            if live.copies.len() > max || !live.copies.iter().all(fits) {
+                return Err(SetupError::Live);
+            }
+        }
         Ok(())
     }
 }
@@ -124,7 +138,13 @@ pub enum SetupError {
     Settings(SettingsError),
     TooManyWorms(usize),
     PoolCapacity(usize),
-    TooManySlots { worm: usize, slots: usize },
+    TooManySlots {
+        worm: usize,
+        slots: usize,
+    },
+    /// More live copies, or a copy with more states or values, than a
+    /// `u16` indexes.
+    Live,
 }
 
 impl fmt::Display for SetupError {
@@ -138,6 +158,7 @@ impl fmt::Display for SetupError {
             SetupError::TooManySlots { worm, slots } => {
                 write!(f, "worm {worm}: {slots} weapon slots, at most {MAX_SLOTS}")
             }
+            SetupError::Live => write!(f, "more live copies, states or values than a match holds"),
         }
     }
 }
@@ -178,7 +199,9 @@ impl World {
     /// carving its spawn hole, with its loadout; `mode.on_spawn` for each),
     /// both clocks at `setup.start`, the generators seeded with
     /// `setup.seed`. The commands `on_spawn` queued are applied before it
-    /// returns. Spawn events come with the first tick's. Fails if
+    /// returns. Then every live copy enters its starting state and takes
+    /// its starting values. Spawn and live state events come with the
+    /// first tick's. Fails if
     /// [`MatchSetup::validate`] does.
     pub fn new(setup: MatchSetup, mode: Box<dyn GameMode>) -> Result<World, SetupError> {
         setup.validate()?;
@@ -198,6 +221,7 @@ impl World {
             worms,
             pool_capacity,
             bonus_weapons,
+            live,
         } = setup;
         let terrain_min = terrain.width().min(terrain.height());
         let bonuses = Bonuses::new(sim_mod.weapons().len(), start + TimeDiff(CLOCK_OFFSET_MS));
@@ -227,6 +251,7 @@ impl World {
             },
             spare: Spare::new(MAX_WORMS.saturating_sub(worms.len())),
             setup_worms: 0,
+            live: live.map(LiveWorld::new),
         };
         if let Some(ids) = bonus_weapons {
             world.set_bonus_weapons(&ids);
@@ -236,6 +261,9 @@ impl World {
         }
         world.apply_commands();
         world.setup_worms = world.worms.len();
+        if let Some(live) = &mut world.live {
+            live.start(&mut world.draws.events);
+        }
         world
     }
 

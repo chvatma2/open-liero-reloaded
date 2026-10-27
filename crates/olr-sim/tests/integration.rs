@@ -8,6 +8,9 @@
 #[path = "common/world.rs"]
 mod world;
 
+#[path = "common/live.rs"]
+mod live_level;
+
 mod live;
 mod snapshot;
 mod state;

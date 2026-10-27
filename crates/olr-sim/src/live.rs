@@ -9,10 +9,23 @@
 //! any state sets, and its parts), each picture's rock mask (a bit per
 //! world pixel; the art stays in presentation), its start, health,
 //! scripts and sounds. Lookups by copy id, state name and value name go
-//! through sorted tables. Data only: issue #86 puts it in the world.
+//! through sorted tables.
+//!
+//! Issue #86 puts the copies in the world: [`LiveWorld`] holds each
+//! copy's state and values (cloned for rollback, hashed after the rest of
+//! the world, transferred as [`LiveWire`]); [`LiveView`] reads them.
+//! Nothing moves and nothing reads the parts yet (#89-#91).
 
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::fmt;
+
+use serde::{Deserialize, Serialize};
+
+use crate::buf::Buf;
+use crate::checksum::Fnv;
+use crate::events::{EventKind, TickEvents};
 
 /// What a live copy's value drives (`olr_format::levels::Target`): a
 /// layer property names the asset layer its parts show
@@ -262,5 +275,425 @@ impl LiveLevel {
     /// Copy `id`.
     pub fn copy_by_id(&self, id: &str) -> Option<&LiveCopy> {
         self.copy(id).and_then(|i| self.copies.get(usize::from(i)))
+    }
+}
+
+/// How many steps a world pixel holds in a live copy's position-like
+/// values ([`LiveTarget::is_position`]): the world keeps `X`, `Y`,
+/// `OffsetX` and `OffsetY` in 1/256 world pixel, so a motion (#89) moves
+/// in sub-pixel steps without floats. A part's footprint is at the whole
+/// pixel, rounded down.
+pub const LIVE_SUBPIXELS: i64 = 256;
+
+impl LiveTarget {
+    /// Whether the world keeps this value in 1/[`LIVE_SUBPIXELS`] world
+    /// pixel (the level's numbers are whole pixels).
+    pub fn is_position(self) -> bool {
+        matches!(self, LiveTarget::X | LiveTarget::Y | LiveTarget::OffsetX(_) | LiveTarget::OffsetY(_))
+    }
+
+    /// The world's value of the level's number `v` (positions times
+    /// [`LIVE_SUBPIXELS`]).
+    fn scale(self, v: i64) -> i64 {
+        if self.is_position() { v.saturating_mul(LIVE_SUBPIXELS) } else { v }
+    }
+}
+
+/// `v` within `min..=max`, never a panic (`i64::clamp` panics when `min >
+/// max`: a broken setup keeps `max`).
+fn within(v: i64, min: i64, max: i64) -> i64 {
+    v.max(min).min(max)
+}
+
+impl LiveCopy {
+    /// Value `prop`'s limits in the world's units: its prop's, a position
+    /// in 1/[`LIVE_SUBPIXELS`] pixel, `Health` also within `0..=points`.
+    fn limits(&self, prop: &LiveProp) -> (i64, i64) {
+        let (mut min, mut max) = (prop.target.scale(prop.min), prop.target.scale(prop.max));
+        if prop.target == LiveTarget::Health
+            && let Some(h) = self.health
+        {
+            (min, max) = (min.max(0), max.min(i64::from(h.points)));
+        }
+        (min, max)
+    }
+
+    /// `v` (the world's units) clamped into value `prop`'s limits.
+    fn clamped(&self, prop: &LiveProp, v: i64) -> i64 {
+        let (min, max) = self.limits(prop);
+        within(v, min, max)
+    }
+
+    /// The value `target` holds among `values` (the first prop driving
+    /// it), if one does.
+    fn value_of(&self, values: &[i64], target: LiveTarget) -> Option<i64> {
+        let i = self.props.iter().position(|p| p.target == target)?;
+        values.get(i).copied()
+    }
+}
+
+/// Why a live setup call ([`crate::World::set_live_state`],
+/// [`crate::World::set_live_value`]) was refused; nothing changed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LiveError {
+    /// The world has no such live copy (or none at all).
+    NoCopy(u16),
+    /// The copy has no such state.
+    NoState { copy: u16, state: u16 },
+    /// The copy has no such value.
+    NoProp { copy: u16, prop: u16 },
+}
+
+impl fmt::Display for LiveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LiveError::NoCopy(c) => write!(f, "no live copy {c}"),
+            LiveError::NoState { copy, state } => write!(f, "live copy {copy} has no state {state}"),
+            LiveError::NoProp { copy, prop } => write!(f, "live copy {copy} has no value {prop}"),
+        }
+    }
+}
+
+/// The live copies' part of a world (issue #86): per copy its state and
+/// its values, one `i64` per [`LiveCopy::props`] entry, flat in one
+/// buffer, so nothing a tick does allocates. `LiveWorld` is where #88 adds
+/// script state and #89 motions: each extends this struct, its checksum
+/// ([`LiveWorld::hash`]) and its transfer ([`LiveWire`]).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LiveWorld {
+    /// The setup, shared by every world of the match: never hashed or
+    /// transferred.
+    pub(crate) level: Arc<LiveLevel>,
+    /// Setup only: copy `i`'s values are `values[offsets[i]..offsets[i +
+    /// 1]]` (one more entry than copies).
+    offsets: Buf<u32>,
+    /// Each copy's state, an index into its [`LiveCopy::states`].
+    states: Buf<u16>,
+    /// Every copy's values in the world's units (positions in
+    /// 1/[`LIVE_SUBPIXELS`] pixel), within their limits.
+    values: Buf<i64>,
+}
+
+impl LiveWorld {
+    /// The copies of `level` at their defaults, before they enter their
+    /// starting states ([`LiveWorld::start`]).
+    pub(crate) fn new(level: Arc<LiveLevel>) -> LiveWorld {
+        let n = level.copies.len();
+        let mut offsets = Buf::with_capacity(n + 1);
+        let mut values = Buf::with_capacity(level.copies.iter().map(|c| c.props.len()).sum());
+        offsets.push(0);
+        for c in &level.copies {
+            values.extend(c.props.iter().map(|p| c.clamped(p, p.target.scale(p.default))));
+            offsets.push(u32::try_from(values.len()).unwrap_or(u32::MAX));
+        }
+        let mut states = Buf::with_capacity(n);
+        states.resize(n, 0);
+        LiveWorld { level, offsets, states, values }
+    }
+
+    /// At setup: every copy enters its starting state (an event each, with
+    /// the first tick's), then its own starting values apply.
+    pub(crate) fn start(&mut self, events: &mut TickEvents) {
+        let level = self.level.clone();
+        for (i, c) in level.copies.iter().enumerate() {
+            let Ok(copy) = u16::try_from(i) else { break };
+            if usize::from(c.start_state) < c.states.len() {
+                self.enter(copy, c.start_state, events);
+            }
+            for &(prop, v) in &c.start_values {
+                if let Some(p) = c.props.get(usize::from(prop)) {
+                    self.put(copy, prop, p.target.scale(v));
+                }
+            }
+        }
+    }
+
+    fn range(&self, copy: u16) -> core::ops::Range<usize> {
+        let i = usize::from(copy);
+        let start = self.offsets.get(i).map_or(0, |&o| o as usize);
+        let end = self.offsets.get(i + 1).map_or(start, |&o| o as usize);
+        start..end.max(start).min(self.values.len())
+    }
+
+    /// Copy `copy`'s values.
+    pub(crate) fn values(&self, copy: u16) -> &[i64] {
+        &self.values[self.range(copy)]
+    }
+
+    /// Sets value `prop` of `copy` to `v` (the world's units), clamped
+    /// into its limits. An index outside the setup changes nothing.
+    fn put(&mut self, copy: u16, prop: u16, v: i64) {
+        let Some(c) = self.level.copies.get(usize::from(copy)) else { return };
+        let Some(p) = c.props.get(usize::from(prop)) else { return };
+        let v = c.clamped(p, v);
+        let r = self.range(copy);
+        if let Some(slot) = self.values[r].get_mut(usize::from(prop)) {
+            *slot = v;
+        }
+    }
+
+    /// Copy `copy` enters `state`: every value the state's complete look
+    /// names is set, then [`EventKind::LiveState`] is emitted.
+    fn enter(&mut self, copy: u16, state: u16, events: &mut TickEvents) {
+        let level = self.level.clone();
+        let Some(s) = level.copies.get(usize::from(copy)).and_then(|c| c.states.get(usize::from(state)))
+        else {
+            return;
+        };
+        if let Some(slot) = self.states.get_mut(usize::from(copy)) {
+            *slot = state;
+        }
+        let c = &level.copies[usize::from(copy)];
+        for &(prop, v) in &s.values {
+            if let Some(p) = c.props.get(usize::from(prop)) {
+                self.put(copy, prop, p.target.scale(v));
+            }
+        }
+        events.push(EventKind::LiveState { copy, state });
+    }
+
+    /// [`crate::World::set_live_state`].
+    pub(crate) fn set_state(
+        &mut self,
+        copy: u16,
+        state: u16,
+        events: &mut TickEvents,
+    ) -> Result<(), LiveError> {
+        let c = self.level.copies.get(usize::from(copy)).ok_or(LiveError::NoCopy(copy))?;
+        if usize::from(state) >= c.states.len() {
+            return Err(LiveError::NoState { copy, state });
+        }
+        self.enter(copy, state, events);
+        Ok(())
+    }
+
+    /// [`crate::World::set_live_value`].
+    pub(crate) fn set_value(&mut self, copy: u16, prop: u16, value: i64) -> Result<(), LiveError> {
+        let c = self.level.copies.get(usize::from(copy)).ok_or(LiveError::NoCopy(copy))?;
+        if usize::from(prop) >= c.props.len() {
+            return Err(LiveError::NoProp { copy, prop });
+        }
+        self.put(copy, prop, value);
+        Ok(())
+    }
+
+    /// The live part of [`crate::World::checksum`]: every copy's state,
+    /// then every value, after their counts.
+    pub(crate) fn hash(&self, h: &mut Fnv) {
+        let LiveWorld { level: _, offsets: _, states, values } = self;
+        h.usize(states.len());
+        for &s in states.iter() {
+            h.bytes(&s.to_le_bytes());
+        }
+        h.usize(values.len());
+        for &v in values.iter() {
+            h.u64(v as u64);
+        }
+    }
+
+    /// The live part of [`crate::World::state`].
+    pub(crate) fn wire(&self) -> LiveWire {
+        let LiveWorld { level: _, offsets: _, states, values } = self;
+        LiveWire { states: states.to_vec(), values: values.to_vec() }
+    }
+
+    /// Whether `w` fits this world's setup: as many copies and values,
+    /// each state one of its copy's, each value within its limits.
+    pub(crate) fn can_load(&self, w: &LiveWire) -> bool {
+        let LiveWire { states, values } = w;
+        states.len() == self.states.len()
+            && values.len() == self.values.len()
+            && self.level.copies.iter().enumerate().all(|(i, c)| {
+                let Ok(copy) = u16::try_from(i) else { return false };
+                let r = self.range(copy);
+                states.get(i).is_some_and(|&s| usize::from(s) < c.states.len())
+                    && r.len() == c.props.len()
+                    && values[r].iter().zip(&c.props).all(|(&v, p)| c.clamped(p, v) == v)
+            })
+    }
+
+    /// Takes `w`, checked by [`LiveWorld::can_load`]; keeps every buffer.
+    pub(crate) fn load(&mut self, w: LiveWire) {
+        let LiveWire { states, values } = w;
+        self.states.copy_from_slice(&states);
+        self.values.copy_from_slice(&values);
+    }
+}
+
+/// The live copies' part of a [`crate::WorldState`]: each copy's state and
+/// every value, as [`LiveWorld`] holds them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LiveWire {
+    states: Vec<u16>,
+    values: Vec<i64>,
+}
+
+impl LiveWire {
+    /// Sets copy `copy`'s state and value `i` (flat), for tests of
+    /// [`crate::World::load_state`]'s checks.
+    #[doc(hidden)]
+    pub fn edit_for_test(&mut self, state: Option<(usize, u16)>, value: Option<(usize, i64)>) {
+        if let Some((i, s)) = state
+            && let Some(x) = self.states.get_mut(i)
+        {
+            *x = s;
+        }
+        if let Some((i, v)) = value
+            && let Some(x) = self.values.get_mut(i)
+        {
+            *x = v;
+        }
+    }
+}
+
+/// A world's live copies, read-only ([`crate::World::live`]): for
+/// presentation, bots and tools.
+#[derive(Clone, Copy, Debug)]
+pub struct LiveView<'a> {
+    world: &'a LiveWorld,
+}
+
+impl<'a> LiveView<'a> {
+    pub(crate) fn new(world: &'a LiveWorld) -> Self {
+        LiveView { world }
+    }
+
+    /// The setup: names, parts and pictures.
+    pub fn level(&self) -> &'a LiveLevel {
+        &self.world.level
+    }
+
+    /// How many live copies there are.
+    pub fn len(&self) -> usize {
+        self.world.level.copies.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Copy `copy` (an index).
+    pub fn copy(&self, copy: u16) -> Option<LiveCopyView<'a>> {
+        let setup = self.world.level.copies.get(usize::from(copy))?;
+        let state = self.world.states.get(usize::from(copy)).copied().unwrap_or(0);
+        Some(LiveCopyView { index: copy, setup, state, values: self.world.values(copy) })
+    }
+
+    /// Copy `id`.
+    pub fn copy_by_id(&self, id: &str) -> Option<LiveCopyView<'a>> {
+        self.copy(self.world.level.copy(id)?)
+    }
+
+    /// Every copy, bottom to top.
+    pub fn copies(&self) -> impl Iterator<Item = LiveCopyView<'a>> + 'a {
+        let v = *self;
+        (0..self.len()).map_while(move |i| v.copy(u16::try_from(i).ok()?))
+    }
+}
+
+/// One live copy as the world has it now ([`LiveView::copy`]).
+#[derive(Clone, Copy, Debug)]
+pub struct LiveCopyView<'a> {
+    index: u16,
+    setup: &'a LiveCopy,
+    state: u16,
+    values: &'a [i64],
+}
+
+/// Whole world pixels of a position in 1/[`LIVE_SUBPIXELS`] pixel, rounded
+/// down.
+fn whole(v: i64) -> i32 {
+    let p = v.div_euclid(LIVE_SUBPIXELS);
+    i32::try_from(p).unwrap_or(if p < 0 { i32::MIN } else { i32::MAX })
+}
+
+impl<'a> LiveCopyView<'a> {
+    /// Its index among the level's copies.
+    pub fn index(&self) -> u16 {
+        self.index
+    }
+
+    /// Its id.
+    pub fn id(&self) -> &'a str {
+        &self.setup.id
+    }
+
+    /// Its setup data.
+    pub fn setup(&self) -> &'a LiveCopy {
+        self.setup
+    }
+
+    /// Its state, an index into [`LiveCopy::states`].
+    pub fn state(&self) -> u16 {
+        self.state
+    }
+
+    /// Its state's name ("" for a copy without states).
+    pub fn state_name(&self) -> &'a str {
+        self.setup.states.get(usize::from(self.state)).map_or("", |s| s.name.as_str())
+    }
+
+    /// Its values in the world's units (positions in 1/[`LIVE_SUBPIXELS`]
+    /// pixel), by [`LiveCopy::props`] index.
+    pub fn values(&self) -> &'a [i64] {
+        self.values
+    }
+
+    /// Its value named `name` (an exposed name).
+    pub fn value(&self, name: &str) -> Option<i64> {
+        self.values.get(usize::from(self.setup.prop(name)?)).copied()
+    }
+
+    /// Where the copy is, world pixels: its placed top-left moved by its
+    /// `X` and `Y` (rounded down), and its size.
+    pub fn rect(&self) -> (i32, i32, u32, u32) {
+        let (x, y) = self.origin();
+        (whole(x), whole(y), self.setup.size.0, self.setup.size.1)
+    }
+
+    /// The copy's top-left in 1/[`LIVE_SUBPIXELS`] pixel.
+    fn origin(&self) -> (i64, i64) {
+        let c = self.setup;
+        let at = |p: i32, t| i64::from(p) * LIVE_SUBPIXELS + c.value_of(self.values, t).unwrap_or(0);
+        (at(c.at.0, LiveTarget::X), at(c.at.1, LiveTarget::Y))
+    }
+
+    /// Whether the copy is shown: its `Visible` value, if it has one, is
+    /// not 0.
+    pub fn visible(&self) -> bool {
+        self.setup.value_of(self.values, LiveTarget::Visible).is_none_or(|v| v != 0)
+    }
+
+    /// Its state's parts that show, bottom to top, each with its picture's
+    /// top-left in world pixels (rounded down): the copy's place and `X`/`Y`,
+    /// the part's place, and its layer's `OffsetX`/`OffsetY`. None while
+    /// the copy is hidden; a part whose layer's `LayerVisible` is 0 is left
+    /// out.
+    pub fn visible_parts(&self) -> impl Iterator<Item = (&'a LivePart, (i32, i32))> + 'a {
+        let (c, values) = (self.setup, self.values);
+        let (ox, oy) = self.origin();
+        let parts = if self.visible() {
+            c.states.get(usize::from(self.state)).map_or(&[][..], |s| &s.parts[..])
+        } else {
+            &[]
+        };
+        parts.iter().filter_map(move |p| {
+            let (mut x, mut y) =
+                (ox + i64::from(p.at.0) * LIVE_SUBPIXELS, oy + i64::from(p.at.1) * LIVE_SUBPIXELS);
+            if let Some(l) = p.layer {
+                if c.value_of(values, LiveTarget::LayerVisible(l)) == Some(0) {
+                    return None;
+                }
+                x += c.value_of(values, LiveTarget::OffsetX(l)).unwrap_or(0);
+                y += c.value_of(values, LiveTarget::OffsetY(l)).unwrap_or(0);
+            }
+            Some((p, (whole(x), whole(y))))
+        })
+    }
+
+    /// [`LiveCopyView::visible_parts`] that are rock: solid where their
+    /// picture's [`LiveSolid`] is.
+    pub fn rock_parts(&self) -> impl Iterator<Item = (&'a LivePart, (i32, i32))> + 'a {
+        self.visible_parts().filter(|(p, _)| p.kind == LivePartKind::Rock)
     }
 }

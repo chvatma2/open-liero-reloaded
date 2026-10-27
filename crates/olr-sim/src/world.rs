@@ -19,6 +19,7 @@ use crate::damage::{Harm, die_at_zero_health};
 use crate::effects::carve_px;
 use crate::events::{CosmeticKind, EventKind, TerrainOp, TickEvents};
 use crate::input::{Keys, Latches};
+use crate::live::{LiveError, LiveView, LiveWorld};
 use crate::mod_rt::SimMod;
 use crate::mode::{GameMode, MatchResult, ModeCtx, Score};
 use crate::projectile::{Projectile, ProjectilePool, c_int};
@@ -77,6 +78,9 @@ pub struct World {
     /// `on_spawn` commands spawned): setup only, which a received state
     /// must agree with (`World::load_state`).
     pub(crate) setup_worms: usize,
+    /// The level's live copies' state (issue #86), present exactly when
+    /// the setup's [`crate::MatchSetup::live`] is.
+    pub(crate) live: Option<LiveWorld>,
 }
 
 /// Buffers only: they hold no state, so they never make two worlds unequal.
@@ -241,6 +245,35 @@ impl World {
 
     pub fn time(&self) -> AbsTime {
         self.time
+    }
+
+    /// The live copies (issue #86): each one's id, rectangle, state and
+    /// values, and its visible parts; `None` for a level without them.
+    pub fn live(&self) -> Option<LiveView<'_>> {
+        self.live.as_ref().map(LiveView::new)
+    }
+
+    /// Live copy `copy` enters state `state` at once (indices: names
+    /// through [`crate::LiveLevel`]): every value its complete look names
+    /// is set, and its [`EventKind::LiveState`] comes with the next tick's
+    /// events. A setup call: before the first tick a replay records it
+    /// (`olr_replay::SetupCall::LiveState`). Tests and tools may call it
+    /// between ticks, which a recorded game never does. Refused for a
+    /// copy or state the level lacks, changing nothing.
+    pub fn set_live_state(&mut self, copy: u16, state: u16) -> Result<(), LiveError> {
+        let live = self.live.as_mut().ok_or(LiveError::NoCopy(copy))?;
+        live.set_state(copy, state, &mut self.draws.events)
+    }
+
+    /// Sets live copy `copy`'s value `prop` (a [`crate::LiveCopy::props`]
+    /// index) to `value` in the world's units (a position in
+    /// 1/[`crate::LIVE_SUBPIXELS`] pixel), clamped into its limits
+    /// (`Health` also within `0..=points`). A setup call, as
+    /// [`World::set_live_state`]. Refused for a copy or value the level
+    /// lacks, changing nothing.
+    pub fn set_live_value(&mut self, copy: u16, prop: u16, value: i64) -> Result<(), LiveError> {
+        let live = self.live.as_mut().ok_or(LiveError::NoCopy(copy))?;
+        live.set_value(copy, prop, value)
     }
 
     /// `CClient::fLastSimulationTime`: where the physics clock is, at most

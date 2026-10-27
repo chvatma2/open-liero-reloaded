@@ -9,8 +9,9 @@
 //! frame, the sub-step count, the shot lists, the projectile slots ever
 //! taken and the pool's indices, the generators, the entity counter, the
 //! `RotIncrement` bumps, both bonus arrays and their queues, the mode's
-//! bytes ([`crate::GameMode::save_state`]), the match's end and the worms
-//! withdrawn ([`World::gone`]). The rest is setup (or not state) and must
+//! bytes ([`crate::GameMode::save_state`]), the match's end, the worms
+//! withdrawn ([`World::gone`]) and the live copies' states and values
+//! ([`LiveWire`], issue #86). The rest is setup (or not state) and must
 //! already agree. On the wire it is postcard, then deflate.
 //!
 //! The state comes from a host that may be a stranger: [`World::load_state`]
@@ -29,6 +30,7 @@ use crate::bonus::{Bonus, Bonuses};
 use crate::damage::WRM_OUT;
 use crate::events::TickEvents;
 use crate::input::Latches;
+use crate::live::LiveWire;
 use crate::mode::{MatchResult, ModeStateError};
 use crate::proj_sim::catch_up_step;
 use crate::projectile::{PoolState, Projectile};
@@ -90,6 +92,9 @@ pub struct WorldState {
     game_over_sent: bool,
     /// [`World::gone`].
     gone: u32,
+    /// The live copies' part, in a world with them (issue #86): the
+    /// layout's last field.
+    live: Option<LiveWire>,
 }
 
 /// Why a [`WorldState`] was refused: it did not decode, or which part of it
@@ -123,6 +128,10 @@ pub enum StateError {
     Rng,
     /// The game mode refused its part.
     Mode(ModeStateError),
+    /// A live part where the receiver has no live copies or the reverse,
+    /// another copy or value count than its setup, a state out of range,
+    /// or a value outside its limits.
+    Live,
 }
 
 impl fmt::Display for StateError {
@@ -140,6 +149,7 @@ impl fmt::Display for StateError {
             StateError::Bonuses => write!(f, "a world state with bonuses this match cannot have"),
             StateError::Rng => write!(f, "a world state with broken generators"),
             StateError::Mode(e) => write!(f, "the game mode refused its state: {e:?}"),
+            StateError::Live => write!(f, "a world state with live copies this level cannot have"),
         }
     }
 }
@@ -149,6 +159,12 @@ impl WorldState {
     #[cfg(test)]
     pub(crate) fn set_gone_for_test(&mut self, gone: u32) {
         self.gone = gone;
+    }
+
+    /// The live copies' part, for tests of [`World::load_state`]'s checks.
+    #[doc(hidden)]
+    pub fn live_mut_for_test(&mut self) -> &mut Option<LiveWire> {
+        &mut self.live
     }
 
     /// The most bytes a state may inflate to: a 4096 × 4096 map (16 MiB)
@@ -216,6 +232,7 @@ impl World {
             others: _,
             spare: _,
             setup_worms,
+            live,
         } = self;
         let Draws { rand, mt, ents, events: _, rot_bumped, spawn_work: _, actions: _, hits: _ } = draws;
         let Referee { mode, commands: _, over, over_frame, game_over_sent, gone } = referee;
@@ -243,6 +260,7 @@ impl World {
             over_frame: *over_frame,
             game_over_sent: *game_over_sent,
             gone: *gone,
+            live: live.as_ref().map(|l| l.wire()),
         }
     }
 
@@ -280,6 +298,7 @@ impl World {
             over_frame,
             game_over_sent,
             gone,
+            live,
         } = s;
         if !self.terrain.load_cells(&cells) {
             return Err(StateError::Terrain);
@@ -305,6 +324,9 @@ impl World {
         r.mode = mode;
         r.commands.list.clear();
         (r.over, r.over_frame, r.game_over_sent, r.gone) = (over, over_frame, game_over_sent, gone);
+        if let (Some(l), Some(w)) = (&mut self.live, live) {
+            l.load(w);
+        }
         Ok(())
     }
 
@@ -383,7 +405,14 @@ impl World {
         check(
             s.rand.is_valid() && s.mt.is_valid() && s.rand.calls() <= MAX_CLOCK && s.mt.calls() <= MAX_CLOCK,
             StateError::Rng,
-        )
+        )?;
+
+        let live_ok = match (&self.live, &s.live) {
+            (None, None) => true,
+            (Some(l), Some(w)) => l.can_load(w),
+            _ => false,
+        };
+        check(live_ok, StateError::Live)
     }
 }
 
