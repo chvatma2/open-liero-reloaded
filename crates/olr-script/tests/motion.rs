@@ -1,8 +1,9 @@
-//! Issue #89: `move_to`, `stop`, `moving`, `min`, `max` and `arrived`.
+//! Issue #89: `move_to`, `stop`, `moving`, `min`, `max` and `arrived`;
+//! issue #90: `blocked`.
 
 use olr_sim::{LIVE_SUBPIXELS, LiveCopy, World};
 
-use crate::common::{copy, level, play, read, world};
+use crate::common::{copy, level, play, read, rock_copy, world};
 
 const AB: &[&str] = &["A", "B"];
 
@@ -125,4 +126,23 @@ fn a_set_stops_a_motion_and_a_state_change_does_not() {
     assert_eq!(seen[16], (4, true, 1));
     assert_eq!(seen[18], (2, false, 1));
     assert_eq!(seen[24], (2, false, 0));
+}
+
+#[test]
+fn rock_stops_a_motion_and_calls_blocked() {
+    // A rock box at x 40 (4 wide) going 50 px left meets the level's rock
+    // wall (x < 4) after 36 px; a background one passes on to its limit.
+    let script = "fn start() { this.move_to(\"x\", -50, 800); }\n\
+                  fn blocked(name) { this.set(\"v\", this.time() * 1000 + this.get(name)); }\n\
+                  fn arrived(name) { this.set(\"v\", -1000); }";
+    let copies = vec![rock_copy("rock", 40, AB, vec![0]), copy("scenery", 100, AB, vec![0])];
+    let mut w = world(level(copies, &[script], None));
+    play(&mut w, 10);
+    let (v, moving) = x(&w, "rock");
+    assert_eq!((v.div_euclid(LIVE_SUBPIXELS), moving), (-36, false), "stopped against the wall");
+    // 8 px a tick from tick 2: tick 6 meets the wall; its handler reads
+    // the value where it stopped.
+    assert_eq!(read(&w, "rock").1, 50 * 1000 - 36);
+    assert_eq!(x(&w, "scenery"), (-50 * LIVE_SUBPIXELS, false));
+    assert_eq!(read(&w, "scenery").1, -1000);
 }

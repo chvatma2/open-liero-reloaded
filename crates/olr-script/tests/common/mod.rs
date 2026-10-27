@@ -62,12 +62,21 @@ fn sim_mod() -> Arc<SimMod> {
     Arc::new(SimMod::compile(&def, &BTreeMap::new()).expect("the test mod compiles"))
 }
 
-/// A copy `id` at `x` with states `states` (each a rock box) and one
-/// exposed value `v` (from -10^9 to 10^9, default `-1`) that no state
-/// sets, running scripts `scripts`.
+/// A copy `id` at `x` with states `states` (each a background box:
+/// scenery, which moves through rock and other copies) and one exposed
+/// value `v` (from -10^9 to 10^9, default `-1`) that no state sets,
+/// running scripts `scripts`.
 pub fn copy(id: &str, x: i32, states: &[&str], scripts: Vec<u16>) -> LiveCopy {
-    let parts =
-        vec![LivePart { kind: LivePartKind::Rock, layer: None, at: (0, 0), picture: 0, glow_strength: 100 }];
+    copy_of(LivePartKind::Background, id, x, states, scripts)
+}
+
+/// [`copy`] of rock (issue #90: solid, stopped by rock).
+pub fn rock_copy(id: &str, x: i32, states: &[&str], scripts: Vec<u16>) -> LiveCopy {
+    copy_of(LivePartKind::Rock, id, x, states, scripts)
+}
+
+fn copy_of(kind: LivePartKind, id: &str, x: i32, states: &[&str], scripts: Vec<u16>) -> LiveCopy {
+    let parts = vec![LivePart { kind, layer: None, at: (0, 0), picture: 0, glow_strength: 100 }];
     LiveCopy::new(LiveCopySetup {
         id: id.into(),
         at: (x, 40),
@@ -92,7 +101,7 @@ pub fn copy(id: &str, x: i32, states: &[&str], scripts: Vec<u16>) -> LiveCopy {
                 loop_sound: None,
             })
             .collect(),
-        pictures: vec![LiveSolid::new((4, 4), true, |_, _| true)],
+        pictures: vec![LiveSolid::new((4, 4), kind == LivePartKind::Rock, |_, _| true)],
         start_state: 0,
         start_values: Vec::new(),
         health: None,

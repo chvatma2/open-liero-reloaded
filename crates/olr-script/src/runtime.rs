@@ -47,9 +47,10 @@ pub(crate) enum Handler {
     Exploded,
     Damaged,
     Arrived,
+    Blocked,
 }
 
-pub(crate) const HANDLERS: [(Handler, &str, usize); 8] = [
+pub(crate) const HANDLERS: [(Handler, &str, usize); 9] = [
     (Handler::Start, "start", 0),
     (Handler::Tick, "tick", 0),
     (Handler::Entered, "entered", 1),
@@ -58,6 +59,7 @@ pub(crate) const HANDLERS: [(Handler, &str, usize); 8] = [
     (Handler::Exploded, "exploded", 3),
     (Handler::Damaged, "damaged", 3),
     (Handler::Arrived, "arrived", 1),
+    (Handler::Blocked, "blocked", 1),
 ];
 
 /// One compiled script.
@@ -68,12 +70,12 @@ struct Compiled {
     /// index).
     timer_fns: Arc<[ImmutableString]>,
     /// Which [`Handler`]s it defines, a bit each.
-    handlers: u8,
+    handlers: u16,
 }
 
 impl Compiled {
     fn has(&self, h: Handler) -> bool {
-        self.handlers & (1 << h as u8) != 0
+        self.handlers & (1 << h as u16) != 0
     }
 }
 
@@ -146,10 +148,10 @@ impl Scripts {
                 .map(|f| (String::from(f.name), f.params.len()))
                 .collect();
             fns.sort();
-            let mut handlers = 0u8;
+            let mut handlers = 0u16;
             for (h, name, arity) in HANDLERS {
                 if fns.iter().any(|(n, a)| n == name && *a == arity) {
-                    handlers |= 1 << h as u8;
+                    handlers |= 1 << h as u16;
                 }
             }
             let timer_fns: Arc<[ImmutableString]> =
@@ -277,6 +279,17 @@ fn tick(inner: &Inner, ctx: &mut LiveCtx<'_>) {
                         .and_then(|p| p.name.as_deref())
                         .unwrap_or("");
                     ("arrived", alloc::vec![Dynamic::from(ImmutableString::from(name))])
+                }
+                // Issue #90: a motion stopped short by rock.
+                ScriptEvent::Blocked { copy, prop } if inst.copy == Some(copy) && c.has(Handler::Blocked) => {
+                    let name = ctx
+                        .level()
+                        .copies
+                        .get(usize::from(copy))
+                        .and_then(|c| c.props.get(usize::from(prop)))
+                        .and_then(|p| p.name.as_deref())
+                        .unwrap_or("");
+                    ("blocked", alloc::vec![Dynamic::from(ImmutableString::from(name))])
                 }
                 ScriptEvent::Spawned { worm } if c.has(Handler::Spawned) => {
                     ("spawned", alloc::vec![int(worm.into())])
