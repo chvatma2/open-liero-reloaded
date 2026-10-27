@@ -22,6 +22,10 @@ use rhai::{Dynamic, Engine, EvalAltResult, INT, ImmutableString, Map, NativeCall
 
 type Res<T> = Result<T, Box<EvalAltResult>>;
 
+/// Ticks a second: a motion's speed is world pixels a second, of 10-ms
+/// ticks whatever the game speed.
+const TICKS_PER_SECOND: INT = 100;
+
 /// The run's API object.
 pub(crate) struct Live {
     /// A copy of `this`: every method fails.
@@ -148,6 +152,54 @@ impl Live {
         self.setup(c).prop(name).is_some()
     }
 
+    /// Copy `c`'s position-like value `name`: its index.
+    fn position(&self, c: u16, name: &str) -> Res<u16> {
+        let p = self.prop(c, name)?;
+        let copy = self.setup(c);
+        if copy.props[usize::from(p)].target.is_position() {
+            Ok(p)
+        } else {
+            err(format!("copy {}'s value {name:?} is not a position: it cannot move", copy.id))
+        }
+    }
+
+    /// Issue #89: value `name` moves to `target` (whole world pixels) at
+    /// `speed` world pixels a second (at least 1), in 1/256 pixel a
+    /// 10-ms tick (at least 1; the world clamps the fastest).
+    fn move_of(&mut self, c: u16, name: &str, target: INT, speed: INT) -> Res<()> {
+        let prop = self.position(c, name)?;
+        if speed < 1 {
+            return err(format!("move_to at {speed} pixels a second: at least 1"));
+        }
+        let speed = (speed.saturating_mul(LIVE_SUBPIXELS) / TICKS_PER_SECOND).max(1);
+        let target = target.saturating_mul(LIVE_SUBPIXELS);
+        self.queue(LiveCommand::Move { copy: c, prop, target, speed })
+    }
+
+    fn stop_of(&mut self, c: u16, name: &str) -> Res<()> {
+        let prop = self.position(c, name)?;
+        self.queue(LiveCommand::Stop { copy: c, prop })
+    }
+
+    fn moving_of(&mut self, c: u16, name: &str) -> Res<bool> {
+        let p = self.prop(c, name)?;
+        Ok(self.reads.motions(c).get(usize::from(p)).is_some_and(|m| m.moving()))
+    }
+
+    /// Value `name`'s limits for this copy (its stretch included), whole
+    /// world pixels for a position.
+    fn limits_of(&mut self, c: u16, name: &str) -> Res<(INT, INT)> {
+        let p = self.prop(c, name)?;
+        let copy = self.setup(c);
+        let prop = &copy.props[usize::from(p)];
+        let (min, max) = copy.limits(prop);
+        Ok(if prop.target.is_position() {
+            (min.div_euclid(LIVE_SUBPIXELS), max.div_euclid(LIVE_SUBPIXELS))
+        } else {
+            (min, max)
+        })
+    }
+
     /// The timer function `name`: its index.
     fn timer_fn(&self, name: &str) -> Res<u16> {
         match self.timer_fns.binary_search_by(|f| f.as_str().cmp(name)) {
@@ -251,6 +303,47 @@ pub(crate) fn register(e: &mut Engine) {
     e.register_fn("has", |l: &mut Live, c: INT, name: &str| -> Res<bool> {
         let c = l.handle(c)?;
         Ok(l.has_of(c, name))
+    });
+    // Issue #89: motions and limits.
+    e.register_fn("move_to", |l: &mut Live, name: &str, target: INT, speed: INT| -> Res<()> {
+        let c = l.me()?;
+        l.move_of(c, name, target, speed)
+    });
+    e.register_fn("move_to", |l: &mut Live, c: INT, name: &str, target: INT, speed: INT| -> Res<()> {
+        let c = l.handle(c)?;
+        l.move_of(c, name, target, speed)
+    });
+    e.register_fn("stop", |l: &mut Live, name: &str| -> Res<()> {
+        let c = l.me()?;
+        l.stop_of(c, name)
+    });
+    e.register_fn("stop", |l: &mut Live, c: INT, name: &str| -> Res<()> {
+        let c = l.handle(c)?;
+        l.stop_of(c, name)
+    });
+    e.register_fn("moving", |l: &mut Live, name: &str| -> Res<bool> {
+        let c = l.me()?;
+        l.moving_of(c, name)
+    });
+    e.register_fn("moving", |l: &mut Live, c: INT, name: &str| -> Res<bool> {
+        let c = l.handle(c)?;
+        l.moving_of(c, name)
+    });
+    e.register_fn("min", |l: &mut Live, name: &str| -> Res<INT> {
+        let c = l.me()?;
+        Ok(l.limits_of(c, name)?.0)
+    });
+    e.register_fn("min", |l: &mut Live, c: INT, name: &str| -> Res<INT> {
+        let c = l.handle(c)?;
+        Ok(l.limits_of(c, name)?.0)
+    });
+    e.register_fn("max", |l: &mut Live, name: &str| -> Res<INT> {
+        let c = l.me()?;
+        Ok(l.limits_of(c, name)?.1)
+    });
+    e.register_fn("max", |l: &mut Live, c: INT, name: &str| -> Res<INT> {
+        let c = l.handle(c)?;
+        Ok(l.limits_of(c, name)?.1)
     });
     e.register_fn("switch_off_default", |l: &mut Live| -> Res<()> {
         l.me()?;

@@ -46,9 +46,10 @@ enum Handler {
     Killed,
     Exploded,
     Damaged,
+    Arrived,
 }
 
-const HANDLERS: [(Handler, &str, usize); 7] = [
+const HANDLERS: [(Handler, &str, usize); 8] = [
     (Handler::Start, "start", 0),
     (Handler::Tick, "tick", 0),
     (Handler::Entered, "entered", 1),
@@ -56,6 +57,7 @@ const HANDLERS: [(Handler, &str, usize); 7] = [
     (Handler::Killed, "killed", 2),
     (Handler::Exploded, "exploded", 3),
     (Handler::Damaged, "damaged", 3),
+    (Handler::Arrived, "arrived", 1),
 ];
 
 /// One compiled script.
@@ -265,6 +267,16 @@ fn tick(inner: &Inner, ctx: &mut LiveCtx<'_>) {
                         .and_then(|c| c.states.get(usize::from(state)))
                         .map_or("", |s| s.name.as_str());
                     ("entered", alloc::vec![Dynamic::from(ImmutableString::from(name))])
+                }
+                ScriptEvent::Arrived { copy, prop } if inst.copy == Some(copy) && c.has(Handler::Arrived) => {
+                    let name = ctx
+                        .level()
+                        .copies
+                        .get(usize::from(copy))
+                        .and_then(|c| c.props.get(usize::from(prop)))
+                        .and_then(|p| p.name.as_deref())
+                        .unwrap_or("");
+                    ("arrived", alloc::vec![Dynamic::from(ImmutableString::from(name))])
                 }
                 ScriptEvent::Spawned { worm } if c.has(Handler::Spawned) => {
                     ("spawned", alloc::vec![int(worm.into())])
