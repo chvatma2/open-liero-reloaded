@@ -185,7 +185,10 @@ fn a_composition_survives_load_and_save() {
     let (_tmp, dir) = copy_pack(&root, "olx-level-dirt-level");
     let pack = composed(&dir);
     let written = files(&pack).unwrap();
-    assert!(written.contains_key(&olr_vfs::VPath::new("editor/composition.ron").unwrap()));
+    // Issue #74: the composition is the ground of a placement of it alone.
+    assert!(!written.contains_key(&olr_vfs::VPath::new("editor/composition.ron").unwrap()));
+    assert!(written.contains_key(&olr_vfs::VPath::new("editor/placed.ron").unwrap()));
+    assert!(written.contains_key(&olr_vfs::VPath::new("editor/asset.ron").unwrap()));
     assert!(written.contains_key(&olr_vfs::VPath::new("editor/layers/ground.png").unwrap()));
     save(&dir, &pack).unwrap();
     assert_eq!(load(&dir).unwrap().composition, pack.composition);
@@ -198,17 +201,18 @@ fn a_pack_without_editor_loads_with_none() {
     assert_eq!(load(&root.join("olx-level-dirt-level")).unwrap().composition, None);
 }
 
-/// `pack fmt` canonicalises `composition.ron` like any authoring file.
+/// `pack fmt` canonicalises the ground's `asset.ron` like any authoring
+/// file.
 #[test]
-fn fmt_rewrites_a_hand_edited_composition() {
+fn fmt_rewrites_a_hand_edited_ground() {
     let Some(root) = content() else { return };
     let (_tmp, dir) = copy_pack(&root, "olx-level-dirt-level");
     save(&dir, &composed(&dir)).unwrap();
-    let canonical = std::fs::read_to_string(dir.join("editor/composition.ron")).unwrap();
-    std::fs::write(dir.join("editor/composition.ron"), canonical.replace("    ", "  ")).unwrap();
+    let canonical = std::fs::read_to_string(dir.join("editor/asset.ron")).unwrap();
+    std::fs::write(dir.join("editor/asset.ron"), canonical.replace("    ", "  ")).unwrap();
     let listed: Vec<String> =
         olr_edit::fmt::unformatted(&dir).unwrap().iter().map(|p| p.as_str().to_string()).collect();
-    assert_eq!(listed, ["editor/composition.ron"]);
+    assert_eq!(listed, ["editor/asset.ron"]);
     olr_edit::fmt::format(&dir).unwrap();
-    assert_eq!(std::fs::read_to_string(dir.join("editor/composition.ron")).unwrap(), canonical);
+    assert_eq!(std::fs::read_to_string(dir.join("editor/asset.ron")).unwrap(), canonical);
 }

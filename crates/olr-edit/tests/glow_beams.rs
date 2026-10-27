@@ -1,8 +1,6 @@
 //! Directional glow in the bake: beam texels follow the element giving a
 //! world pixel its glow group; the haze map is kept.
 
-use std::collections::BTreeMap;
-
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 use olr_data::manifest::{PACK_FORMAT_VERSION, PackKind, PackManifest};
@@ -55,7 +53,7 @@ fn pack(w: u32, h: u32, s: u32) -> Pack {
         surface: None,
         distant_surfaces: Vec::new(),
     };
-    Pack { manifest, source: Source::Level(level), composition: None, other: BTreeMap::new() }
+    Pack::new(manifest, Source::Level(level))
 }
 
 fn level(p: &Pack) -> &LevelSource {

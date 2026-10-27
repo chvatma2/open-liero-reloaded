@@ -134,7 +134,7 @@ fn check(files: &[PathBuf]) -> bool {
 pub(crate) fn level_cmd(c: &LevelMaterialCommand) -> anyhow::Result<bool> {
     match c {
         LevelMaterialCommand::List { pack } => {
-            let p = element_cmd::load_level(pack)?;
+            let p = element_cmd::read_level(pack)?;
             let Source::Level(l) = &p.source else { anyhow::bail!("{}: not a level pack", pack.display()) };
             for (i, m) in l.look.iter().flat_map(|k| k.materials.iter()).enumerate() {
                 println!("{}: {} {:?}", i + 1, m.id, m.name);
@@ -165,17 +165,27 @@ fn add(dir: &Path, ids: &[String], files: &[PathBuf], library: &LibraryArgs) -> 
         wanted.push(read_file(f).map_err(|e| anyhow::anyhow!("{}: {e}", f.display()))?);
     }
     let mut pack = element_cmd::load_level(dir)?;
-    let Source::Level(l) = &mut pack.source else { anyhow::bail!("{}: not a level pack", dir.display()) };
-    let mut messages = Vec::new();
-    for m in wanted {
-        if l.look.iter().flat_map(|k| k.materials.iter()).any(|x| x.id == m.id) {
-            messages.push(format!("kept material {} (the level has it)", m.id));
-            continue;
-        }
-        let id = m.id.clone();
-        let i = olr_edit::look::add_material(l, m).map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?;
-        messages.push(format!("added material {id} ({})", i + 1));
+    for m in &wanted {
+        crate::look_cmd::refuse_brought(dir, &pack, "material", &m.id, true)?;
     }
+    // The ground's materials (issue #74).
+    let messages = olr_edit::placed::edit_ground(&mut pack, |p| -> anyhow::Result<Vec<String>> {
+        let Source::Level(l) = &mut p.source else { anyhow::bail!("{}: not a level pack", dir.display()) };
+        let mut messages = Vec::new();
+        for m in wanted {
+            if l.look.iter().flat_map(|k| k.materials.iter()).any(|x| x.id == m.id) {
+                messages.push(format!("kept material {} (the level has it)", m.id));
+                continue;
+            }
+            let id = m.id.clone();
+            let i =
+                olr_edit::look::add_material(l, m).map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?;
+            messages.push(format!("added material {id} ({})", i + 1));
+        }
+        Ok(messages)
+    })?;
+    let content = element_cmd::ContentArg { content: library.content.clone() };
+    crate::look_cmd::rebake_beside_copies(dir, &mut pack, &content)?;
     // A look made for them draws the thumbnail lit.
     crate::look_cmd::save(dir, &mut pack, &messages)
 }

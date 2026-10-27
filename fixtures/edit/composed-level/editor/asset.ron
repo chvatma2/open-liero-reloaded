@@ -1,4 +1,6 @@
 (
+    name: "Ground",
+    size: (504, 350),
     elements: [
         (
             id: "base",

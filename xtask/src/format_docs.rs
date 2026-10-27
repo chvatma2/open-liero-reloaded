@@ -78,11 +78,7 @@ const PAGES: &[Page] = &[
             "crates/olr-format/src/materials.rs",
             "crates/olr-format/src/colour.rs",
         ],
-        roots: &[
-            ("LevelFile", "level.ron"),
-            ("Composition", "editor/composition.ron"),
-            ("PlacedFile", "editor/placed.ron"),
-        ],
+        roots: &[("LevelFile", "level.ron"), ("PlacedFile", "editor/placed.ron")],
         maps: &[],
         files: &[
             "material.png",

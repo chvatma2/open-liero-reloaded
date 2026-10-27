@@ -168,7 +168,7 @@ fn pack_check_reports_a_stale_bake() {
     .unwrap();
     let out = cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content);
     assert_eq!(out.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&out.stdout).contains("front.png: differs from the composition's bake"));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("front.png: differs from the placement's bake"));
     ok(&cli(&["level", "bake", "{pack}", "--content", "{content}"], &pack, &content));
     ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
 }
@@ -240,7 +240,7 @@ fn resize_a_composed_level() {
         &pack,
         &content,
     ));
-    let text = std::fs::read_to_string(pack.join("editor/composition.ron")).unwrap();
+    let text = std::fs::read_to_string(pack.join("editor/asset.ron")).unwrap();
     assert!(text.contains("at: (11, 10)"), "{text}");
     ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
 }
@@ -256,14 +256,14 @@ fn set_colours_and_none() {
         &pack,
         &content,
     ));
-    let text = std::fs::read_to_string(pack.join("editor/composition.ron")).unwrap();
+    let text = std::fs::read_to_string(pack.join("editor/asset.ron")).unwrap();
     assert!(text.contains("colours: 4"), "{text}");
     ok(&cli(
         &["level", "element", "set", "{pack}", "sign", "--colours", "none", "--content", "{content}"],
         &pack,
         &content,
     ));
-    let text = std::fs::read_to_string(pack.join("editor/composition.ron")).unwrap();
+    let text = std::fs::read_to_string(pack.join("editor/asset.ron")).unwrap();
     assert!(!text.contains("colours"), "{text}");
     let out = cli(
         &["level", "element", "set", "{pack}", "sign", "--colours", "x", "--content", "{content}"],
@@ -273,8 +273,9 @@ fn set_colours_and_none() {
     assert_eq!(out.status.code(), Some(2), "a clap error: {out:?}");
 }
 
-/// Deferred minors: `list` reads `composition.ron` alone, so it still lists
-/// a composition whose file is missing (when an agent most needs it).
+/// Deferred minors: `list` reads the ground's `asset.ron` alone (issue
+/// #74), so it still lists a ground whose file is missing (when an agent
+/// most needs it).
 #[test]
 fn list_works_with_a_missing_file() {
     let Some((tmp, pack, content)) = dirt_level() else { return };
@@ -332,7 +333,7 @@ fn merge_split_and_mask_commands() {
     run(&["mask", "{pack}", "sign", "--colour-at", "0,15", "--tolerance", "5"]);
     run(&["mask", "{pack}", "sign", "--rect", "10,10,4,4", "--restore"]);
     run(&["draw", "{pack}", "background", "--rect", "20,20,4,4", "--colour", "808080", "--material", "rock"]);
-    let composition = std::fs::read_to_string(pack.join("editor/composition.ron")).unwrap();
+    let composition = std::fs::read_to_string(pack.join("editor/asset.ron")).unwrap();
     assert!(composition.contains("mask: true"), "{composition}");
     assert!(composition.contains("mixed: true") && composition.contains("back: true"), "{composition}");
     assert!(pack.join("editor/masks/sign.png").is_file());
@@ -421,7 +422,7 @@ fn cli_sets_and_paints_glow() {
     assert!(!e.status.success() && String::from_utf8_lossy(&e.stderr).contains("nowhere"));
     ok(&run(&["set", "{pack}", "dirt", "--glow", "60", "--glow-group", "lava"]));
     ok(&run(&["glow", "{pack}", "dirt", "--rect", "0,0,10,10", "--strength", "0"]));
-    let composition = std::fs::read_to_string(pack.join("editor/composition.ron")).unwrap();
+    let composition = std::fs::read_to_string(pack.join("editor/asset.ron")).unwrap();
     assert!(composition.contains("strength: 60") && composition.contains("mask: true"), "{composition}");
     assert!(pack.join("editor/glow/dirt.png").is_file());
     for f in ["look/glow.png", "look/glow-back.png", "look/groups.png", "look/groups-back.png"] {
@@ -513,7 +514,7 @@ fn cli_sets_clear() {
     };
     ok(&run(&["split", "{pack}", "base"]));
     ok(&run(&["set", "{pack}", "rock", "--clear", "true"]));
-    let composition = std::fs::read_to_string(pack.join("editor/composition.ron")).unwrap();
+    let composition = std::fs::read_to_string(pack.join("editor/asset.ron")).unwrap();
     assert!(composition.contains("clear: true"), "{composition}");
     assert!(pack.join("look/clear.png").is_file());
     ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
@@ -834,4 +835,123 @@ fn a_new_haze_map_starts_full() {
         assert_eq!(*v, if inside { 0 } else { 255 }, "pixel ({x}, {y})");
     }
     ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
+}
+
+// Issue #74: converted levels, `level convert` and the refusal.
+
+/// The composed pack at `pack` turned into a level of OLR 0.2: its
+/// ground's elements as `editor/composition.ron`, the placement gone (the
+/// bake is the same: a ground alone bakes as its composition).
+fn make_02(pack: &Path) {
+    let fs = olr_vfs::DirFs::new(pack);
+    let placed = olr_format::levels::read_placed_files(&fs).unwrap().unwrap();
+    let ground = &placed.assets[olr_format::levels::GROUND_KEY];
+    let src = olr_format::assets::as_composition(ground);
+    std::fs::remove_file(pack.join("editor/placed.ron")).unwrap();
+    std::fs::remove_file(pack.join("editor/asset.ron")).unwrap();
+    let mut sink = olr_vfs::DirFs::new(pack);
+    olr_format::levels::write_composition_files(&mut sink, &src).unwrap();
+    assert!(pack.join("editor/composition.ron").is_file());
+}
+
+/// Every file outside `editor/`.
+fn played(tree: &BTreeMap<String, Vec<u8>>) -> BTreeMap<String, Vec<u8>> {
+    tree.iter().filter(|(p, _)| !p.starts_with("editor/")).map(|(p, b)| (p.clone(), b.clone())).collect()
+}
+
+#[test]
+fn level_convert_converts_a_02_pack() {
+    let Some((tmp, pack, content)) = dirt_level() else { return };
+    compose(tmp.path(), &pack, &content);
+    make_02(&pack);
+    let before = tree(&pack);
+    let out = ok(&cli(&["level", "convert", "{pack}", "--content", "{content}"], &pack, &content));
+    assert_eq!(out, format!("converted {}: 1 asset, 1 copy\n", pack.display()));
+    let after = tree(&pack);
+    assert!(played(&before) == played(&after), "the baked files changed");
+    assert!(!after.contains_key("editor/composition.ron"));
+    for (path, bytes) in before.iter().filter(|(p, _)| p.starts_with("editor/") && p.ends_with(".png")) {
+        assert_eq!(after.get(path), Some(bytes), "{path} kept");
+    }
+    let out = ok(&cli(&["level", "convert", "{pack}", "--content", "{content}"], &pack, &content));
+    assert_eq!(out, format!("{}: already converted\n", pack.display()));
+    let check = ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
+    assert!(check.contains("0 errors, 0 warnings"), "{check}");
+    let plain = tmp.path().join("plain");
+    copy_dir(&Path::new(&content).join("olx-level-dirt-level"), &plain);
+    let out = ok(&cli(&["level", "convert", "{pack}", "--content", "{content}"], &plain, &content));
+    assert_eq!(out, format!("{}: a plain level: nothing to convert\n", plain.display()));
+}
+
+#[test]
+fn level_commands_refuse_an_unconverted_level() {
+    let Some((tmp, pack, content)) = dirt_level() else { return };
+    compose(tmp.path(), &pack, &content);
+    make_02(&pack);
+    let before = tree(&pack);
+    let asset = tmp.path().join("asset");
+    for args in [
+        &["level", "element", "add-layer", "{pack}", "--content", "{content}"][..],
+        &["level", "group", "set", "{pack}", "g", "--intensity", "50"],
+        &["level", "bake", "{pack}", "--content", "{content}"],
+        &["level", "carve", "{pack}", "--rect", "0,0,4,4"],
+        &[
+            "asset",
+            "save",
+            "{pack}",
+            "--elements",
+            "cave",
+            "--name",
+            "Cave",
+            "--out",
+            asset.to_str().unwrap(),
+        ],
+    ] {
+        let out = cli(args, &pack, &content);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{args:?} succeeded");
+        assert!(err.contains("a level from OLR 0.2: run olr-cli level convert"), "{args:?}: {err}");
+        assert!(tree(&pack) == before, "{args:?} changed a file");
+    }
+    assert!(!asset.exists());
+    // `pack check` warns; the baked level plays.
+    let check = ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
+    assert!(check.contains("0 errors, 1 warnings") && check.contains("editor/composition.ron"), "{check}");
+}
+
+#[test]
+fn add_layer_on_a_converted_level_writes_the_ground() {
+    let Some((tmp, pack, content)) = dirt_level() else { return };
+    compose(tmp.path(), &pack, &content);
+    make_02(&pack);
+    ok(&cli(&["level", "convert", "{pack}", "--content", "{content}"], &pack, &content));
+    let out = ok(&cli(
+        &["level", "element", "add-layer", "{pack}", "--name", "Fresh", "--content", "{content}"],
+        &pack,
+        &content,
+    ));
+    assert_eq!(out, "added element fresh\n");
+    let ground = std::fs::read_to_string(pack.join("editor/asset.ron")).unwrap();
+    assert!(ground.contains("id: \"fresh\""), "{ground}");
+    assert!(!pack.join("editor/composition.ron").exists());
+}
+
+#[test]
+fn level_group_set_on_a_converted_level_changes_both() {
+    let Some((tmp, pack, content)) = dirt_level() else { return };
+    compose(tmp.path(), &pack, &content);
+    ok(&cli(&["level", "group", "add", "{pack}", "lamps", "--reach", "40"], &pack, &content));
+    make_02(&pack);
+    ok(&cli(&["level", "convert", "{pack}", "--content", "{content}"], &pack, &content));
+    ok(&cli(&["level", "group", "set", "{pack}", "lamps", "--intensity", "77"], &pack, &content));
+    let ground: olr_format::assets::AssetFile = olr_format::ron_io::from_canonical(
+        "asset.ron",
+        &std::fs::read_to_string(pack.join("editor/asset.ron")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(ground.glow_groups[0].intensity, 77);
+    let level = olr_format::levels::read_level_header(&olr_vfs::DirFs::new(&pack)).unwrap();
+    assert_eq!(level.look.unwrap().glow_groups[0].intensity, 77);
+    let check = ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
+    assert!(check.contains("0 errors, 0 warnings"), "{check}");
 }

@@ -202,7 +202,7 @@ fn save_then_check_the_files() {
     assert!(h.state().state.dirty());
     file(&mut h, labels::SAVE);
     assert!(!h.state().state.dirty());
-    let ron = std::fs::read_to_string(dir.join("editor/composition.ron")).unwrap();
+    let ron = std::fs::read_to_string(dir.join("editor/asset.ron")).unwrap();
     assert!(ron.contains("id: \"layer\""), "{ron}");
     let errors: Vec<_> = olr_pack::validate(&olr_vfs::DirFs::new(&dir))
         .into_iter()

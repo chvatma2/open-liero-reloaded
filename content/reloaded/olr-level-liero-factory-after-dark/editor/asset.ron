@@ -1,4 +1,6 @@
 (
+    name: "Ground",
+    size: (1200, 480),
     elements: [
         (
             id: "sky",
@@ -244,6 +246,175 @@
                 group: "beacons",
             ),
             surface: "metal",
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "sky",
+            colour: Tint("#8098d0"),
+            intensity: 300,
+            reach: Unlimited,
+        ),
+        (
+            id: "lamps",
+            colour: Tint("#ffe6c0"),
+            intensity: 500,
+            reach: Pixels(90),
+        ),
+        (
+            id: "glass",
+            colour: Tint("#c8d4f0"),
+            intensity: 220,
+            reach: Pixels(160),
+        ),
+        (
+            id: "screens",
+            intensity: 450,
+            reach: Pixels(48),
+        ),
+        (
+            id: "displays",
+            intensity: 180,
+            reach: Pixels(28),
+            animation: Flicker(
+                speed: 6,
+                depth: 25,
+            ),
+        ),
+        (
+            id: "beacons",
+            intensity: 200,
+            reach: Pixels(20),
+            animation: Pulse(
+                period_ms: 2400,
+                low: 30,
+                high: 100,
+            ),
+        ),
+        (
+            id: "control",
+            colour: Tint("#d0e0ff"),
+            intensity: 450,
+            reach: Pixels(48),
+        ),
+        (
+            id: "pcs",
+            intensity: 1000,
+            reach: Pixels(56),
+        ),
+        (
+            id: "headlights",
+            colour: Tint("#fff0c8"),
+            intensity: 1000,
+            reach: Pixels(120),
+        ),
+    ],
+    materials: [
+        (
+            id: "stone",
+            name: "Stone",
+            notes: "Grey rock: the reference every heat value is a percent of. A blast leaves the rim glowing like lava, cooling slowly.",
+            light_soak: 2,
+            heat: (
+                capacity: 100,
+                conductivity: 100,
+                cooling: 100,
+            ),
+        ),
+        (
+            id: "concrete",
+            name: "Concrete",
+            notes: "Heavy and dense: slow to warm, slow to cool.",
+            light_soak: 2,
+            heat: (
+                capacity: 140,
+                conductivity: 80,
+                cooling: 80,
+            ),
+        ),
+        (
+            id: "metal",
+            name: "Metal",
+            notes: "Steel: heat runs far through it, so a blast warms a wide patch less; it sheds heat fast to the air.",
+            heat: (
+                capacity: 80,
+                conductivity: 600,
+                cooling: 150,
+            ),
+        ),
+        (
+            id: "wood",
+            name: "Wood",
+            notes: "Smoulders: warms easily, keeps its heat where it lands and glows like embers.",
+            heat: (
+                capacity: 50,
+                conductivity: 15,
+                cooling: 60,
+                look: (
+                    ramp: [
+                        (
+                            temperature: 80,
+                            colour: "#300c00",
+                            glow: 0,
+                        ),
+                        (
+                            temperature: 250,
+                            colour: "#9a2400",
+                            glow: 45,
+                        ),
+                        (
+                            temperature: 550,
+                            colour: "#ff6410",
+                            glow: 85,
+                        ),
+                        (
+                            temperature: 1000,
+                            colour: "#ffc060",
+                            glow: 100,
+                        ),
+                    ],
+                ),
+            ),
+        ),
+        (
+            id: "dirt",
+            name: "Dirt",
+            notes: "Earth: warms quickly at the surface but holds little heat and passes it on poorly.",
+            heat: (
+                capacity: 70,
+                conductivity: 40,
+                cooling: 120,
+            ),
+        ),
+        (
+            id: "glass",
+            name: "Glass",
+            notes: "Glows amber when hot and lights little around it.",
+            heat: (
+                capacity: 90,
+                conductivity: 40,
+                cooling: 70,
+                look: (
+                    ramp: [
+                        (
+                            temperature: 120,
+                            colour: "#401800",
+                            glow: 0,
+                        ),
+                        (
+                            temperature: 400,
+                            colour: "#d06010",
+                            glow: 60,
+                        ),
+                        (
+                            temperature: 1000,
+                            colour: "#ffd890",
+                            glow: 100,
+                        ),
+                    ],
+                    light: 50,
+                ),
+            ),
         ),
     ],
 )

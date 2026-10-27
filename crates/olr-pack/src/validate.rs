@@ -123,7 +123,7 @@ pub fn validate(src: &dyn ContentSource) -> Vec<Diagnostic> {
                 out.push(Diagnostic::new(Severity::Warning, THUMB_FILE, format!("{e}: not shown")));
             }
             out.extend(check_level(&p));
-            out.extend(check_composition(src, &p));
+            out.extend(check_placement(src, &p));
         }),
         PackKind::Skin => read_skin(src).map(|_| ()),
         PackKind::Theme => read_theme(src).map(|_| ()),
@@ -153,11 +153,30 @@ fn unread(src: &dyn ContentSource, kind: PackKind) -> Vec<Diagnostic> {
         }),
         PackKind::Level => levels::read_level_files_without_thumb(src).map(|s| {
             let mut paths = levels::file_paths(&s);
-            // `composition.ron` alone names them (a missing file is
-            // `check_composition`'s error, once).
-            if let Ok(Some(composition)) = levels::read_composition(src) {
-                let c = levels::CompositionSource { composition, files: Default::default() };
-                paths.extend(levels::composition_paths(&c));
+            match levels::read_placed_files(src) {
+                Ok(Some(p)) => paths.extend(levels::placed_paths(&p)),
+                // A placement that does not read is one error
+                // (`check_placement`), not a warning for every `editor/`
+                // file besides.
+                Err(_) => {
+                    if let Ok(all) = walk(src, &VPath::root()) {
+                        paths.extend(
+                            all.iter()
+                                .map(VPath::as_str)
+                                .filter(|p| crate::is_authoring(p))
+                                .map(String::from),
+                        );
+                    }
+                }
+                // An unconverted level of OLR 0.2 (issue #74): the files
+                // `composition.ron` names are its (one warning, on it).
+                _ => {
+                    if let Ok(Some(composition)) = levels::read_composition(src) {
+                        let c = levels::CompositionSource { composition, files: Default::default() };
+                        paths.extend(levels::composition_paths(&c));
+                        paths.push(levels::COMPOSITION_FILE.into());
+                    }
+                }
             }
             paths
         }),
@@ -174,27 +193,44 @@ fn unread(src: &dyn ContentSource, kind: PackKind) -> Vec<Diagnostic> {
         .filter(|p| *p != MANIFEST && !owned.contains(p))
         .filter(|p| !(kind == PackKind::Level && *p == THUMB_FILE))
         .filter(|p| !(kind == PackKind::Mod && !is_definition(p)))
-        .map(|p| Diagnostic::new(Severity::Warning, p, NOT_READ))
+        .filter(|p| !(kind == PackKind::Level && *p == olr_format::levels::COMPOSITION_FILE))
+        .map(|p| {
+            let script = p.strip_prefix(levels::SCRIPTS_DIR).is_some_and(|f| f.ends_with(".rhai"));
+            let message = if kind == PackKind::Level && script { STRAY_SCRIPT_WARNING } else { NOT_READ };
+            Diagnostic::new(Severity::Warning, p, message)
+        })
         .collect()
 }
 
-/// The level's composition (`editor/`, plan 14a), if it has one: an error
-/// when it does not read or does not fit the level.
-fn check_composition(src: &dyn ContentSource, pack: &LevelPack) -> Option<Diagnostic> {
+/// A level of OLR 0.2 without a placement: the baked level plays, the
+/// editors refuse it until it is converted (issue #74).
+pub const UNCONVERTED_WARNING: &str = "a level from OLR 0.2: the editors refuse it until olr-cli level convert converts it; the baked level plays";
+/// A composition left beside a placement (issue #74).
+pub const LEFTOVER_WARNING: &str = "a level from OLR 0.2 left beside editor/placed.ron: not read; remove it";
+/// A copy's script no copy lists (issue #74).
+pub const STRAY_SCRIPT_WARNING: &str = "a script no copy lists: not read";
+
+/// The level's placement (`editor/placed.ron`, issue #74), if it has one:
+/// an error when it does not read or does not fit the level
+/// (`check_placed`, metadata only: the cells are the bake's). OLR 0.2's
+/// `editor/composition.ron` is a warning: unconverted without a
+/// placement, a leftover beside one.
+fn check_placement(src: &dyn ContentSource, pack: &LevelPack) -> Vec<Diagnostic> {
+    use olr_format::levels::{COMPOSITION_FILE, PLACED_FILE};
     let def = &pack.level.def;
-    let checked = olr_format::levels::read_composition_files(src).and_then(|c| match c {
-        Some(c) => {
-            olr_format::levels::check_composition(&c, (def.width, def.height), def.art_scale)?;
-            let look = olr_format::levels::read_level_header(src)?.look;
-            olr_format::levels::check_glow_groups(&c.composition, look.as_ref())?;
-            // Issue #37: surfaces name the look's materials, painted maps fit.
-            olr_format::levels::check_surfaces(&c.composition, look.as_ref())?;
-            let materials = look.as_ref().map_or(0, |l| l.materials.len());
-            olr_format::levels::check_surface_maps(&c, (def.width, def.height), materials)
-        }
+    let exists = |f: &str| VPath::new(f).is_ok_and(|p| src.exists(&p));
+    let mut out = Vec::new();
+    match (exists(COMPOSITION_FILE), exists(PLACED_FILE)) {
+        (true, false) => out.push(Diagnostic::new(Severity::Warning, COMPOSITION_FILE, UNCONVERTED_WARNING)),
+        (true, true) => out.push(Diagnostic::new(Severity::Warning, COMPOSITION_FILE, LEFTOVER_WARNING)),
+        _ => {}
+    }
+    let checked = olr_format::levels::read_placed_files(src).and_then(|p| match p {
+        Some(p) => olr_format::levels::check_placed(&p, (def.width, def.height), def.art_scale),
         None => Ok(()),
     });
-    checked.err().map(|e| Diagnostic::from_error(&PackError::Format(e)))
+    out.extend(checked.err().map(|e| Diagnostic::from_error(&PackError::Format(e))));
+    out
 }
 
 /// Objects outside the level (warnings): the runtime places worms itself.
@@ -493,19 +529,20 @@ mod tests {
         fs
     }
 
-    /// `level_with_spawn((1, 1))` (8 × 8, art scale 1) composed of its own raster base.
-    fn composed_level() -> MemFs {
-        let fs = level_with_spawn((1, 1));
-        let level = olr_format::levels::read_level_files(&fs).unwrap();
-        let mut base = std::collections::BTreeMap::new();
+    /// A level whose placement is its ground alone: one raster `base`
+    /// (issue #74).
+    fn ground_alone() -> olr_format::levels::PlacedSource {
+        let level = olr_format::levels::read_level_files(&level_with_spawn((1, 1))).unwrap();
         let indices: Vec<u8> = level.material.iter().map(|m| *m as u8).collect();
         let [m, f, b] = olr_format::levels::raster_files("base");
-        base.insert(
-            m,
+        let strip = |p: String| p.strip_prefix("editor/").unwrap().to_string();
+        let mut files = std::collections::BTreeMap::new();
+        files.insert(
+            strip(m),
             crate::image_io::encode_indexed(8, 8, &indices, &olr_format::levels::MATERIAL_PALETTE),
         );
-        base.insert(f, crate::image_io::encode_rgba(&level.front));
-        base.insert(b, crate::image_io::encode_rgba(&level.back));
+        files.insert(strip(f), crate::image_io::encode_rgba(&level.front));
+        files.insert(strip(b), crate::image_io::encode_rgba(&level.back));
         let element = olr_format::levels::Element {
             id: "base".into(),
             name: String::new(),
@@ -522,46 +559,105 @@ mod tests {
             surface_map: false,
             back_surface_map: false,
         };
-        let src = olr_format::levels::CompositionSource {
-            composition: olr_format::levels::Composition { elements: vec![element], folders: Vec::new() },
-            files: base,
-        };
-        let mut fs = fs;
-        olr_format::levels::write_composition_files(&mut fs, &src).unwrap();
+        let ground = olr_format::assets::AssetSource::new(
+            olr_format::assets::AssetFile::new("Ground", (8, 8), vec![element]),
+            files,
+        );
+        olr_format::levels::PlacedSource {
+            file: olr_format::levels::PlacedFile {
+                assets: vec![olr_format::levels::LevelAsset {
+                    key: "ground".into(),
+                    origin: olr_format::levels::AssetOrigin::Own,
+                }],
+                copies: vec![olr_format::levels::PlacedCopy::new("ground", "ground", (0, 0))],
+                script: false,
+            },
+            assets: [("ground".to_string(), ground)].into(),
+            scripts: Default::default(),
+            level_script: None,
+        }
+    }
+
+    fn placed_level() -> MemFs {
+        let mut fs = level_with_spawn((1, 1));
+        olr_format::levels::write_placed_files(&mut fs, &ground_alone()).unwrap();
         fs
     }
 
+    /// Issue #74: the placement is checked (`check_placed`); a file the
+    /// placement does not read is a warning, a stray script too.
     #[test]
-    fn a_composition_is_validated() {
-        assert_eq!(validate(&composed_level()), vec![]);
+    fn validate_checks_the_placement() {
+        assert_eq!(validate(&placed_level()), vec![]);
         let small = crate::image_io::encode_rgba(&olr_data::image::RgbaImage::new(4, 4));
-        let d = validate(&composed_level().with("editor/layers/base.front.png", small));
+        let d = validate(&placed_level().with("editor/layers/base.front.png", small));
         assert!(
             d.iter().any(|d| d.severity == Severity::Error
                 && d.file.as_deref() == Some("editor/layers/base.front.png")),
             "{d:?}"
         );
         let d: Vec<String> =
-            validate(&composed_level().with("editor/notes.txt", "x")).iter().map(|d| d.to_string()).collect();
+            validate(&placed_level().with("editor/notes.txt", "x")).iter().map(|d| d.to_string()).collect();
         assert_eq!(d, ["warning: editor/notes.txt: not read by the format"]);
+        let d: Vec<String> = validate(&placed_level().with("editor/scripts/x.rhai", ""))
+            .iter()
+            .map(|d| d.to_string())
+            .collect();
+        assert_eq!(d, [format!("warning: editor/scripts/x.rhai: {STRAY_SCRIPT_WARNING}")]);
+        // A copy of an asset the placement does not hold.
+        let mut p = ground_alone();
+        p.file.copies.push(olr_format::levels::PlacedCopy::new("lamp", "a", (0, 0)));
+        let mut fs = level_with_spawn((1, 1));
+        olr_format::levels::write_placed_files(&mut fs, &p).unwrap();
+        let d = validate(&fs);
+        assert!(
+            d.iter().any(|d| d.severity == Severity::Error && d.file.as_deref() == Some("editor/placed.ron")),
+            "{d:?}"
+        );
+        // A placement without its ground: an error, never a panic.
+        let mut fs = MemFs::new();
+        for (path, bytes) in placed_level().files() {
+            if path.as_str() != "editor/asset.ron" {
+                olr_vfs::ContentSink::write(&mut fs, path, bytes).unwrap();
+            }
+        }
+        assert!(validate(&fs).iter().any(|d| d.severity == Severity::Error), "{:?}", validate(&fs));
     }
 
-    /// Issue #37: the baked surface maps and the painted ones are checked:
-    /// their size, and values within the look's materials.
+    /// Issue #74: OLR 0.2's composition is a warning, unconverted or left
+    /// beside a placement (the baked level plays); its files are not
+    /// flagged one by one.
+    #[test]
+    fn a_leftover_composition_is_a_warning() {
+        let p = ground_alone();
+        let ground = &p.assets["ground"];
+        let src = olr_format::assets::as_composition(ground);
+        let mut legacy = level_with_spawn((1, 1));
+        olr_format::levels::write_composition_files(&mut legacy, &src).unwrap();
+        let d: Vec<String> = validate(&legacy).iter().map(|d| d.to_string()).collect();
+        assert_eq!(d, [format!("warning: editor/composition.ron: {UNCONVERTED_WARNING}")]);
+        let mut both = placed_level();
+        olr_format::levels::write_composition_files(&mut both, &src).unwrap();
+        let d: Vec<String> = validate(&both).iter().map(|d| d.to_string()).collect();
+        assert_eq!(d, [format!("warning: editor/composition.ron: {LEFTOVER_WARNING}")]);
+    }
+
+    /// Issue #37: the baked surface maps are checked: their size, and
+    /// values within the look's materials; an element's surface names a
+    /// material of its asset.
     #[test]
     fn surface_maps_are_validated() {
-        let mut fs = composed_level();
+        let mut fs = placed_level();
         let mut level = olr_format::levels::read_level_files(&fs).unwrap();
-        level.look = Some(olr_format::look::LookSource {
-            materials: vec![olr_format::materials::MaterialSource {
-                light_soak: None,
-                id: "stone".into(),
-                name: "Stone".into(),
-                notes: String::new(),
-                heat: None,
-            }],
-            ..olr_format::look::LookSource::default()
-        });
+        let stone = olr_format::materials::MaterialSource {
+            light_soak: None,
+            id: "stone".into(),
+            name: "Stone".into(),
+            notes: String::new(),
+            heat: None,
+        };
+        level.look =
+            Some(olr_format::look::LookSource { materials: vec![stone.clone()], ..Default::default() });
         level.surface =
             Some(olr_format::levels::SurfaceMaps { world: (8, 8), front: vec![1; 64], back: vec![0; 64] });
         olr_format::levels::write_level_files(&mut fs, &level).unwrap();
@@ -574,30 +670,30 @@ mod tests {
         assert!(e.iter().any(|e| e.contains("look/surface.png")), "{e:?}");
         let e = errors(&fs.clone().with("look/surface-back.png", grey(8, 8, &[2; 64])));
         assert!(e.iter().any(|e| e.contains("look/surface-back.png") && e.contains("material 2")), "{e:?}");
-        // A painted map on the base raster.
-        let mut c = olr_format::levels::read_composition_files(&fs).unwrap().unwrap();
-        c.composition.elements[0].surface = Some("stone".into());
-        c.composition.elements[0].surface_map = true;
-        c.files.insert(olr_format::levels::surface_file("base"), grey(8, 8, &[1; 64]));
+        // A painted map on the ground's raster.
+        let mut p = ground_alone();
+        let g = p.assets.get_mut("ground").unwrap();
+        g.file.materials = vec![stone];
+        g.file.elements[0].surface = Some("stone".into());
+        g.file.elements[0].surface_map = true;
+        g.files.insert("surface/base.png".into(), grey(8, 8, &[1; 64]));
         let mut ok = fs.clone();
-        olr_format::levels::write_composition_files(&mut ok, &c).unwrap();
+        olr_format::levels::write_placed_files(&mut ok, &p).unwrap();
         assert_eq!(validate(&ok), vec![]);
-        let e = errors(&ok.clone().with("editor/surface/base.png", grey(8, 8, &[2; 64])));
-        assert!(e.iter().any(|e| e.contains("editor/surface/base.png") && e.contains("material 2")), "{e:?}");
-        c.composition.elements[0].surface = Some("lava".into());
+        p.assets.get_mut("ground").unwrap().file.elements[0].surface = Some("lava".into());
         let mut bad = fs.clone();
-        olr_format::levels::write_composition_files(&mut bad, &c).unwrap();
+        olr_format::levels::write_placed_files(&mut bad, &p).unwrap();
         let e = errors(&bad);
-        assert!(e.iter().any(|e| e.contains("elements[0].surface") && e.contains("lava")), "{e:?}");
+        assert!(e.iter().any(|e| e.contains("lava")), "{e:?}");
     }
 
-    /// Deferred minors: a missing composition file is one error, not also
+    /// Deferred minors: a missing ground file is one error, not also
     /// a "not read" warning for every other `editor/` file.
     #[test]
-    fn a_missing_composition_file_is_one_error() {
+    fn a_missing_ground_file_is_one_error() {
         use olr_vfs::ContentSink as _;
         let mut fs = MemFs::new();
-        for (p, b) in composed_level().files() {
+        for (p, b) in placed_level().files() {
             if p.as_str() != "editor/layers/base.front.png" {
                 fs.write(p, b).unwrap();
             }

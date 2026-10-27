@@ -7,16 +7,28 @@
 //! (`olr_pack::install::replace_dir`), after checking it with
 //! `olr_pack::validate`: the pack on disk is the old one or the new one,
 //! never a mix, and files the source no longer has are gone.
+//!
+//! A level's editable source (issue #74) is its placement,
+//! `editor/placed.ron` ([`Pack::placed`]); while it is the ground alone
+//! (every converted, new or plain level) [`Pack::composition`] holds the
+//! ground's elements, folders and files, which the element operations and
+//! the editor edit, and [`files`] writes back into `editor/asset.ron`. A
+//! level of OLR 0.2 (`editor/composition.ron`, no placement) loads with
+//! [`Pack::legacy_composition`] set and is refused by everything that
+//! edits it ([`UNCONVERTED`]) until `olr_edit::placed::from_composition`
+//! converts it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use olr_data::manifest::{PackKind, PackManifest};
 use olr_format::FormatError;
+use olr_format::assets::{AssetFile, AssetSource, asset_paths};
 use olr_format::core_pack::{CoreSource, read_core_files, write_core_files};
 use olr_format::levels::{
-    CompositionSource, LevelSource, composition_paths, read_composition_files, read_level_files,
-    write_composition_files, write_level_files,
+    AssetOrigin, COMPOSITION_FILE, CompositionSource, EDITOR_DIR, GROUND_KEY, LevelAsset, LevelSource,
+    PlacedCopy, PlacedFile, PlacedSource, asset_dir, placed_paths, read_level_files, read_placed_files,
+    write_level_files, write_placed_files,
 };
 use olr_format::mods::{ModSource, read_mod_files, write_mod_files};
 use olr_format::skins::{SkinSource, read_skin_files, write_skin_files};
@@ -88,17 +100,183 @@ impl Source {
     }
 }
 
+/// What refuses an edit of a level of OLR 0.2 (issue #74): its
+/// `editor/composition.ron` is converted first, never flattened.
+pub const UNCONVERTED: &str =
+    "editor/composition.ron: a level from OLR 0.2: run olr-cli level convert <pack>";
+
+/// What refuses an edit of the ground of a level placing more than its
+/// ground (issue #74; #75 brings the commands for copies).
+pub const NOT_THE_GROUND_ALONE: &str =
+    "the level places assets besides its ground: only a ground placed alone is edited here (issue #75)";
+
+/// The name a ground asset made for a level takes.
+pub const GROUND_NAME: &str = "Ground";
+
 /// A pack as an editor holds it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Pack {
     pub manifest: PackManifest,
     pub source: Source,
-    /// A level's composition (its `editor/` folder, plan 14a); always
-    /// `None` for the other kinds.
+    /// A level's ground as a composition (issue #74; plan 14a's
+    /// composition): the ground asset's elements, folders and files, by
+    /// pack path under `editor/`, while the placement is the ground alone
+    /// ([`ground_alone`]), or the composition a plain level is given
+    /// (`element::ensure_composed`, the editor) before it has a placement.
+    /// `None` for a plain level, a level placing more than its ground, and
+    /// the other kinds.
     pub composition: Option<CompositionSource>,
+    /// A level's placement (`editor/placed.ron`, issue #74), its assets
+    /// and scripts; `None` for a plain or unconverted level and the other
+    /// kinds. [`files`] writes [`placement`].
+    pub placed: Option<PlacedSource>,
+    /// The level holds OLR 0.2's `editor/composition.ron` and no
+    /// placement: it is not read (its files stay in `other`, byte for
+    /// byte), and everything that edits or bakes the level refuses it
+    /// ([`UNCONVERTED`]) until it is converted.
+    pub legacy_composition: bool,
     /// Files the format does not read (foreign files, and a mod's
     /// gfx/sounds assets), by path, kept byte for byte.
     pub other: BTreeMap<VPath, Vec<u8>>,
+    /// The placement's library copies as loaded, written back byte for
+    /// byte while unedited.
+    pub verbatim: Verbatim,
+}
+
+/// A level's library copies (every asset but the ground) as loaded: each
+/// asset and its files' bytes by pack path. [`files`] writes an asset's
+/// files as they were while it equals the one loaded, so a copy never
+/// edited is never rewritten (its `asset.ron`'s own spacing kept).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Verbatim(BTreeMap<String, (AssetSource, BTreeMap<VPath, Vec<u8>>)>);
+
+impl Pack {
+    /// A pack of `source` and nothing else: no composition, placement or
+    /// other files.
+    pub fn new(manifest: PackManifest, source: Source) -> Pack {
+        Pack {
+            manifest,
+            source,
+            composition: None,
+            placed: None,
+            legacy_composition: false,
+            other: BTreeMap::new(),
+            verbatim: Verbatim::default(),
+        }
+    }
+
+    /// Why the level's ground cannot be edited as a composition: an
+    /// unconverted level of OLR 0.2 ([`UNCONVERTED`]), or a placement of
+    /// more than the ground ([`NOT_THE_GROUND_ALONE`]). `None` for any
+    /// other level (a plain one is composed when first edited).
+    pub fn ground_refusal(&self) -> Option<&'static str> {
+        if self.legacy_composition {
+            Some(UNCONVERTED)
+        } else if self.placed.is_some() && self.composition.is_none() {
+            Some(NOT_THE_GROUND_ALONE)
+        } else {
+            None
+        }
+    }
+}
+
+/// Whether `placed` is its ground alone as `level` holds it (issue #74,
+/// the editors' scope until #82): one asset, the ground (`Own`), of the
+/// level's size and art scale with one state, and one static copy of it
+/// at `(0, 0)`, unstretched, not distant, with no state, values or script.
+pub fn ground_alone(placed: &PlacedSource, level: &LevelSource) -> bool {
+    let ([a], [c]) = (placed.file.assets.as_slice(), placed.file.copies.as_slice()) else { return false };
+    a.key == GROUND_KEY
+        && a.origin == AssetOrigin::Own
+        && c.asset == GROUND_KEY
+        && c.at == (0, 0)
+        && c.size.is_none_or(|s| s == level.size)
+        && c.distant.is_none()
+        && !c.live
+        && c.state.is_none()
+        && c.values.is_empty()
+        && !c.script
+        && placed.assets.get(GROUND_KEY).is_some_and(|g| {
+            g.file.size == level.size && g.file.art_scale == level.art_scale && g.file.states.len() == 1
+        })
+}
+
+/// A ground asset's composition: its elements and folders, its files
+/// under `editor/`.
+pub fn ground_composition(ground: &AssetSource) -> CompositionSource {
+    olr_format::assets::as_composition(ground)
+}
+
+/// A level's placement of a ground alone (issue #74): the asset `ground`
+/// (`Own`, [`GROUND_NAME`], the level's size and art scale) of `src`'s
+/// elements, folders and files, the look's glow groups and materials, and
+/// one locked copy `ground` of it at `(0, 0)`.
+pub fn ground_placement(level: &LevelSource, src: &CompositionSource) -> PlacedSource {
+    let mut ground = AssetSource::new(AssetFile::new(GROUND_NAME, level.size, Vec::new()), BTreeMap::new());
+    set_ground(&mut ground, level, src, true);
+    let copy = PlacedCopy { locked: true, ..PlacedCopy::new(GROUND_KEY, GROUND_KEY, (0, 0)) };
+    PlacedSource {
+        file: PlacedFile {
+            assets: vec![LevelAsset { key: GROUND_KEY.into(), origin: AssetOrigin::Own }],
+            copies: vec![copy],
+            script: false,
+        },
+        assets: [(GROUND_KEY.to_string(), ground)].into(),
+        scripts: BTreeMap::new(),
+        level_script: None,
+    }
+}
+
+/// `ground` given `src`'s elements, folders and files (paths without
+/// `editor/`) and the level's size and art scale; with `look`, the
+/// level's look's glow groups and materials too. Its other fields stay.
+fn set_ground(ground: &mut AssetSource, level: &LevelSource, src: &CompositionSource, look: bool) {
+    let f = &mut ground.file;
+    f.size = level.size;
+    f.art_scale = level.art_scale;
+    f.elements = src.composition.elements.clone();
+    f.folders = src.composition.folders.clone();
+    let prefix = format!("{EDITOR_DIR}/");
+    ground.files = src
+        .files
+        .iter()
+        .filter_map(|(k, v)| Some((k.strip_prefix(&prefix)?.to_string(), v.clone())))
+        .collect();
+    if look {
+        f.glow_groups = level.look.as_ref().map(|l| l.glow_groups.clone()).unwrap_or_default();
+        f.materials = level.look.as_ref().map(|l| l.materials.clone()).unwrap_or_default();
+    }
+}
+
+/// The placement [`files`] writes for `pack` (issue #74): `placed` with
+/// the ground's elements, folders, files, size and art scale from
+/// `composition` (its other fields kept), and, while it is the ground
+/// alone, the glow groups and materials of `level.ron`'s look (where the
+/// look panel and `olr_edit::look` edit them); a level given a
+/// composition and no placement yet is its [`ground_placement`]. `None`
+/// for a plain or unconverted level and the other kinds.
+pub fn placement(pack: &Pack) -> Option<PlacedSource> {
+    placement_with(pack, true)
+}
+
+/// [`placement`]; with `look` false the ground keeps the glow groups and
+/// materials it holds (`placed::stale` compares them with the look).
+pub(crate) fn placement_with(pack: &Pack, look: bool) -> Option<PlacedSource> {
+    let Source::Level(level) = &pack.source else { return pack.placed.clone() };
+    let Some(src) = &pack.composition else { return pack.placed.clone() };
+    let Some(mut placed) = pack.placed.clone() else { return Some(ground_placement(level, src)) };
+    let mut ground = placed.assets.remove(GROUND_KEY).unwrap_or_else(|| {
+        AssetSource::new(AssetFile::new(GROUND_NAME, level.size, Vec::new()), BTreeMap::new())
+    });
+    set_ground(&mut ground, level, src, false);
+    placed.assets.insert(GROUND_KEY.into(), ground);
+    if look
+        && ground_alone(&placed, level)
+        && let Some(g) = placed.assets.get_mut(GROUND_KEY)
+    {
+        set_ground(g, level, src, true);
+    }
+    Some(placed)
 }
 
 /// Why a save wrote nothing.
@@ -130,12 +308,22 @@ pub fn load(dir: &Path) -> Result<Pack, PackError> {
     bounded(&src)?;
     let manifest = olr_pack::read_manifest(&src)?;
     let source = Source::read(manifest.kind, &src)?;
-    let composition = match source {
-        Source::Level(_) => read_composition_files(&src)?,
+    let (placed, legacy_composition) = match &source {
+        Source::Level(_) => {
+            let placed = read_placed_files(&src)?;
+            let legacy = placed.is_none() && src.exists(&VPath::new(COMPOSITION_FILE)?);
+            (placed, legacy)
+        }
+        _ => (None, false),
+    };
+    let composition = match (&source, &placed) {
+        (Source::Level(level), Some(p)) if ground_alone(p, level) => {
+            p.assets.get(GROUND_KEY).map(ground_composition)
+        }
         _ => None,
     };
     let mut reads = source.reads();
-    reads.extend(composition.iter().flat_map(composition_paths));
+    reads.extend(placed.iter().flat_map(placed_paths));
     let owned: BTreeSet<&str> = reads.iter().map(String::as_str).collect();
     let mut other = BTreeMap::new();
     for path in walk(&src, &VPath::root())? {
@@ -144,7 +332,26 @@ pub fn load(dir: &Path) -> Result<Pack, PackError> {
             other.insert(path, bytes);
         }
     }
-    Ok(Pack { manifest, source, composition, other })
+    let mut verbatim = BTreeMap::new();
+    for (key, asset) in placed.iter().flat_map(|p| &p.assets).filter(|(k, _)| k.as_str() != GROUND_KEY) {
+        let dir = asset_dir(key);
+        let mut raw = BTreeMap::new();
+        for f in asset_paths(asset) {
+            let path = VPath::new(&format!("{dir}/{f}"))?;
+            let bytes = src.read_max(&path, MAX_FILE_BYTES)?;
+            raw.insert(path, bytes);
+        }
+        verbatim.insert(key.clone(), (asset.clone(), raw));
+    }
+    Ok(Pack {
+        manifest,
+        source,
+        composition,
+        placed,
+        legacy_composition,
+        other,
+        verbatim: Verbatim(verbatim),
+    })
 }
 
 /// A pack is bounded as a whole as its archive would be: at most
@@ -191,8 +398,8 @@ fn unaddressable(root: &Path, dir: &Path) -> Result<Option<String>, PackError> {
 }
 
 /// Every file of `pack` as its canonical writer produces it
-/// (`pack.ron`, the kind's files and a level's composition), plus `other`
-/// as it is.
+/// (`pack.ron`, the kind's files and a level's [`placement`], an
+/// unedited library copy as loaded), plus `other` as it is.
 pub fn files(pack: &Pack) -> Result<BTreeMap<VPath, Vec<u8>>, PackError> {
     if pack.manifest.kind != pack.source.kind() {
         return Err(PackError::Invalid {
@@ -211,14 +418,22 @@ pub fn files(pack: &Pack) -> Result<BTreeMap<VPath, Vec<u8>>, PackError> {
     }
     olr_pack::write_manifest(&mut fs, &pack.manifest)?;
     pack.source.write(&mut fs)?;
-    if let Some(c) = &pack.composition {
-        if pack.source.kind() != PackKind::Level {
-            return Err(PackError::Invalid {
-                file: olr_format::levels::COMPOSITION_FILE.into(),
-                message: "only a level pack has a composition".into(),
-            });
+    if (pack.composition.is_some() || pack.placed.is_some()) && pack.source.kind() != PackKind::Level {
+        return Err(PackError::Invalid {
+            file: olr_format::levels::PLACED_FILE.into(),
+            message: "only a level pack has a composition or a placement".into(),
+        });
+    }
+    if let Some(p) = placement(pack) {
+        write_placed_files(&mut fs, &p)?;
+        // A library copy as loaded is written as it was read.
+        for (key, (asset, raw)) in &pack.verbatim.0 {
+            if p.assets.get(key) == Some(asset) && p.file.assets.iter().any(|a| a.key == *key) {
+                for (path, bytes) in raw {
+                    fs.write(path, bytes)?;
+                }
+            }
         }
-        write_composition_files(&mut fs, c)?;
     }
     Ok(fs.files().map(|(p, b)| (p.clone(), b.to_vec())).collect())
 }

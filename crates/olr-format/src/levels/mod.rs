@@ -1,6 +1,7 @@
 //! The level authoring format: `level.ron`, `material.png`, `front.png`,
 //! `back.png` and an optional `thumb.png` (spec §6), and an optional
-//! composition under `editor/` that bakes into them (plan 14a). A level may
+//! placement under `editor/` that bakes into them (plan 14a's composition,
+//! issues #73 and #74). A level may
 //! have distant (parallax) layers (issue #11), `distant/<i>.png`: they show
 //! where `back.png` is see-through (alpha 0), scrolling slower than the
 //! level, and through its glass (alpha 1 to 254: the background glass
@@ -10,8 +11,9 @@
 //! `look/surface.png` and `look/surface-back.png`: what its front and back
 //! pixels are made of, for the look only.
 //!
-//! Issue #73: a level may instead be placed copies of assets,
-//! `editor/placed.ron`. Its ground (the level's own painted asset, key
+//! Issues #73 and #74: a composed level is placed copies of assets,
+//! `editor/placed.ron` (OLR 0.2's `editor/composition.ron` is read only to
+//! convert it). Its ground (the level's own painted asset, key
 //! `ground`) is an asset folder rooted at `editor/` itself
 //! (`editor/asset.ron`, `editor/layers/<id>.png`, …, see `asset.md`); every
 //! other asset it uses is a copy in `editor/<key>/` (`a`, `b`, …); a

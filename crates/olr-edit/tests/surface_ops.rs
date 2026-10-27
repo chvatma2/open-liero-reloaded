@@ -4,8 +4,6 @@
 //! collision kind and colour, reproducibly; every bad input refused with
 //! the pack unchanged.
 
-use std::collections::BTreeMap;
-
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 use olr_data::manifest::{PACK_FORMAT_VERSION, PackKind, PackManifest};
@@ -64,7 +62,7 @@ fn level(s: u32) -> Pack {
         surface: None,
         distant_surfaces: Vec::new(),
     };
-    let mut p = Pack { manifest, source: Source::Level(level), composition: None, other: BTreeMap::new() };
+    let mut p = Pack::new(manifest, Source::Level(level));
     add_layer(&mut p, ElementMaterial::Dirt, "Layer").unwrap();
     remove(&mut p, "base").unwrap();
     let rect = |x, y, w, h| Shape::Rect { x, y, w, h };

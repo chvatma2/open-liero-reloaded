@@ -102,7 +102,8 @@ fn a_bundled_level_is_edited_as_a_copy() {
     let out = h.act(vec![A::Save]);
     assert!(messages(&out).is_empty(), "{out:?}");
     assert!(!h.state().dirty(), "saved");
-    assert!(dir.join("editor/composition.ron").is_file(), "the composition is saved there");
+    assert!(dir.join("editor/placed.ron").is_file(), "the placement is saved there");
+    assert!(dir.join("editor/asset.ron").is_file(), "its ground too");
     // Editing a bundled level in place is refused: its Edit is not offered,
     // and opening its folder through the browser is refused too.
     let out = h.open_from_menu(&AppCommand::EditLevel("olx-level-dirt-level".into()));

@@ -277,7 +277,10 @@ fn glowing_distant_layers_split_and_bake_back() {
         },
         source: olr_edit::pack::Source::Level(l.clone()),
         composition: Some(src),
+        placed: None,
+        legacy_composition: false,
         other: Default::default(),
+        verbatim: Default::default(),
     };
     assert_eq!(stale(&pack, &tile()).unwrap(), Vec::<String>::new());
     pack.composition.as_mut().unwrap().composition.elements[1].glow.as_mut().unwrap().strength = 31;

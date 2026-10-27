@@ -2,7 +2,10 @@
 //! `docs/superpowers/specs/2026-10-17-editor-foundation-and-level-editor-design.md`
 //! §2): `editor/composition.ron`, a stack of elements (imported images,
 //! drawn layers, raster bases) and their files under `editor/`, which
-//! `olr-edit` bakes into `material.png`, `front.png` and `back.png`.
+//! `olr-edit` bakes into `material.png`, `front.png` and `back.png`. Since
+//! issue #74 a level's elements are its ground asset's (`editor/asset.ron`,
+//! placed by `editor/placed.ron`); these types are the asset's layers, and
+//! `editor/composition.ron` is read only to convert a level of OLR 0.2.
 
 use std::collections::{BTreeMap, BTreeSet};
 

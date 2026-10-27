@@ -168,7 +168,7 @@ fn fresh(source: Source) -> Pack {
         origin: None,
         license: None,
     };
-    Pack { manifest, source, composition: None, other: BTreeMap::new() }
+    Pack::new(manifest, source)
 }
 
 /// Sets the name the menus show inside the source (core packs have none).

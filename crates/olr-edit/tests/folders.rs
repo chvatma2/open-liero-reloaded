@@ -1,7 +1,7 @@
 //! Layer folders (issue #59): `olr_edit::folders`' tree operations on a
 //! composition, and folders through the pack operations and the bake.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
@@ -431,7 +431,7 @@ fn pack() -> Pack {
         surface: None,
         distant_surfaces: Vec::new(),
     };
-    Pack { manifest, source: Source::Level(level), composition: None, other: BTreeMap::new() }
+    Pack::new(manifest, Source::Level(level))
 }
 
 /// A rock layer `wall` painted red over (0, 0, 4, 2), in folder `lamp`.

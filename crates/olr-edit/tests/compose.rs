@@ -1081,7 +1081,10 @@ fn distant_layers_split_and_bake_back() {
         },
         source: olr_edit::pack::Source::Level(l.clone()),
         composition: Some(src.clone()),
+        placed: None,
+        legacy_composition: false,
         other: Default::default(),
+        verbatim: Default::default(),
     };
     assert_eq!(olr_edit::compose::stale(&pack, &tile).unwrap(), Vec::<String>::new());
     pack.composition.as_mut().unwrap().composition.elements[0].distant = Some(50);

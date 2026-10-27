@@ -1236,12 +1236,17 @@ pub struct DecodedLevel {
 }
 
 impl DecodedLevel {
-    /// `pack`'s level decoded; refused for another kind of pack or a
-    /// composition that does not check or decode.
+    /// `pack`'s level decoded; refused for another kind of pack, a
+    /// composition that does not check or decode, and a level whose
+    /// ground is not its composition (`Pack::ground_refusal`: an
+    /// unconverted level of OLR 0.2 is never cut as a plain one).
     pub fn of_pack(pack: &crate::pack::Pack) -> Result<DecodedLevel, AssetError> {
         let crate::pack::Source::Level(level) = &pack.source else {
             return Err(AssetError::Bad("not a level pack".into()));
         };
+        if let Some(why) = pack.ground_refusal() {
+            return Err(AssetError::Bad(why.into()));
+        }
         let (size, s) = (level.size, level.art_scale);
         let src = pack.composition.clone().unwrap_or_else(|| crate::compose::split_from(level));
         olr_format::levels::check_composition(&src, size, s)?;

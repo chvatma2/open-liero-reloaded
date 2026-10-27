@@ -1,6 +1,7 @@
 //! `olr-cli level element …` and `level bake` (plan 14a, spec §7): a
-//! level's composition edited by agents. Each command loads the pack,
-//! applies the `olr_edit::element` operation, bakes (`compose::bake`, the
+//! level's ground (its own asset, issue #74) edited by agents. Each command
+//! loads the pack (an unconverted level of OLR 0.2 refused), applies the
+//! `olr_edit::element` operation, bakes (`olr_edit::placed::bake_pack`, the
 //! theme's back tile from `--content`) and saves through
 //! `olr_edit::pack::save`; its messages print once the save succeeded. A
 //! refused operation writes nothing.
@@ -8,10 +9,11 @@
 use std::path::{Path, PathBuf};
 
 use clap::{Subcommand, ValueEnum};
-use olr_edit::compose::{bake, theme_back_tile};
+use olr_edit::compose::theme_back_tile;
 use olr_edit::element::{self, Property, SurfaceRule};
-use olr_edit::pack::{Pack, Source, load, save};
-use olr_format::levels::{Dither, ElementKind, ElementMaterial, GlowBeam};
+use olr_edit::pack::{Pack, Source, UNCONVERTED, load, placement, save};
+use olr_edit::placed::bake_pack as bake_placed;
+use olr_format::levels::{Composition, Dither, ElementKind, ElementMaterial, GlowBeam};
 
 use crate::level_cmd::{MaterialArg, PaintArgs, ShapeArgs, parse_ints, parse_point, read_bounded};
 use crate::pack_cmd::parse_size;
@@ -383,8 +385,8 @@ pub(crate) enum ElementCommand {
     },
 }
 
-/// The level pack at `dir`.
-pub(crate) fn load_level(dir: &Path) -> anyhow::Result<Pack> {
+/// The level pack at `dir`, to read.
+pub(crate) fn read_level(dir: &Path) -> anyhow::Result<Pack> {
     let pack = load(dir).map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?;
     if !matches!(pack.source, Source::Level(_)) {
         anyhow::bail!("{}: not a level pack", dir.display());
@@ -392,12 +394,37 @@ pub(crate) fn load_level(dir: &Path) -> anyhow::Result<Pack> {
     Ok(pack)
 }
 
-/// Bakes a composed `pack` with the back tile of its theme in `content`.
+/// The level pack at `dir`, to change or bake: an unconverted level of
+/// OLR 0.2 is refused (issue #74: never flattened, never overwritten),
+/// naming the command that converts it.
+pub(crate) fn load_level(dir: &Path) -> anyhow::Result<Pack> {
+    let pack = read_level(dir)?;
+    if pack.legacy_composition {
+        anyhow::bail!("{}: {}", dir.display(), unconverted(dir));
+    }
+    Ok(pack)
+}
+
+/// [`UNCONVERTED`] naming the pack at `dir`.
+pub(crate) fn unconverted(dir: &Path) -> String {
+    UNCONVERTED.replace("<pack>", &dir.display().to_string())
+}
+
+/// Bakes a composed `pack` with the back tile of its theme in `content`:
+/// its placement (`olr_edit::placed::bake_pack`, issue #74); a plain level
+/// is left as it is.
 pub(crate) fn bake_pack(dir: &Path, pack: &mut Pack, content: &Path) -> anyhow::Result<()> {
     let fail = |e: &dyn std::fmt::Display| anyhow::anyhow!("{}: {e}", dir.display());
-    let (Source::Level(level), Some(src)) = (&mut pack.source, &pack.composition) else { return Ok(()) };
+    if pack.legacy_composition {
+        anyhow::bail!("{}: {}", dir.display(), unconverted(dir));
+    }
+    let Source::Level(level) = &pack.source else { return Ok(()) };
+    if placement(pack).is_none() {
+        return Ok(());
+    }
     let tile = theme_back_tile(content, &level.theme).map_err(|e| fail(&e))?;
-    bake(level, src, &tile).map_err(|e| fail(&e))
+    bake_placed(pack, &tile).map_err(|e| fail(&e))?;
+    Ok(())
 }
 
 /// Saves `pack`, its save's warnings on stderr, then prints `messages`.
@@ -429,12 +456,35 @@ fn material_name(m: ElementMaterial) -> &'static str {
     }
 }
 
+/// The ground's elements and folders from its `editor/asset.ron` alone
+/// (issue #74), else an unconverted level's `editor/composition.ron`
+/// alone (listing changes nothing); `None` for a plain level.
+fn listed(dir: &Path) -> Result<Option<Composition>, olr_format::FormatError> {
+    use olr_format::levels::{GROUND_KEY, PLACED_FILE, asset_dir};
+    let fs = olr_vfs::DirFs::new(dir);
+    if dir.join(PLACED_FILE).is_file() {
+        let file = format!("{}/{}", asset_dir(GROUND_KEY), olr_format::assets::ASSET_FILE);
+        let io =
+            |e: olr_vfs::VfsError| olr_format::FormatError::Io { file: file.clone(), message: e.to_string() };
+        let bytes = olr_vfs::ContentSource::read_max(
+            &fs,
+            &olr_vfs::VPath::new(&file).map_err(io)?,
+            olr_format::ron_io::MAX_RON_BYTES,
+        )
+        .map_err(io)?;
+        let text = String::from_utf8(bytes)
+            .map_err(|_| olr_format::FormatError::Io { file: file.clone(), message: "not UTF-8".into() })?;
+        let ground: olr_format::assets::AssetFile = olr_format::ron_io::from_canonical(&file, &text)?;
+        return Ok(Some(Composition { elements: ground.elements, folders: ground.folders }));
+    }
+    olr_format::levels::read_composition(&fs)
+}
+
 fn list(dir: &Path) -> anyhow::Result<bool> {
-    // `composition.ron` alone: the list still shows a stack whose files
-    // are broken. Its folders are unchecked too: every walk is bounded
-    // (`folder_chain`).
-    let composition = olr_format::levels::read_composition(&olr_vfs::DirFs::new(dir))
-        .map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?;
+    // The ground's `asset.ron` alone: the list still shows a stack whose
+    // files are broken. Its folders are unchecked too: every walk is
+    // bounded (`folder_chain`).
+    let composition = listed(dir).map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?;
     let Some(c) = composition else { return Ok(true) };
     // The folders printed around the current element, outermost first.
     let mut open: Vec<&str> = Vec::new();
@@ -796,12 +846,68 @@ fn glow_property(
     Ok(Some(Property::Glow(Some(olr_format::levels::ElementGlow { strength, group, mask, beam }))))
 }
 
-/// `level bake <pack>`: rebakes a composed level.
+/// `level bake <pack>`: rebakes a placed level.
 pub(crate) fn bake_cmd(dir: &Path, content: &ContentArg) -> anyhow::Result<bool> {
     let mut pack = load_level(dir)?;
-    if pack.composition.is_none() {
-        anyhow::bail!("{}: no composition to bake", dir.display());
+    if placement(&pack).is_none() {
+        anyhow::bail!("{}: no placement to bake", dir.display());
     }
     bake_pack(dir, &mut pack, &content.content)?;
     save_and_print(dir, &pack, &[format!("baked {}", dir.display())])
+}
+
+/// `level convert <pack>`: a level of OLR 0.2 converted
+/// (`olr_edit::placed::from_composition`), baked, and saved only when no
+/// file outside `editor/` changed (issue #74: its bake byte for byte).
+pub(crate) fn convert_cmd(dir: &Path, content: &ContentArg) -> anyhow::Result<()> {
+    use olr_edit::placed::{Conversion, from_composition};
+    let mut pack = read_level(dir)?;
+    let fail = |e: &dyn std::fmt::Display| anyhow::anyhow!("{}: {e}", dir.display());
+    let played = |p: &Pack| -> anyhow::Result<std::collections::BTreeMap<olr_vfs::VPath, Vec<u8>>> {
+        let mut files = olr_edit::pack::files(p).map_err(|e| fail(&e))?;
+        files.retain(|path, _| !olr_pack::is_authoring(path.as_str()));
+        Ok(files)
+    };
+    let before = played(&pack)?;
+    match from_composition(&mut pack).map_err(|e| fail(&e))? {
+        Conversion::Already => {
+            println!("{}: already converted", dir.display());
+            return Ok(());
+        }
+        Conversion::Plain => {
+            println!("{}: a plain level: nothing to convert", dir.display());
+            return Ok(());
+        }
+        Conversion::Converted => {}
+    }
+    bake_pack(dir, &mut pack, &content.content)?;
+    let after = played(&pack)?;
+    let changed: Vec<&str> = before
+        .keys()
+        .chain(after.keys())
+        .filter(|p| before.get(*p) != after.get(*p))
+        .map(|p| p.as_str())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if !changed.is_empty() {
+        anyhow::bail!(
+            "{}: the converted level bakes otherwise ({} differ): nothing written (OLR 0.2 left its bake stale?)",
+            dir.display(),
+            changed.join(", ")
+        );
+    }
+    let p = pack.placed.as_ref().map_or((0, 0), |p| (p.file.assets.len(), p.file.copies.len()));
+    let plural = |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    save_and_print(
+        dir,
+        &pack,
+        &[format!(
+            "converted {}: {}, {}",
+            dir.display(),
+            plural(p.0, "asset", "assets"),
+            plural(p.1, "copy", "copies")
+        )],
+    )?;
+    Ok(())
 }

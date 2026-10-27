@@ -37,6 +37,11 @@ pub enum ElementError {
     TooMany,
     #[error("{0}")]
     BadValue(String),
+    /// The level's ground is not edited as a composition
+    /// (`Pack::ground_refusal`: an unconverted level of OLR 0.2, or one
+    /// placing more than its ground).
+    #[error("{0}")]
+    NotTheGround(&'static str),
 }
 
 impl From<FolderError> for ElementError {
@@ -86,10 +91,26 @@ fn level(pack: &Pack) -> Result<&LevelSource, ElementError> {
     }
 }
 
-/// Gives a level without a composition its raster base (`compose_from`); no-op otherwise.
+/// Refuses a level whose ground is not edited as a composition
+/// (`Pack::ground_refusal`: never flattened, issue #74).
+fn ground(pack: &Pack) -> Result<(), ElementError> {
+    level(pack)?;
+    pack.ground_refusal().map_or(Ok(()), |why| Err(ElementError::NotTheGround(why)))
+}
+
+/// Gives a plain level its ground (issue #74): a composition of its raster
+/// base (`compose_from`) and a placement of it alone
+/// (`pack::ground_placement`); no-op for a level that has them. An
+/// unconverted level of OLR 0.2, or one placing more than its ground, is
+/// refused (`NotTheGround`), nothing changed.
 pub fn ensure_composed(pack: &mut Pack) -> Result<(), ElementError> {
-    let base = compose_from(level(pack)?);
-    pack.composition.get_or_insert(base);
+    ground(pack)?;
+    let l = level(pack)?;
+    let src = pack.composition.clone().unwrap_or_else(|| compose_from(l));
+    if pack.placed.is_none() {
+        pack.placed = Some(crate::pack::ground_placement(l, &src));
+    }
+    pack.composition = Some(src);
     Ok(())
 }
 
@@ -103,6 +124,7 @@ fn commit<T>(
     context: &str,
     edit: impl FnOnce(&mut CompositionSource) -> Result<T, ElementError>,
 ) -> Result<T, ElementError> {
+    ground(pack)?;
     let l = level(pack)?;
     let (size, art_scale) = (l.size, l.art_scale);
     let was_valid = pack.composition.as_ref().is_none_or(|c| check_composition(c, size, art_scale).is_ok());
@@ -1317,7 +1339,8 @@ pub fn mask(pack: &mut Pack, id: &str, op: &MaskOp, restore: bool) -> Result<(),
 /// raster layers are re-laid with `material` and `paint` in the new area
 /// (`compose::resize_decoded`). Reads the old size from the pack's level
 /// source, so callers run it before `level::resize`. A level without a
-/// composition is left as it is.
+/// composition is left as it is; an unconverted level of OLR 0.2 or one
+/// placing more than its ground is refused (`NotTheGround`).
 pub fn resize(
     pack: &mut Pack,
     size: (u32, u32),
@@ -1325,6 +1348,7 @@ pub fn resize(
     material: Material,
     paint: &Paint,
 ) -> Result<(), ElementError> {
+    ground(pack)?;
     let l = level(pack)?;
     let (old, s) = (l.size, l.art_scale);
     let Some(mut src) = pack.composition.clone() else { return Ok(()) };

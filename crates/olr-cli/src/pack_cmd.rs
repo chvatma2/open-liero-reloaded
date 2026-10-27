@@ -157,11 +157,12 @@ fn check(paths: &[PathBuf], content: &Path) -> anyhow::Result<bool> {
     Ok(errors == 0)
 }
 
-/// A valid composed level's baked files that differ from its
-/// composition's bake (plan 14a: the composition is the source of truth),
-/// as errors; a theme not found in `content` is a warning.
+/// A valid placed level's baked files that differ from its placement's
+/// bake (issue #74, `olr_edit::placed::stale`: the placement is the source
+/// of truth), as errors; a theme not found in `content` is a warning. An
+/// unconverted level of OLR 0.2 is `validate`'s warning alone.
 fn stale_bake(dir: &Path, content: &Path) -> Vec<(Severity, String)> {
-    if !dir.join(olr_format::levels::COMPOSITION_FILE).is_file() {
+    if !dir.join(olr_format::levels::PLACED_FILE).is_file() {
         return Vec::new();
     }
     let pack = match olr_edit::pack::load(dir) {
@@ -173,13 +174,13 @@ fn stale_bake(dir: &Path, content: &Path) -> Vec<(Severity, String)> {
         Ok(t) => t,
         Err(e) => return vec![(Severity::Warning, format!("warning: cannot check the bake: {e}"))],
     };
-    match olr_edit::compose::stale(&pack, &tile) {
+    match olr_edit::placed::stale(&pack, &tile) {
         Ok(files) => files
             .iter()
             .map(|f| {
                 (
                     Severity::Error,
-                    format!("error: {f}: differs from the composition's bake (run olr-cli level bake)"),
+                    format!("error: {f}: differs from the placement's bake (run olr-cli level bake)"),
                 )
             })
             .collect(),

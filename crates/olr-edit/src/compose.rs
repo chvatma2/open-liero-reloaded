@@ -1727,12 +1727,18 @@ pub fn stale(pack: &Pack, back_tile: &RgbaImage) -> Result<Vec<String>, ComposeE
     let (Source::Level(level), Some(src)) = (&pack.source, &pack.composition) else { return Ok(Vec::new()) };
     let mut baked = level.clone();
     bake(&mut baked, src, back_tile)?;
+    differing(level, &baked)
+}
+
+/// The baked files of `level` that differ from `baked`'s, as [`stale`]
+/// lists them (`olr_edit::placed::stale` shares it).
+pub fn differing(level: &LevelSource, baked: &LevelSource) -> Result<Vec<String>, ComposeError> {
     let files = |l: &LevelSource| -> Result<MemFs, ComposeError> {
         let mut fs = MemFs::new();
         write_level_files(&mut fs, l)?;
         Ok(fs)
     };
-    let (now, then) = (files(level)?, files(&baked)?);
+    let (now, then) = (files(level)?, files(baked)?);
     let differs = |f: &str| {
         let path = VPath::new(f).expect("a valid path");
         now.read(&path).ok() != then.read(&path).ok()
@@ -1742,7 +1748,7 @@ pub fn stale(pack: &Pack, back_tile: &RgbaImage) -> Result<Vec<String>, ComposeE
         let glow = |d: &DistantLayer| d.glow.as_ref().map(|g| (g.group, g.strength));
         l.distant.iter().map(|d| (d.at, d.depth, glow(d))).collect::<Vec<_>>()
     };
-    if entries(level) != entries(&baked) || level.distant_surfaces != baked.distant_surfaces {
+    if entries(level) != entries(baked) || level.distant_surfaces != baked.distant_surfaces {
         out.push("level.ron".into());
     }
     let n = level.distant.len().max(baked.distant.len());

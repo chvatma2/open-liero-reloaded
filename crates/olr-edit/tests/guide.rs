@@ -1,6 +1,6 @@
 //! The formats guide's examples (`docs/formats/README.md`, plan 13d Task 9)
 //! are real: each parses as the file it names and is canonical, and the
-//! mod and level examples (the level's composition included) make packs
+//! mod and level examples (the level's ground included) make packs
 //! that check clean. The material example is the built-in glass (issue
 //! #37).
 
@@ -187,13 +187,16 @@ fn the_guide_examples_make_packs_that_check_clean() {
     for (path, bytes) in [("material.png", &material), ("front.png", &art), ("back.png", &art)] {
         fs.write(&VPath::new(path).unwrap(), bytes).unwrap();
     }
-    // The composition's files: a 4 × 4 original per image, level-sized
-    // layers and raster files (plan 14a).
-    let composition = blocks.iter().find(|b| b.path == olr_format::levels::COMPOSITION_FILE).unwrap();
-    let composition: olr_format::levels::Composition =
-        olr_format::ron_io::from_canonical(&composition.path, &composition.text).unwrap();
+    // The ground's files: a 4 × 4 original per image, level-sized layers
+    // and raster files (plan 14a); the guide's placement places library
+    // assets the guide does not hold, so the pack places its ground alone
+    // (issue #74).
+    let ground = blocks.iter().find(|b| b.path == "editor/asset.ron").unwrap();
+    let ground: olr_format::assets::AssetFile =
+        olr_format::ron_io::from_canonical(&ground.path, &ground.text).unwrap();
+    assert_eq!((ground.size, ground.art_scale), ((w, h), s), "the ground is the level's size");
     let original = olr_format::image_io::encode_rgba(&olr_data::image::RgbaImage::new(4, 4));
-    for e in &composition.elements {
+    for e in &ground.elements {
         for (i, file) in olr_format::levels::element_files(e).into_iter().enumerate() {
             let bytes = match e.kind {
                 olr_format::levels::ElementKind::Image { .. } => &original,
@@ -203,6 +206,19 @@ fn the_guide_examples_make_packs_that_check_clean() {
             fs.write(&VPath::new(&file).unwrap(), bytes).unwrap();
         }
     }
+    let alone = olr_format::levels::PlacedFile {
+        assets: vec![olr_format::levels::LevelAsset {
+            key: "ground".into(),
+            origin: olr_format::levels::AssetOrigin::Own,
+        }],
+        copies: vec![olr_format::levels::PlacedCopy {
+            locked: true,
+            ..olr_format::levels::PlacedCopy::new("ground", "ground", (0, 0))
+        }],
+        script: false,
+    };
+    let text = olr_format::ron_io::to_canonical(olr_format::levels::PLACED_FILE, &alone).unwrap();
+    fs.write(&VPath::new(olr_format::levels::PLACED_FILE).unwrap(), text.as_bytes()).unwrap();
     let d = olr_pack::validate(&fs);
     assert!(d.iter().all(|d| d.severity != olr_pack::Severity::Error), "the level example: {d:?}");
 }

@@ -64,7 +64,7 @@ fn fresh(source: SkinSource) -> Pack {
         origin: None,
         license: None,
     };
-    Pack { manifest, source: Source::Skin(source), composition: None, other: Default::default() }
+    Pack::new(manifest, Source::Skin(source))
 }
 
 /// The skin pack at `dir`, checked as the game loads it: a bad pack is

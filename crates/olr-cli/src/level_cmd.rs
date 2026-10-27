@@ -97,6 +97,18 @@ enum LevelCommand {
         #[command(flatten)]
         content: ContentArg,
     },
+    /// Convert levels of OLR 0.2 (issue #74): each `editor/composition.ron`
+    /// becomes the level's ground asset, `editor/asset.ron`, placed alone by
+    /// `editor/placed.ron`, every element file in its place. The level is
+    /// baked and must bake to the same files; else nothing is written.
+    /// Prints `converted <pack>: 1 asset, 1 copy`, `<pack>: already
+    /// converted` or `<pack>: a plain level: nothing to convert`.
+    Convert {
+        #[arg(required = true)]
+        packs: Vec<PathBuf>,
+        #[command(flatten)]
+        content: ContentArg,
+    },
     /// The level's objects: list, add, move, remove.
     Object {
         #[command(subcommand)]
@@ -352,6 +364,12 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         LevelCommand::Haze { command } => crate::look_cmd::haze_cmd(command),
         LevelCommand::Material { command } => crate::material_cmd::level_cmd(command),
         LevelCommand::Bake { pack, content } => element_cmd::bake_cmd(pack, content),
+        LevelCommand::Convert { packs, content } => {
+            for pack in packs {
+                element_cmd::convert_cmd(pack, content)?;
+            }
+            Ok(true)
+        }
         LevelCommand::Object { command } => match command {
             ObjectCommand::List { pack } => {
                 // `level.ron` alone: no image is decoded.
@@ -462,7 +480,8 @@ fn edit_raster(
     dir: &Path,
     op: impl FnOnce(&mut LevelSource) -> anyhow::Result<Vec<String>>,
 ) -> anyhow::Result<bool> {
-    if dir.join(olr_format::levels::COMPOSITION_FILE).exists() {
+    // An unconverted level of OLR 0.2 is `load_level`'s refusal.
+    if dir.join(olr_format::levels::PLACED_FILE).exists() {
         anyhow::bail!(
             "{}: a composed level: edit its elements with olr-cli level element draw|erase, or in the editor",
             dir.display()

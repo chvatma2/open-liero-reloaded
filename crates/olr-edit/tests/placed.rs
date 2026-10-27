@@ -4,7 +4,6 @@
 //! pieces lie below, the gathering shares and renames, Live copies bake
 //! static and refuse dirt cells.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use olr_data::image::{Rgba, RgbaImage};
@@ -68,7 +67,7 @@ fn pack(level: LevelSource) -> Pack {
         origin: None,
         license: None,
     };
-    Pack { manifest, source: Source::Level(level), composition: None, other: BTreeMap::new() }
+    Pack::new(manifest, Source::Level(level))
 }
 
 fn group(id: &str, colour: GlowColourSource) -> GlowGroupSource {
@@ -674,4 +673,306 @@ fn live_copies_bake_as_static_for_now() {
     assert_eq!(live.material[1], Material::Rock);
     // Its groups count: a level lit only by a Live copy gets a look.
     assert!(live.look.is_some());
+}
+
+// Issue #74: packs of placed copies, the conversion and the refusal.
+
+/// Every file of the pack at `dir` by path, its bytes.
+fn on_disk(dir: &std::path::Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    let fs = olr_vfs::DirFs::new(dir);
+    olr_vfs::walk(&fs, &olr_vfs::VPath::root())
+        .unwrap()
+        .into_iter()
+        .map(|p| (p.as_str().to_string(), olr_vfs::ContentSource::read(&fs, &p).unwrap()))
+        .collect()
+}
+
+fn outside_editor(
+    files: &std::collections::BTreeMap<String, Vec<u8>>,
+) -> std::collections::BTreeMap<String, Vec<u8>> {
+    files.iter().filter(|(p, _)| !p.starts_with("editor/")).map(|(p, b)| (p.clone(), b.clone())).collect()
+}
+
+/// A level of OLR 0.2 written into `dir` from the kept composition types:
+/// a raster base, a distant glowing sky, a drawn wall with a painted
+/// surface map, a glass pane and a glowing image, with `level.ron`'s
+/// glow groups and materials; baked by `compose::bake` as 0.2 did.
+fn write_02_level(dir: &std::path::Path) {
+    let look = LookSource {
+        glow_groups: vec![group("sky", GlowColourSource::Own), group("lamps", GlowColourSource::Own)],
+        materials: vec![material("stone", "Stone"), material("wood", "Wood")],
+        ..Default::default()
+    };
+    let mut level = blank((12, 8), 2, Some(look));
+    for (i, m) in level.material.iter_mut().enumerate() {
+        *m = if i >= 12 * 6 { Material::Rock } else { Material::Background };
+    }
+    for y in 0..16 {
+        for x in 0..24 {
+            let c = Rgba::rgb(x as u8 * 9, y as u8 * 13, 40);
+            level.front.set(x, y, c);
+            level.back.set(x, y, if y >= 12 { Rgba::rgb(10, x as u8 * 7, y as u8 * 5) } else { c });
+        }
+    }
+    let mut p = pack(level);
+    ensure_composed(&mut p).unwrap();
+    add_layer(&mut p, ElementMaterial::Background, "Sky").unwrap();
+    draw(&mut p, "sky", &Shape::Rect { x: 0, y: 0, w: 12, h: 3 }, &Paint::Colour(BLUE), None).unwrap();
+    set(&mut p, "sky", Property::Distant(Some(80))).unwrap();
+    set(
+        &mut p,
+        "sky",
+        Property::Glow(Some(ElementGlow { strength: 40, group: "sky".into(), mask: false, beam: None })),
+    )
+    .unwrap();
+    add_layer(&mut p, ElementMaterial::Rock, "Wall").unwrap();
+    draw(&mut p, "wall", &Shape::Rect { x: 2, y: 1, w: 3, h: 4 }, &Paint::Colour(WALL), None).unwrap();
+    set(&mut p, "wall", Property::Surface(Some("stone".into()))).unwrap();
+    let mut map = vec![0u8; 12 * 8];
+    map[12 * 2 + 3] = 2;
+    set_surface_map(&mut p, "wall", false, Some(&map)).unwrap();
+    add_layer(&mut p, ElementMaterial::Background, "Pane").unwrap();
+    draw(&mut p, "pane", &Shape::Rect { x: 6, y: 1, w: 4, h: 2 }, &Paint::Colour(PANE), None).unwrap();
+    set(&mut p, "pane", Property::Glass(Some(ElementGlass { opacity: 35, tint: 40, frost: 5 }))).unwrap();
+    let image = png(5, 3, |x, y| Rgba::rgb(x as u8 * 50, y as u8 * 80, 120));
+    let id = add_image(&mut p, "sign.png", image, (5, 4), (4, 2), ElementMaterial::Rock, "Sign").unwrap();
+    set(
+        &mut p,
+        &id,
+        Property::Glow(Some(ElementGlow { strength: 60, group: "lamps".into(), mask: false, beam: None })),
+    )
+    .unwrap();
+    let src = p.composition.clone().unwrap();
+    let Source::Level(l) = &mut p.source else { panic!() };
+    compose::bake(l, &src, &tile()).unwrap();
+    assert!(l.distant.len() == 1 && l.glass.is_some() && l.surface.is_some() && l.glow.is_some());
+    // The 0.2 pack: its files, its composition beside them.
+    let mut fs = olr_vfs::DirFs::new(dir);
+    olr_pack::write_manifest(&mut fs, &p.manifest).unwrap();
+    p.source.write(&mut fs).unwrap();
+    olr_format::levels::write_composition_files(&mut fs, &src).unwrap();
+}
+
+#[test]
+fn converting_a_02_level_keeps_its_bake() {
+    use olr_edit::placed::{Conversion, bake_pack, from_composition};
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("old");
+    std::fs::create_dir(&dir).unwrap();
+    write_02_level(&dir);
+    let before = on_disk(&dir);
+    let composition =
+        olr_format::levels::read_composition_files(&olr_vfs::DirFs::new(&dir)).unwrap().unwrap();
+    let mut p = olr_edit::pack::load(&dir).unwrap();
+    assert!(p.legacy_composition && p.composition.is_none() && p.placed.is_none());
+    assert_eq!(from_composition(&mut p).unwrap(), Conversion::Converted);
+    assert!(!p.legacy_composition);
+    bake_pack(&mut p, &tile()).unwrap();
+    olr_edit::pack::save(&dir, &p).unwrap();
+    let after = on_disk(&dir);
+    assert!(outside_editor(&before) == outside_editor(&after), "the baked files changed");
+    assert!(!after.contains_key("editor/composition.ron"));
+    for (path, bytes) in &composition.files {
+        assert_eq!(after.get(path), Some(bytes), "{path} kept its path and bytes");
+    }
+    // The ground: the composition's elements, the look's groups and
+    // materials, placed alone.
+    let p = olr_edit::pack::load(&dir).unwrap();
+    let placed = p.placed.as_ref().unwrap();
+    let ground = &placed.assets[GROUND_KEY];
+    assert_eq!(ground.file.name, "Ground");
+    assert_eq!(ground.file.elements, composition.composition.elements);
+    let look = level_of(&p).look.clone().unwrap();
+    assert_eq!((&ground.file.glow_groups, &ground.file.materials), (&look.glow_groups, &look.materials));
+    assert_eq!(placed.file.copies.len(), 1);
+    assert!(placed.file.copies[0].locked);
+    assert_eq!(p.composition.as_ref().map(|c| &c.composition), Some(&composition.composition));
+    // A second conversion has nothing to do; a plain level neither.
+    let mut again = p.clone();
+    assert_eq!(from_composition(&mut again).unwrap(), Conversion::Already);
+    let mut plain = pack(blank((4, 4), 1, None));
+    assert_eq!(from_composition(&mut plain).unwrap(), Conversion::Plain);
+    assert_eq!(olr_pack::validate(&olr_vfs::DirFs::new(&dir)), vec![]);
+}
+
+#[test]
+fn a_02_pack_is_refused_by_ensure_composed() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_02_level(tmp.path());
+    let before = on_disk(tmp.path());
+    let mut p = olr_edit::pack::load(tmp.path()).unwrap();
+    let loaded = p.clone();
+    let refused = || ElementError::NotTheGround(olr_edit::pack::UNCONVERTED);
+    assert_eq!(ensure_composed(&mut p), Err(refused()));
+    assert!(refused().to_string().contains("run olr-cli level convert"), "{}", refused());
+    assert_eq!(add_layer(&mut p, ElementMaterial::Dirt, "X").map(|_| ()), Err(refused()));
+    assert!(matches!(
+        olr_edit::placed::bake_pack(&mut p, &tile()),
+        Err(PlacedError::Level(m)) if m == olr_edit::pack::UNCONVERTED
+    ));
+    assert!(olr_edit::asset::DecodedLevel::of_pack(&p).is_err());
+    assert!(p == loaded, "the pack changed");
+    assert!(on_disk(tmp.path()) == before, "a file changed");
+}
+
+/// A level of its ground alone, saved into `dir` and loaded again.
+fn saved_ground(dir: &std::path::Path, look: Option<LookSource>) -> Pack {
+    let mut p = pack(blank((8, 4), 1, look));
+    ensure_composed(&mut p).unwrap();
+    olr_edit::placed::bake_pack(&mut p, &tile()).unwrap();
+    olr_edit::pack::save(dir, &p).unwrap();
+    olr_edit::pack::load(dir).unwrap()
+}
+
+#[test]
+fn save_writes_unedited_copies_verbatim() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut p = saved_ground(tmp.path(), None);
+    let mut stripes = placement(vec![("a", &stripes())], vec![PlacedCopy::new("lamp", "a", (2, 1))]);
+    let placed = p.placed.as_mut().unwrap();
+    placed.file.assets.extend(stripes.file.assets);
+    placed.file.copies.append(&mut stripes.file.copies);
+    placed.assets.append(&mut stripes.assets);
+    olr_edit::placed::bake_pack(&mut p, &tile()).unwrap();
+    olr_edit::pack::save(tmp.path(), &p).unwrap();
+    // `asset.ron` with its own spacing, saved through an edit elsewhere.
+    let file = tmp.path().join("editor/a/asset.ron");
+    let odd = std::fs::read_to_string(&file).unwrap().replace("    ", "  ").replace("),", "),\n");
+    std::fs::write(&file, &odd).unwrap();
+    let mut p = olr_edit::pack::load(tmp.path()).unwrap();
+    let Source::Level(l) = &mut p.source else { panic!() };
+    l.name = "Renamed".into();
+    olr_edit::pack::save(tmp.path(), &p).unwrap();
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), odd, "the unedited copy is as it was");
+    // An edited copy is written canonically.
+    let mut p = olr_edit::pack::load(tmp.path()).unwrap();
+    p.placed.as_mut().unwrap().assets.get_mut("a").unwrap().file.name = "Stripes 2".into();
+    olr_edit::pack::save(tmp.path(), &p).unwrap();
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(text != odd && text.contains("Stripes 2") && text.contains("    "), "{text}");
+}
+
+#[test]
+fn a_ground_edit_lands_in_the_ground_asset() {
+    let tmp = tempfile::tempdir().unwrap();
+    let look = LookSource { glow_groups: vec![group("lamps", GlowColourSource::Own)], ..Default::default() };
+    let mut p = saved_ground(tmp.path(), Some(look));
+    add_layer(&mut p, ElementMaterial::Rock, "Crate").unwrap();
+    draw(&mut p, "crate", &Shape::Rect { x: 1, y: 1, w: 2, h: 2 }, &Paint::Colour(WALL), None).unwrap();
+    olr_edit::placed::bake_pack(&mut p, &tile()).unwrap();
+    olr_edit::pack::save(tmp.path(), &p).unwrap();
+    let ground = std::fs::read_to_string(tmp.path().join("editor/asset.ron")).unwrap();
+    assert!(ground.contains("id: \"crate\""), "{ground}");
+    assert!(tmp.path().join("editor/layers/crate.png").is_file());
+    assert!(!tmp.path().join("editor/composition.ron").exists());
+    // A group edited in the look goes to the ground, and the bake gathers
+    // it back into level.ron.
+    let mut p = olr_edit::pack::load(tmp.path()).unwrap();
+    let Source::Level(l) = &mut p.source else { panic!() };
+    let mut g = l.look.as_ref().unwrap().glow_groups[0].clone();
+    g.intensity = 777;
+    olr_edit::look::set_group(l, "lamps", g).unwrap();
+    olr_edit::placed::bake_pack(&mut p, &tile()).unwrap();
+    olr_edit::pack::save(tmp.path(), &p).unwrap();
+    let p = olr_edit::pack::load(tmp.path()).unwrap();
+    assert_eq!(p.placed.as_ref().unwrap().assets[GROUND_KEY].file.glow_groups[0].intensity, 777);
+    assert_eq!(level_of(&p).look.as_ref().unwrap().glow_groups[0].intensity, 777);
+    assert_eq!(olr_edit::placed::stale(&p, &tile()).unwrap(), Vec::<String>::new());
+}
+
+#[test]
+fn stale_lists_level_ron_when_its_groups_drift() {
+    let tmp = tempfile::tempdir().unwrap();
+    let look = LookSource { glow_groups: vec![group("lamps", GlowColourSource::Own)], ..Default::default() };
+    let p = saved_ground(tmp.path(), Some(look));
+    assert_eq!(olr_edit::placed::stale(&p, &tile()).unwrap(), Vec::<String>::new());
+    // The ground's group changed by hand: level.ron's no longer gathers.
+    let file = tmp.path().join("editor/asset.ron");
+    let text = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(&file, text.replace("intensity: 300", "intensity: 301")).unwrap();
+    let p = olr_edit::pack::load(tmp.path()).unwrap();
+    assert_eq!(olr_edit::placed::stale(&p, &tile()).unwrap(), ["level.ron"]);
+    // So does a material added to the ground alone.
+    let mut p = saved_ground(tmp.path(), None);
+    p.placed.as_mut().unwrap().assets.get_mut(GROUND_KEY).unwrap().file.materials =
+        vec![material("wood", "Wood")];
+    assert_eq!(olr_edit::placed::stale(&p, &tile()).unwrap(), ["level.ron"]);
+}
+
+#[test]
+fn the_editor_scope_is_the_ground_alone() {
+    use olr_edit::pack::{NOT_THE_GROUND_ALONE, ground_composition};
+    let tmp = tempfile::tempdir().unwrap();
+    let mut p = saved_ground(tmp.path(), None);
+    let ground = p.placed.as_ref().unwrap().assets[GROUND_KEY].clone();
+    assert_eq!(p.composition, Some(ground_composition(&ground)));
+    assert_eq!(p.ground_refusal(), None);
+    // A lamp asset bringing its own glow group, placed beside the ground.
+    let mut lamp = stripes();
+    lamp.pieces[0].element.glow =
+        Some(ElementGlow { strength: 50, group: "lamp".into(), mask: false, beam: None });
+    lamp.groups = vec![group("lamp", GlowColourSource::Own)];
+    let mut more = placement(vec![("a", &lamp)], vec![PlacedCopy::new("lamp-1", "a", (2, 1))]);
+    let placed = p.placed.as_mut().unwrap();
+    placed.file.assets.append(&mut more.file.assets);
+    placed.file.copies.append(&mut more.file.copies);
+    placed.assets.append(&mut more.assets);
+    olr_edit::placed::bake_pack(&mut p, &tile()).unwrap();
+    olr_edit::pack::save(tmp.path(), &p).unwrap();
+    let mut p = olr_edit::pack::load(tmp.path()).unwrap();
+    assert_eq!(p.composition, None);
+    assert_eq!(p.ground_refusal(), Some(NOT_THE_GROUND_ALONE));
+    assert_eq!(ensure_composed(&mut p), Err(ElementError::NotTheGround(NOT_THE_GROUND_ALONE)));
+    assert_eq!(level_of(&p).look.as_ref().unwrap().glow_groups[0].id, "lamp");
+    // The lamp's group is its asset's, named by the copy; a ground group is
+    // the ground's, edited through `edit_ground`, then gathered back.
+    assert_eq!(olr_edit::placed::brought_by(&p, "lamp", false).as_deref(), Some("lamp-1"));
+    let message = olr_edit::placed::brought_by_message("glow group", "lamp", "lamp-1");
+    assert!(message.contains("it comes with copy lamp-1's asset: edit that asset"), "{message}");
+    olr_edit::placed::edit_ground(&mut p, |p| {
+        let Source::Level(l) = &mut p.source else { panic!() };
+        olr_edit::look::add_group(l, group("ground-glow", GlowColourSource::Own)).map(|_| ())
+    })
+    .unwrap();
+    assert_eq!(olr_edit::placed::brought_by(&p, "ground-glow", false), None);
+    olr_edit::placed::bake_pack(&mut p, &tile()).unwrap();
+    let ids: Vec<&str> =
+        level_of(&p).look.as_ref().unwrap().glow_groups.iter().map(|g| g.id.as_str()).collect();
+    assert_eq!(ids, ["ground-glow", "lamp"]);
+    let ground = &p.placed.as_ref().unwrap().assets[GROUND_KEY];
+    assert_eq!(ground.file.glow_groups.len(), 1);
+}
+
+/// Hostile packs (the anti-goals): a 0.2 composition beside a placement,
+/// a placement without its ground, a ground whose files are missing: each
+/// loads or is an error, never a panic, and none is taken for plain.
+#[test]
+fn hostile_placed_levels_never_panic() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let p = saved_ground(dir, None);
+    // A leftover composition beside the placement: kept as it is, unread.
+    std::fs::write(dir.join("editor/composition.ron"), "(elements: [])\n").unwrap();
+    let both = olr_edit::pack::load(dir).unwrap();
+    assert!(!both.legacy_composition && both.composition == p.composition);
+    assert!(both.other.keys().any(|k| k.as_str() == "editor/composition.ron"));
+    std::fs::remove_file(dir.join("editor/composition.ron")).unwrap();
+    // A ground whose layer is gone.
+    let layer = dir.join("editor/layers/base.front.png");
+    let bytes = std::fs::read(&layer).unwrap();
+    std::fs::remove_file(&layer).unwrap();
+    assert!(olr_edit::pack::load(dir).is_err());
+    std::fs::write(&layer, bytes).unwrap();
+    // A placement without its ground.
+    std::fs::remove_file(dir.join("editor/asset.ron")).unwrap();
+    assert!(olr_edit::pack::load(dir).is_err());
+    // An unreadable composition is refused by the conversion, the pack
+    // unchanged.
+    let tmp = tempfile::tempdir().unwrap();
+    write_02_level(tmp.path());
+    std::fs::remove_file(tmp.path().join("editor/layers/wall.png")).unwrap();
+    let mut p = olr_edit::pack::load(tmp.path()).unwrap();
+    let loaded = p.clone();
+    assert!(olr_edit::placed::from_composition(&mut p).is_err());
+    assert!(p == loaded);
 }

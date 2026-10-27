@@ -19,7 +19,7 @@ fn open_edit_save_round_trip() {
     let cmds = run(&mut s, A::Save);
     assert!(cmds.iter().any(|c| matches!(c, C::Save { .. })));
     assert!(!s.dirty());
-    let ron = std::fs::read_to_string(dir.join("editor/composition.ron")).unwrap();
+    let ron = std::fs::read_to_string(dir.join("editor/asset.ron")).unwrap();
     assert!(ron.contains("id: \"layer\""), "{ron}");
     let errors: Vec<_> = olr_pack::validate(&olr_vfs::DirFs::new(&dir))
         .into_iter()

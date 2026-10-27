@@ -1,7 +1,9 @@
 //! `olr-cli level look|group …` (look system, plan 15a Task 7): a level's
 //! look settings and glow groups (its only light, plan 15c), through
-//! `olr_edit::look`. Each loads the pack, applies, rebakes a composed level
-//! when its glow changed, and saves; a refused edit writes nothing.
+//! `olr_edit::look`. Each loads the pack (an unconverted level of OLR 0.2
+//! refused), applies, rebakes a composed level when its glow changed, and
+//! saves; a refused edit writes nothing. Glow groups are the level's
+//! ground's (issue #74): one only another copy brings is refused.
 
 use std::path::{Path, PathBuf};
 
@@ -95,14 +97,17 @@ pub(crate) struct GroupFields {
 
 #[derive(Subcommand)]
 pub(crate) enum GroupCommand {
-    /// Add a glow group (`--reach` needed).
+    /// Add a glow group (`--reach` needed) to the level's ground.
     Add {
         pack: PathBuf,
         id: String,
         #[command(flatten)]
         fields: GroupFields,
+        #[command(flatten)]
+        content: ContentArg,
     },
-    /// Change a glow group's fields.
+    /// Change a glow group's fields (one of the level's ground: one another
+    /// copy brings is its asset's).
     Set {
         pack: PathBuf,
         id: String,
@@ -111,6 +116,8 @@ pub(crate) enum GroupCommand {
         /// A new id (the elements naming it follow).
         #[arg(long)]
         rename: Option<String>,
+        #[command(flatten)]
+        content: ContentArg,
     },
     /// Remove a glow group: its pixels stop glowing.
     Remove {
@@ -299,33 +306,81 @@ fn group_of(id: &str, f: &GroupFields, now: Option<GlowGroupSource>) -> anyhow::
     })
 }
 
-/// `level group …`.
+/// Refuses glow group (or material) `id` when only a copy other than
+/// the ground brings it (issue #74: `olr_edit::placed::brought_by`).
+pub(crate) fn refuse_brought(
+    dir: &Path,
+    pack: &olr_edit::pack::Pack,
+    kind: &str,
+    id: &str,
+    material: bool,
+) -> anyhow::Result<()> {
+    match olr_edit::placed::brought_by(pack, id, material) {
+        Some(copy) => Err(bail(dir, olr_edit::placed::brought_by_message(kind, id, &copy))),
+        None => Ok(()),
+    }
+}
+
+/// Rebakes a level placing more than its ground after an edit of the
+/// ground's groups or materials (issue #74): the bake gathers them into
+/// `level.ron`'s look. A level of its ground alone holds them in its look
+/// already.
+pub(crate) fn rebake_beside_copies(
+    dir: &Path,
+    pack: &mut olr_edit::pack::Pack,
+    content: &ContentArg,
+) -> anyhow::Result<()> {
+    if pack.placed.is_some() && pack.composition.is_none() {
+        element_cmd::bake_pack(dir, pack, &content.content)?;
+    }
+    Ok(())
+}
+
+fn level_of<'a>(
+    dir: &Path,
+    p: &'a mut olr_edit::pack::Pack,
+) -> anyhow::Result<&'a mut olr_format::levels::LevelSource> {
+    match &mut p.source {
+        Source::Level(l) => Ok(l),
+        _ => anyhow::bail!("{}: not a level pack", dir.display()),
+    }
+}
+
+/// `level group …`: the level's ground's glow groups (issue #74,
+/// `olr_edit::placed::edit_ground`), then a level placing more than its
+/// ground is rebaked.
 pub(crate) fn group_cmd(c: &GroupCommand) -> anyhow::Result<bool> {
     match c {
-        GroupCommand::Add { pack: dir, id, fields } => {
+        GroupCommand::Add { pack: dir, id, fields, content } => {
             let mut pack = element_cmd::load_level(dir)?;
-            let Source::Level(l) = &mut pack.source else {
-                anyhow::bail!("{}: not a level pack", dir.display())
-            };
-            let i = look::add_group(l, group_of(id, fields, None)?).map_err(|e| bail(dir, e))?;
+            refuse_brought(dir, &pack, "glow group", id, false)?;
+            let i = olr_edit::placed::edit_ground(&mut pack, |p| -> anyhow::Result<usize> {
+                look::add_group(level_of(dir, p)?, group_of(id, fields, None)?).map_err(|e| bail(dir, e))
+            })?;
+            rebake_beside_copies(dir, &mut pack, content)?;
             save(dir, &mut pack, &[format!("added group {i}")])
         }
-        GroupCommand::Set { pack: dir, id, fields, rename } => {
+        GroupCommand::Set { pack: dir, id, fields, rename, content } => {
             let mut pack = element_cmd::load_level(dir)?;
-            let Source::Level(l) = &mut pack.source else {
-                anyhow::bail!("{}: not a level pack", dir.display())
-            };
-            let now = l.look.iter().flat_map(|k| k.glow_groups.iter()).find(|g| g.id == *id).cloned();
-            let Some(now) = now else { anyhow::bail!("{}: no glow group {id:?}", dir.display()) };
-            look::set_group(l, id, group_of(id, fields, Some(now))?).map_err(|e| bail(dir, e))?;
-            if let Some(to) = rename {
-                look::rename_group(&mut pack, id, to).map_err(|e| bail(dir, e))?;
-            }
+            refuse_brought(dir, &pack, "glow group", id, false)?;
+            olr_edit::placed::edit_ground(&mut pack, |p| -> anyhow::Result<()> {
+                let l = level_of(dir, p)?;
+                let now = l.look.iter().flat_map(|k| k.glow_groups.iter()).find(|g| g.id == *id).cloned();
+                let Some(now) = now else { anyhow::bail!("{}: no glow group {id:?}", dir.display()) };
+                look::set_group(l, id, group_of(id, fields, Some(now))?).map_err(|e| bail(dir, e))?;
+                if let Some(to) = rename {
+                    look::rename_group(p, id, to).map_err(|e| bail(dir, e))?;
+                }
+                Ok(())
+            })?;
+            rebake_beside_copies(dir, &mut pack, content)?;
             save(dir, &mut pack, &[])
         }
         GroupCommand::Remove { pack: dir, id, content } => {
             let mut pack = element_cmd::load_level(dir)?;
-            let gone = look::remove_group(&mut pack, id).map_err(|e| bail(dir, e))?;
+            refuse_brought(dir, &pack, "glow group", id, false)?;
+            let gone = olr_edit::placed::edit_ground(&mut pack, |p| look::remove_group(p, id))
+                .map_err(|e| bail(dir, e))?;
             element_cmd::bake_pack(dir, &mut pack, &content.content)?;
             let messages: Vec<String> = gone.iter().map(|e| format!("unglowed element {e}")).collect();
             save(dir, &mut pack, &messages)

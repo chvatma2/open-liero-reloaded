@@ -1,8 +1,6 @@
 //! Glow in the composition and the bake (look system §Composition, plan 15a
 //! Task 5): the channel rules, region bakes, painted masks, groups.
 
-use std::collections::BTreeMap;
-
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 use olr_data::manifest::{PACK_FORMAT_VERSION, PackKind, PackManifest};
@@ -55,7 +53,7 @@ fn pack(w: u32, h: u32, s: u32) -> Pack {
         surface: None,
         distant_surfaces: Vec::new(),
     };
-    Pack { manifest, source: Source::Level(level), composition: None, other: BTreeMap::new() }
+    Pack::new(manifest, Source::Level(level))
 }
 
 fn level(p: &Pack) -> &LevelSource {
@@ -193,11 +191,12 @@ fn a_duplicate_keeps_its_glow_and_mask() {
 fn pack_check_refuses_a_glow_naming_no_group() {
     let mut p = stack(1);
     let Source::Level(l) = &mut p.source else { panic!() };
-    // The look loses "lava" (renamed by hand): the composition still names it.
+    // The look loses "lava" (renamed by hand): the ground (issue #74: the
+    // look's groups are its own) still names it.
     l.look.as_mut().unwrap().glow_groups[1].id = "magma".into();
     let files = olr_edit::pack::files(&p).unwrap();
     let e = olr_edit::pack::check(&files).unwrap_err().to_string();
-    assert!(e.contains("lava") && e.contains("composition.ron"), "{e}");
+    assert!(e.contains("lava") && e.contains("editor/asset.ron"), "{e}");
 }
 
 /// A world pixel whose centre art pixel does not glow takes the group of a

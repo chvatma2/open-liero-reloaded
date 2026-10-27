@@ -1,0 +1,155 @@
+(
+    name: "Ground",
+    size: (1350, 550),
+    elements: [
+        (
+            id: "sky",
+            name: "Sky",
+            kind: Image(
+                material: Background,
+                source: "sky.png",
+                at: (0, 0),
+                size: (1350, 550),
+            ),
+            glow: (
+                strength: 100,
+                group: "sky",
+            ),
+            distant: 85,
+        ),
+        (
+            id: "background",
+            name: "Background",
+            kind: Drawn(
+                material: Background,
+            ),
+            glow: (
+                strength: 100,
+                group: "flames",
+                mask: true,
+            ),
+            surface: "stone",
+            surface_map: true,
+        ),
+        (
+            id: "background-2",
+            name: "Background 2",
+            kind: Drawn(
+                material: Background,
+            ),
+            glow: (
+                strength: 100,
+                group: "sky",
+                mask: true,
+            ),
+            surface_map: true,
+        ),
+        (
+            id: "dirt",
+            name: "Dirt",
+            kind: Drawn(
+                material: Dirt,
+            ),
+            glow: (
+                strength: 100,
+                group: "flames",
+                mask: true,
+            ),
+            surface: "wood",
+            surface_map: true,
+        ),
+        (
+            id: "rock",
+            name: "Rock",
+            kind: Drawn(
+                material: Rock,
+            ),
+            surface: "stone",
+            surface_map: true,
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "flames",
+            intensity: 900,
+            reach: Pixels(100),
+            animation: Flicker(
+                speed: 9,
+                depth: 35,
+            ),
+        ),
+        (
+            id: "sky",
+            colour: Tint("#fff2dc"),
+            intensity: 300,
+            reach: Unlimited,
+        ),
+    ],
+    materials: [
+        (
+            id: "stone",
+            name: "Stone",
+            notes: "Grey rock: the reference every heat value is a percent of. A blast leaves the rim glowing like lava, cooling slowly.",
+            light_soak: 2,
+            heat: (
+                capacity: 100,
+                conductivity: 100,
+                cooling: 100,
+            ),
+        ),
+        (
+            id: "brick",
+            name: "Brick",
+            notes: "Fired clay: holds its heat a long time, like a kiln.",
+            heat: (
+                capacity: 120,
+                conductivity: 70,
+                cooling: 70,
+            ),
+        ),
+        (
+            id: "wood",
+            name: "Wood",
+            notes: "Smoulders: warms easily, keeps its heat where it lands and glows like embers.",
+            heat: (
+                capacity: 50,
+                conductivity: 15,
+                cooling: 60,
+                look: (
+                    ramp: [
+                        (
+                            temperature: 80,
+                            colour: "#300c00",
+                            glow: 0,
+                        ),
+                        (
+                            temperature: 250,
+                            colour: "#9a2400",
+                            glow: 45,
+                        ),
+                        (
+                            temperature: 550,
+                            colour: "#ff6410",
+                            glow: 85,
+                        ),
+                        (
+                            temperature: 1000,
+                            colour: "#ffc060",
+                            glow: 100,
+                        ),
+                    ],
+                ),
+            ),
+        ),
+        (
+            id: "metal",
+            name: "Metal",
+            notes: "Steel: heat runs far through it, so a blast warms a wide patch less; it sheds heat fast to the air.",
+            heat: (
+                capacity: 80,
+                conductivity: 600,
+                cooling: 150,
+            ),
+        ),
+    ],
+)

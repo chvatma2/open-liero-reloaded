@@ -4,7 +4,7 @@ use olr_edit::element::Property;
 use olr_editor::{DocError, Document, Severity};
 use olr_format::levels::LevelObject;
 
-use crate::common::{catalog, content, copy_pack, files, fixture, open_fixture, tree};
+use crate::common::{catalog, content, copy_pack, editor_at, files, fixture, open_fixture, run, tree};
 
 #[test]
 fn opening_and_saving_changes_nothing() {
@@ -20,10 +20,11 @@ fn opening_and_saving_changes_nothing() {
     assert_eq!(
         gained,
         [
-            "editor/composition.ron",
+            "editor/asset.ron",
             "editor/layers/background.png",
             "editor/layers/dirt.png",
-            "editor/layers/rock.png"
+            "editor/layers/rock.png",
+            "editor/placed.ron"
         ],
         "a plain level opens as its three layers"
     );
@@ -256,7 +257,7 @@ fn an_undone_conversion_saves_a_plain_layer() {
     undo(&mut doc, &step);
     let f = files(&doc);
     assert!(!f.contains_key("editor/layers/dirt.material.png"));
-    let text = String::from_utf8(f["editor/composition.ron"].clone()).unwrap();
+    let text = String::from_utf8(f["editor/asset.ron"].clone()).unwrap();
     assert!(!text.contains("mixed"), "{text}");
 }
 
@@ -635,4 +636,54 @@ fn diagnostics_count_the_glow_beams() {
         matches!(&p[..], [p] if p.severity == Severity::Error && p.text.contains("65 glow beams, above 64")),
         "65: {p:?}"
     );
+}
+
+/// Issue #74: the fixture as OLR 0.2 saved it: its ground's layers in
+/// `editor/composition.ron`, no placement.
+fn as_02(dir: &std::path::Path) {
+    let pack = olr_edit::pack::load(dir).unwrap();
+    let ground = pack.composition.unwrap();
+    for f in ["editor/placed.ron", "editor/asset.ron"] {
+        std::fs::remove_file(dir.join(f)).unwrap();
+    }
+    let mut sink = olr_vfs::DirFs::new(dir);
+    olr_format::levels::write_composition_files(&mut sink, &ground).unwrap();
+}
+
+#[test]
+fn opening_a_02_level_converts_it_unsaved() {
+    let Some(root) = content() else { return };
+    let (_tmp, dir) = copy_pack(&root, &fixture());
+    as_02(&dir);
+    let (_t, mut s) = editor_at(&root, &dir);
+    assert!(s.dirty(), "converted, not yet saved");
+    assert_eq!(s.status().message.as_deref(), Some(olr_editor::document::CONVERTED));
+    let dir = s.document().unwrap().dir().to_path_buf();
+    assert!(dir.join("editor/composition.ron").is_file(), "nothing written on opening");
+    run(&mut s, olr_editor::EditorAction::Save);
+    assert!(!s.dirty());
+    assert!(!dir.join("editor/composition.ron").exists(), "saving deletes the 0.2 file");
+    let pack = olr_edit::pack::load(&dir).unwrap();
+    assert!(!pack.legacy_composition);
+    assert_eq!(pack.placed.unwrap().file.copies.len(), 1, "the ground placed alone");
+    let saved = tree(&dir);
+    let original = tree(&fixture());
+    for f in ["level.ron", "material.png", "front.png", "back.png", "editor/asset.ron", "editor/placed.ron"] {
+        assert!(saved.get(f) == original.get(f), "{f} as the converted fixture's");
+    }
+}
+
+#[test]
+fn a_level_with_placed_assets_is_refused_with_the_reason() {
+    let Some(root) = content() else { return };
+    let (_tmp, dir) = copy_pack(&root, &fixture());
+    let path = dir.join(olr_format::levels::PLACED_FILE);
+    let text = std::fs::read_to_string(&path).unwrap();
+    let mut placed: olr_format::levels::PlacedFile =
+        olr_format::ron_io::from_canonical(olr_format::levels::PLACED_FILE, &text).unwrap();
+    placed.copies.push(olr_format::levels::PlacedCopy::new("ground-2", "ground", (10, 10)));
+    let text = olr_format::ron_io::to_canonical(olr_format::levels::PLACED_FILE, &placed).unwrap();
+    std::fs::write(&path, text).unwrap();
+    let e = Document::open(olr_edit::pack::load(&dir).unwrap(), dir, &catalog(&root)).unwrap_err();
+    assert_eq!(e.to_string(), olr_editor::document::PLACED_ASSETS);
 }

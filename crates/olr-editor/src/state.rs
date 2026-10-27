@@ -1400,9 +1400,10 @@ impl EditorState {
         self.history = History::new();
         self.selection = Selection::None;
         self.focus = None;
-        self.dirty = false;
         self.dialog = None;
-        self.status.message = None;
+        // Issue #74: a level converted on opening is unsaved till saved.
+        self.dirty = self.doc.as_ref().is_some_and(Document::converted);
+        self.status.message = self.dirty.then(|| crate::document::CONVERTED.to_string());
         self.refresh_problems();
         vec![EditorCommand::Upload(all)]
     }

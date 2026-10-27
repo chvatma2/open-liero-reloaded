@@ -1,8 +1,6 @@
 //! Look operations (plan 15a Task 7): the look's settings and glow groups,
 //! each validated as the format checks them.
 
-use std::collections::BTreeMap;
-
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 use olr_data::manifest::{PACK_FORMAT_VERSION, PackKind, PackManifest};
@@ -59,7 +57,7 @@ fn pack(l: LevelSource) -> Pack {
         origin: None,
         license: None,
     };
-    Pack { manifest, source: Source::Level(l), composition: None, other: BTreeMap::new() }
+    Pack::new(manifest, Source::Level(l))
 }
 
 fn level_of(p: &Pack) -> &LevelSource {

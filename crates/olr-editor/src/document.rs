@@ -14,11 +14,11 @@ use olr_edit::compose::{
 };
 use olr_edit::folders;
 use olr_edit::level::refresh_thumb;
-use olr_edit::pack::{Pack, Source};
+use olr_edit::pack::{NOT_THE_GROUND_ALONE, Pack, Source, Verbatim};
 use olr_format::levels::{
     Composition, CompositionSource, Element, ElementKind, Folder, GlowBeamMap, GlowLayers, LevelObject,
-    LevelSource, check_composition, check_elements, element_box, glow_file, image_file, surface_back_file,
-    surface_file, surface_map_size,
+    LevelSource, PlacedSource, check_composition, check_elements, element_box, glow_file, image_file,
+    surface_back_file, surface_file, surface_map_size,
 };
 use olr_pack::Severity;
 use olr_vfs::VPath;
@@ -60,11 +60,27 @@ pub enum DocError {
     Edit(#[from] olr_edit::level::EditError),
 }
 
+/// The status bar's note on a level `open` converted (issue #74).
+pub const CONVERTED: &str = "Converted from OLR 0.2: save to keep it";
+
+/// Why `open` refuses a level placing assets besides its ground (issue
+/// #74; issue #82's level tab will open it).
+pub const PLACED_ASSETS: &str = "This level has placed assets: the level tab opens it (issue #82)";
+
 /// The open level pack.
 pub struct Document {
     pub(crate) dir: PathBuf,
     pub(crate) manifest: PackManifest,
     pub(crate) other: BTreeMap<VPath, Vec<u8>>,
+    /// The level's placement as opened (issue #74): its ground placed
+    /// alone, the items being the ground's layers; `None` for a plain
+    /// level. Saved with the ground's layers in it.
+    pub(crate) placed: Option<PlacedSource>,
+    /// The library copies' files as read (`olr_edit::pack::Verbatim`).
+    pub(crate) verbatim: Verbatim,
+    /// Whether `open` converted an OLR 0.2 level (issue #74): it opens
+    /// unsaved, the status bar saying [`CONVERTED`].
+    pub(crate) converted: bool,
     /// The bake: what the canvas shows and Play plays.
     pub(crate) level: LevelSource,
     /// Bottom to top.
@@ -149,6 +165,8 @@ fn holes(back: &RgbaImage, r: Rect, s: u32) -> u64 {
 pub struct PackSnapshot {
     manifest: PackManifest,
     other: BTreeMap<VPath, Vec<u8>>,
+    placed: Option<PlacedSource>,
+    verbatim: Verbatim,
     level: LevelSource,
     items: Vec<Item>,
     folders: Vec<Folder>,
@@ -165,6 +183,8 @@ impl PackSnapshot {
         pack_of(
             &self.manifest,
             &self.other,
+            &self.placed,
+            &self.verbatim,
             &self.level,
             &self.items,
             &self.folders,
@@ -182,6 +202,8 @@ impl PackSnapshot {
 fn pack_of(
     manifest: &PackManifest,
     other: &BTreeMap<VPath, Vec<u8>>,
+    placed: &Option<PlacedSource>,
+    verbatim: &Verbatim,
     level: &LevelSource,
     items: &[Item],
     folders: &[Folder],
@@ -251,7 +273,10 @@ fn pack_of(
         manifest: manifest.clone(),
         source: Source::Level(level),
         composition: Some(CompositionSource { composition, files }),
+        placed: placed.clone(),
+        legacy_composition: false,
         other: other.clone(),
+        verbatim: verbatim.clone(),
     }
 }
 
@@ -293,8 +318,19 @@ impl Document {
     /// raster base (`compose_from`); every element decoded; the theme's
     /// tiles from `catalog`. The bake is made again from the elements; when
     /// it differs from the stored one the thumbnail is refreshed on save.
-    pub fn open(pack: Pack, dir: PathBuf, catalog: &Catalog) -> Result<Document, DocError> {
-        let Pack { manifest, source, composition, other } = pack;
+    ///
+    /// Issue #74: an OLR 0.2 level (`editor/composition.ron`) is converted
+    /// (`olr_edit::placed::from_composition`) and opens unsaved; a level
+    /// placing assets besides its ground is refused ([`PLACED_ASSETS`]).
+    pub fn open(mut pack: Pack, dir: PathBuf, catalog: &Catalog) -> Result<Document, DocError> {
+        let converted = pack.legacy_composition;
+        if converted {
+            olr_edit::placed::from_composition(&mut pack).map_err(|e| DocError::Bad(e.to_string()))?;
+        }
+        if pack.ground_refusal() == Some(NOT_THE_GROUND_ALONE) {
+            return Err(DocError::Bad(PLACED_ASSETS.into()));
+        }
+        let Pack { manifest, source, composition, placed, other, verbatim, .. } = pack;
         let Source::Level(level) = source else { return Err(DocError::NotALevel) };
         let theme = catalog
             .themes
@@ -350,6 +386,9 @@ impl Document {
             dir,
             manifest,
             other,
+            placed,
+            verbatim,
+            converted,
             level: level.clone(),
             items,
             folders: src.composition.folders.clone(),
@@ -378,6 +417,11 @@ impl Document {
 
     pub fn dir(&self) -> &Path {
         &self.dir
+    }
+
+    /// Whether `open` converted an OLR 0.2 level (issue #74).
+    pub fn converted(&self) -> bool {
+        self.converted
     }
 
     /// The pack's manifest (its id names the recovery copy, plan 14c).
@@ -596,6 +640,8 @@ impl Document {
         pack_of(
             &self.manifest,
             &self.other,
+            &self.placed,
+            &self.verbatim,
             &self.level,
             &self.items,
             &self.folders,
@@ -613,6 +659,8 @@ impl Document {
         PackSnapshot {
             manifest: self.manifest.clone(),
             other: self.other.clone(),
+            placed: self.placed.clone(),
+            verbatim: self.verbatim.clone(),
             level: self.level.clone(),
             items: self.items.clone(),
             folders: self.folders.clone(),

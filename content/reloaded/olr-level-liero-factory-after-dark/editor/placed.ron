@@ -1,0 +1,15 @@
+(
+    assets: [
+        (
+            key: "ground",
+            origin: Own,
+        ),
+    ],
+    copies: [
+        (
+            id: "ground",
+            asset: "ground",
+            locked: true,
+        ),
+    ],
+)

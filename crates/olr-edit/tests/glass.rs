@@ -2,8 +2,6 @@
 //! at its opacity over what lies below, its tint and frost into
 //! `look/glass.png`, and a distant layer's glow never passes through it.
 
-use std::collections::BTreeMap;
-
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 use olr_data::manifest::{PACK_FORMAT_VERSION, PackKind, PackManifest};
@@ -61,7 +59,7 @@ fn window(glass: ElementGlass) -> Pack {
         surface: None,
         distant_surfaces: Vec::new(),
     };
-    let mut p = Pack { manifest, source: Source::Level(level), composition: None, other: BTreeMap::new() };
+    let mut p = Pack::new(manifest, Source::Level(level));
     let paint = |p: &mut Pack, id: &str, x: i32, w: i32, c: Rgba| {
         draw(p, id, &Shape::Rect { x, y: 0, w, h: 1 }, &Paint::Colour(c), None).unwrap();
     };

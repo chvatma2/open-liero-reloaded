@@ -131,9 +131,13 @@ to the front, and painting the back also paints the front there.
 
 ### Composed levels
 
-A level can be composed of **elements**, stacked bottom to top in
-`editor/composition.ron`, and **baked** into the files the game reads:
-`material.png`, `front.png`, `back.png` and `thumb.png`. An element is:
+A level can be composed of **elements**, stacked bottom to top in its
+**ground**, the level's own asset `editor/asset.ron` placed by
+`editor/placed.ron`, and **baked** into the files the game reads:
+`material.png`, `front.png`, `back.png` and `thumb.png`. (OLR 0.2 kept
+them in `editor/composition.ron`; `olr-cli level convert` turns such a
+level into a ground, every file in its place, and the editors refuse it
+until then.) An element is:
 
 - an **image**: a PNG or JPEG kept as imported in `editor/images/`,
   placed in a box (`at`, `size`, world pixels; it may reach outside the
@@ -155,8 +159,8 @@ back, else the theme's back tile. Hidden elements are left out.
 
 `editor/` is the pack's authoring folder: it is never part of the
 content hash and never in an archive, so players download only the
-bake. The composition is the source of truth: `olr-cli pack check`
-reports a baked file that differs from what the composition bakes to,
+bake. The placement is the source of truth: `olr-cli pack check`
+reports a baked file that differs from what the placement bakes to,
 and `olr-cli level bake` rebakes it. The bake is integer arithmetic
 only, the same bytes on every platform. A JPEG original is turned by its
 EXIF orientation when baked; the file keeps its bytes.
@@ -316,12 +320,15 @@ shows beside the fields. The game never reads it.
 )
 ```
 
-A composed level adds `editor/`: its raster base (the level as it was),
-an imported sign and a tunnel drawn as background:
+A composed level adds `editor/`: its ground, the level's own asset of the
+level's size, holding its raster base (the level as it was), an imported
+sign and a tunnel drawn as background:
 
-<!-- file: level/editor/composition.ron -->
+<!-- file: level/editor/asset.ron -->
 ```ron
 (
+    name: "Ground",
+    size: (320, 200),
     elements: [
         (
             id: "base",
@@ -352,10 +359,11 @@ an imported sign and a tunnel drawn as background:
 )
 ```
 
-A level made of placed assets (issue #73) has `editor/placed.ron`
-instead: the assets it holds a copy of (the ground, the level's own
-painted asset, in `editor/` itself; the others in `editor/<key>/`) and
-the copies placed from them, bottom to top. A copy has an id scripts
+and `editor/placed.ron` places it: the assets the level holds a copy of
+(the ground, the level's own painted asset, in `editor/` itself; the
+others in `editor/<key>/`) and the copies placed from them, bottom to
+top. A composed level places its ground alone (one locked copy
+`ground`); this one also places library assets (issue #73). A copy has an id scripts
 use, a place, a size (the asset stretched to it), a Live switch, a
 starting state, its own exposed values, an optional script
 (`editor/scripts/<id>.rhai`) and a distance for a parallax layer; the

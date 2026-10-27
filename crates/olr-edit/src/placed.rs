@@ -5,8 +5,12 @@
 //! flattened (distant pieces first), the glow groups and materials
 //! gathered into the level's look, then baked with the composition's bake
 //! (`compose::bake_elements_with_opacity`, the thumbnail). It works on a
-//! [`PlacedSource`] in memory; the pack's integration is #74's. Live
-//! copies bake as static for now (#85 takes them out).
+//! [`PlacedSource`] in memory. Issue #74 puts it to work on packs:
+//! [`bake_pack`] bakes a pack's placement (`pack::placement`), [`stale`]
+//! lists the baked files that differ from it, [`from_composition`]
+//! converts a level of OLR 0.2, and [`edit_ground`] scopes the look's
+//! group and material edits to the ground. Live copies bake as static for
+//! now (#85 takes them out).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -29,6 +33,9 @@ use crate::asset::{
 };
 use crate::compose::{Decoded, GlowMasks, PaintedSurfaces, Rect, bake_elements_with_opacity};
 use crate::level::{refresh_thumb, rescale_art};
+use crate::pack::{
+    Pack, Source, UNCONVERTED, ground_composition, ground_placement, placement, placement_with,
+};
 
 /// Why a placement does not bake.
 #[derive(Debug, thiserror::Error)]
@@ -432,4 +439,182 @@ pub fn bake(
     bake_elements_with_opacity(level, &items, &opacity, &masks, &painted, back_tile, all);
     refresh_thumb(level);
     Ok(baked)
+}
+
+/// Bakes `pack`'s placement (`pack::placement`: the ground's composition
+/// written back, while it is alone with the look's groups and materials)
+/// into its level with [`bake`], and keeps that placement. `None` for a
+/// plain level and the other kinds; an unconverted level of OLR 0.2 is
+/// refused ([`UNCONVERTED`]), never baked as plain.
+pub fn bake_pack(pack: &mut Pack, back_tile: &RgbaImage) -> Result<Option<Baked>, PlacedError> {
+    if pack.legacy_composition {
+        return Err(PlacedError::Level(UNCONVERTED.into()));
+    }
+    let Some(src) = placement(pack) else { return Ok(None) };
+    let Source::Level(level) = &mut pack.source else { return Ok(None) };
+    let baked = bake(level, &src, back_tile)?;
+    pack.placed = Some(src);
+    Ok(Some(baked))
+}
+
+/// The baked files of `pack` (a placed level) that differ from its
+/// placement's bake (issue #74; `compose::stale`'s list, which
+/// `compose::differing` makes), then `level.ron` when its look's glow
+/// groups or materials are not the gathered ones (or its distant layers
+/// differ). The ground's groups and materials are those it holds, not the
+/// look's: a `level.ron` whose groups drifted from the ground's is stale.
+/// Empty for a plain or unconverted level and the other kinds.
+pub fn stale(pack: &Pack, back_tile: &RgbaImage) -> Result<Vec<String>, PlacedError> {
+    if pack.legacy_composition {
+        return Ok(Vec::new());
+    }
+    let (Source::Level(level), Some(src)) = (&pack.source, placement_with(pack, false)) else {
+        return Ok(Vec::new());
+    };
+    let mut baked = level.clone();
+    bake(&mut baked, &src, back_tile)?;
+    let mut out = crate::compose::differing(level, &baked).map_err(|e| PlacedError::Level(e.to_string()))?;
+    let gathered = |l: &LevelSource| {
+        l.look.as_ref().map(|k| (k.glow_groups.clone(), k.materials.clone())).unwrap_or_default()
+    };
+    if gathered(level) != gathered(&baked) && !out.iter().any(|f| f == "level.ron") {
+        out.push("level.ron".into());
+    }
+    Ok(out)
+}
+
+/// What [`from_composition`] found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Conversion {
+    /// The composition is now the ground of a placement of it alone.
+    Converted,
+    /// The level has a placement already.
+    Already,
+    /// A plain level: nothing to convert.
+    Plain,
+}
+
+/// Converts a level of OLR 0.2 (issue #74): its `editor/composition.ron`
+/// (read from `Pack::other`, where `pack::load` leaves it) becomes the
+/// ground asset `editor/asset.ron`, named [`crate::pack::GROUND_NAME`], of
+/// the level's art scale and size, the composition's elements and folders
+/// and the glow groups and materials of `level.ron`'s look, and
+/// `editor/placed.ron` places it alone (`pack::ground_placement`: key
+/// `ground`, `Own`, one locked copy `ground`). Every element file keeps
+/// its path; `editor/composition.ron` leaves `other`, so a save deletes
+/// it. Nothing is baked: a ground alone bakes as its composition did
+/// (`a_ground_alone_bakes_as_its_composition`), which the caller proves.
+/// A composition that does not read is an error, the pack unchanged.
+pub fn from_composition(pack: &mut Pack) -> Result<Conversion, PlacedError> {
+    let Source::Level(level) = &pack.source else {
+        return Err(PlacedError::Level("not a level pack".into()));
+    };
+    if pack.placed.is_some() {
+        return Ok(Conversion::Already);
+    }
+    if !pack.legacy_composition {
+        return Ok(Conversion::Plain);
+    }
+    let mut fs = olr_vfs::MemFs::new();
+    for (path, bytes) in &pack.other {
+        olr_vfs::ContentSink::write(&mut fs, path, bytes)
+            .map_err(|e| PlacedError::Level(format!("{path}: {e}")))?;
+    }
+    let Some(src) = olr_format::levels::read_composition_files(&fs)? else { return Ok(Conversion::Plain) };
+    let placed = ground_placement(level, &src);
+    let gone: std::collections::BTreeSet<String> = olr_format::levels::composition_paths(&src)
+        .into_iter()
+        .chain([olr_format::levels::COMPOSITION_FILE.to_string()])
+        .collect();
+    pack.other.retain(|p, _| !gone.contains(p.as_str()));
+    pack.composition = Some(src);
+    pack.placed = Some(placed);
+    pack.legacy_composition = false;
+    Ok(Conversion::Converted)
+}
+
+/// Runs `edit` on `pack`'s ground (issue #74: `level group|material` and
+/// the look's group and material edits). A plain level, or one whose
+/// placement is the ground alone, is edited as it is (the save writes the
+/// look's groups and materials into the ground). A level placing more
+/// than its ground is edited through a copy holding the ground as its
+/// composition and the ground's glow groups and materials as its look's;
+/// the ground then takes the copy's elements, folders, files, groups and
+/// materials, and the level the copy's look (the caller rebakes, which
+/// gathers the copies' groups back). An error leaves `pack` unchanged.
+pub fn edit_ground<T, E>(pack: &mut Pack, edit: impl FnOnce(&mut Pack) -> Result<T, E>) -> Result<T, E> {
+    let ground = match (&pack.placed, &pack.composition) {
+        (Some(p), None) if !pack.legacy_composition => p.assets.get(olr_format::levels::GROUND_KEY).cloned(),
+        _ => None,
+    };
+    let Some(ground) = ground else { return edit(pack) };
+    let mut scope = pack.clone();
+    scope.placed = None;
+    scope.composition = Some(ground_composition(&ground));
+    if let Source::Level(l) = &mut scope.source
+        && (l.look.is_some() || !ground.file.glow_groups.is_empty() || !ground.file.materials.is_empty())
+    {
+        let look = l.look.get_or_insert_with(Default::default);
+        look.glow_groups = ground.file.glow_groups.clone();
+        look.materials = ground.file.materials.clone();
+    }
+    let out = edit(&mut scope)?;
+    let (Source::Level(edited), Some(src)) = (&scope.source, &scope.composition) else { return Ok(out) };
+    let look = edited.look.clone();
+    if let Some(g) = pack.placed.as_mut().and_then(|p| p.assets.get_mut(olr_format::levels::GROUND_KEY)) {
+        g.file.elements = src.composition.elements.clone();
+        g.file.folders = src.composition.folders.clone();
+        let prefix = format!("{}/", olr_format::levels::EDITOR_DIR);
+        g.files = src
+            .files
+            .iter()
+            .filter_map(|(k, v)| Some((k.strip_prefix(&prefix)?.to_string(), v.clone())))
+            .collect();
+        g.file.glow_groups = look.as_ref().map(|l| l.glow_groups.clone()).unwrap_or_default();
+        g.file.materials = look.as_ref().map(|l| l.materials.clone()).unwrap_or_default();
+    }
+    if let Source::Level(l) = &mut pack.source {
+        l.look = look;
+    }
+    Ok(out)
+}
+
+/// The copy whose asset brings glow group (or, with `material`, surface
+/// material) `id` into a level placing more than its ground, when the
+/// ground lacks it (issue #74: `level group|material` refuse it, naming
+/// the copy, never its asset's key): the first copy, in placement order,
+/// whose asset's own groups (materials) gather under `id`. `None` for a
+/// level of its ground alone, a plain level, and an id the ground has.
+pub fn brought_by(pack: &Pack, id: &str, material: bool) -> Option<String> {
+    let p = pack.placed.as_ref().filter(|_| pack.composition.is_none())?;
+    let ground = p.assets.get(olr_format::levels::GROUND_KEY);
+    let ground_has = ground.is_some_and(|g| {
+        if material {
+            g.file.materials.iter().any(|m| m.id == id)
+        } else {
+            g.file.glow_groups.iter().any(|x| x.id == id)
+        }
+    });
+    if ground_has {
+        return None;
+    }
+    let (mut groups, mut materials) = (Vec::new(), Vec::new());
+    for c in &p.file.copies {
+        let Some(a) = p.assets.get(&c.asset) else { continue };
+        let ids = if material {
+            gather_materials(&mut materials, &a.file.materials)
+        } else {
+            gather_groups(&mut groups, &a.file.glow_groups)
+        };
+        if c.asset != olr_format::levels::GROUND_KEY && ids.iter().any(|x| x == id) {
+            return Some(c.id.clone());
+        }
+    }
+    None
+}
+
+/// Why `level group|material` refuses `id` ([`brought_by`]): "<kind>
+/// <id>: it comes with copy <copy>'s asset: edit that asset".
+pub fn brought_by_message(kind: &str, id: &str, copy: &str) -> String {
+    format!("{kind} {id:?}: it comes with copy {copy}'s asset: edit that asset")
 }
