@@ -66,7 +66,14 @@ fn copies(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
             // the id in the room left.
             let name = doc.copy_name(&c.id).unwrap_or_else(|| c.id.clone());
             let on = selected.contains(&c.id);
-            let r = ui.add(name_button(on, &name, true));
+            // Room left for the id, however long the name (issue #84).
+            let room = (ui.available_width() - 48.0).max(24.0);
+            let r = ui
+                .scope(|ui| {
+                    ui.set_max_width(room);
+                    ui.add(name_button(on, &name, true))
+                })
+                .inner;
             super::relabel(&r, egui::WidgetType::Button, Some(on), &name);
             r.dnd_set_drag_payload(CarriedCopy(c.id.clone()));
             if r.double_clicked() {
