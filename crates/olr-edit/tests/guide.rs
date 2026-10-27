@@ -146,7 +146,9 @@ fn every_guide_example_parses_and_is_canonical() {
 fn pack(blocks: &[Block], kind: &str, pack_kind: PackKind) -> MemFs {
     let mut fs = MemFs::new();
     olr_pack::write_manifest(&mut fs, &manifest(pack_kind)).unwrap();
-    for b in blocks.iter().filter(|b| b.kind == kind) {
+    // `live.ron` names pictures the guide does not hold (issue #85): the
+    // round trip above checks it.
+    for b in blocks.iter().filter(|b| b.kind == kind && b.path != olr_format::levels::LIVE_FILE) {
         fs.write(&VPath::new(&b.path).unwrap(), b.text.as_bytes()).unwrap();
     }
     fs

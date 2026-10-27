@@ -1311,6 +1311,7 @@ impl Document {
             distant: Vec::new(),
             surface: None,
             distant_surfaces: Vec::new(),
+            live: None,
         };
         edit(&mut tmp)?;
         Ok(self.change(Edit::Objects { before, after: tmp.objects }))

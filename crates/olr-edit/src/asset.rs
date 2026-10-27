@@ -1015,6 +1015,7 @@ fn baked(asset: &Asset, state: usize, lit: bool) -> LevelSource {
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),
+        live: None,
     };
     // The asset in the state with its defaults (its pieces when nothing
     // sets a value).

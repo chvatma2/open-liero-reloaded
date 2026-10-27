@@ -185,7 +185,7 @@ const PLACED: &str = r##"(
         (
             id: "desk-2",
             asset: "a",
-            at: (-4, 1),
+            at: (4, 1),
             size: (4, 3),
             live: true,
             state: "Alarm",

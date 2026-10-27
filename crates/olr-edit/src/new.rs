@@ -239,6 +239,7 @@ fn level_template(name: &str, (w, h): (u32, u32), theme: &str) -> Result<LevelSo
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),
+        live: None,
     };
     crate::level::refresh_thumb(&mut level);
     Ok(level)

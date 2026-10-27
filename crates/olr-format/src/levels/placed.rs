@@ -588,6 +588,7 @@ pub fn check_placed(src: &PlacedSource, level_size: (u32, u32), art_scale: u32) 
     let mut groups: Vec<GlowGroupSource> = Vec::new();
     let mut materials: Vec<MaterialSource> = Vec::new();
     let (mut distant, mut distant_pixels) = (0usize, 0u64);
+    let (mut live, mut scripts) = (0usize, usize::from(f.script));
     for (i, c) in f.copies.iter().enumerate() {
         let at = |field: &str| format!("copies[{i}].{field}");
         let bad = |field: &str, m: String| invalid(&at(field), format!("copy {:?}: {m}", c.id));
@@ -655,6 +656,29 @@ pub fn check_placed(src: &PlacedSource, level_size: (u32, u32), art_scale: u32) 
             }
             if c.distant.is_some() {
                 return Err(bad("live", "a distant copy cannot be Live".into()));
+            }
+            // Issue #85: the played form's per-level limits.
+            live += 1;
+            if live > super::MAX_LIVE_COPIES {
+                return Err(bad(
+                    "live",
+                    format!("more than {} live copies in the level", super::MAX_LIVE_COPIES),
+                ));
+            }
+            scripts += usize::from(asset.script.is_some() && c.default_script) + usize::from(c.script);
+            let (w, h) = placed_size(c, file);
+            let inside = c.at.0 >= 0
+                && c.at.1 >= 0
+                && i64::from(c.at.0) + i64::from(w) <= i64::from(level_size.0)
+                && i64::from(c.at.1) + i64::from(h) <= i64::from(level_size.1);
+            if !inside {
+                return Err(bad(
+                    "at",
+                    format!(
+                        "a live copy lies inside the level: at {:?}, {w} × {h}, the level {} × {}",
+                        c.at, level_size.0, level_size.1
+                    ),
+                ));
             }
         }
         if raster {
@@ -758,6 +782,12 @@ pub fn check_placed(src: &PlacedSource, level_size: (u32, u32), art_scale: u32) 
     }
     if let Some(id) = src.scripts.keys().find(|id| !f.copies.iter().any(|c| c.script && c.id == **id)) {
         return Err(io(&copy_script_file(id), format!("no copy {id:?} with a script")));
+    }
+    if scripts > super::MAX_SCRIPTS {
+        return Err(invalid(
+            "copies",
+            format!("the live copies run {scripts} scripts, more than {}", super::MAX_SCRIPTS),
+        ));
     }
     match (&src.level_script, f.script) {
         (None, true) => return Err(io(LEVEL_SCRIPT_FILE, "missing".into())),
@@ -1433,5 +1463,27 @@ mod tests {
         fs.write(&VPath::new("editor/scripts/lamp-2.rhai").unwrap(), &[0xff, 0xfe]).unwrap();
         let e = read_placed_files(&fs).unwrap_err().to_string();
         assert!(e.contains("editor/scripts/lamp-2.rhai") && e.contains("UTF-8"), "{e}");
+    }
+
+    /// Issue #85: a live copy lies inside the level (its played form is
+    /// at its box); a static copy may reach outside.
+    #[test]
+    fn check_placed_refuses_a_live_copy_outside_the_level() {
+        let mut s = sample();
+        check_placed(&s, LEVEL, 1).unwrap();
+        for at in [(7, 1), (-1, 1), (4, 5)] {
+            s.file.copies[2].at = at;
+            let e = refused(&s);
+            assert!(
+                e.contains("copies[2].at") && e.contains("lamp-2") && e.contains("inside the level"),
+                "{e}"
+            );
+        }
+        s.file.copies[2].live = false;
+        check_placed(&s, LEVEL, 1).unwrap();
+        // Stretched past the edge, too.
+        let mut s = sample();
+        s.file.copies[2].size = Some((5, 2));
+        assert!(refused(&s).contains("inside the level"));
     }
 }

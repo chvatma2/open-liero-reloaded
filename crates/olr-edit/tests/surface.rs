@@ -49,6 +49,7 @@ fn level(w: u32, h: u32, s: u32) -> LevelSource {
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),
+        live: None,
     }
 }
 

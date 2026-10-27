@@ -78,6 +78,7 @@ impl Document {
             distant: Vec::new(),
             surface: None,
             distant_surfaces: Vec::new(),
+            live: None,
         };
         compile_look(&tmp).map(|_| ()).map_err(|e| DocError::Bad(e.to_string()))
     }

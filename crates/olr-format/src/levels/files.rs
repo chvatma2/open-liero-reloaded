@@ -150,6 +150,9 @@ pub fn file_paths(src: &LevelSource) -> Vec<String> {
     let masked =
         src.distant.iter().enumerate().filter(|(_, d)| d.glow.as_ref().is_some_and(|g| g.mask.is_some()));
     out.extend(masked.map(|(i, _)| distant_glow_file(i)));
+    if let Some(live) = &src.live {
+        out.extend(super::live_paths(&live.file));
+    }
     out
 }
 
@@ -229,6 +232,9 @@ pub fn write_level_files(sink: &mut dyn ContentSink, src: &LevelSource) -> Resul
             let (w, h) = (d.image.width(), d.image.height());
             write_bytes(sink, &distant_glow_file(i), &image_io::encode_grey(w, h, mask))?;
         }
+    }
+    if let Some(live) = &src.live {
+        super::write_live_files(sink, live)?;
     }
     Ok(())
 }
@@ -503,8 +509,16 @@ pub fn read_level_files_without_thumb(src: &dyn ContentSource) -> Result<LevelSo
     level.haze = read_haze(src, level.size)?;
     level.surface = read_surface(src, level.size)?;
     level.distant = distant?;
+    level.live = read_live(src, &level)?;
     check(&level)?;
     Ok(level)
+}
+
+/// The level's played form (issue #85), read after its look: never
+/// lenient, as live copies are gameplay.
+fn read_live(src: &dyn ContentSource, level: &LevelSource) -> Result<Option<super::LiveSource>, FormatError> {
+    let groups = level.look.as_ref().map_or(0, |l| l.glow_groups.len());
+    super::read_live_files(src, level.size, level.art_scale, groups)
 }
 
 /// [`read_level_files_without_thumb`] for playing: a look that does not
@@ -579,6 +593,9 @@ pub fn read_level_files_lenient(src: &dyn ContentSource) -> Result<(LevelSource,
         warnings.push(format!("{e}: the level plays without its glow beams"));
         level.glow_beams = None;
     }
+    // Live copies are gameplay: a played form that does not check
+    // refuses the level (issue #85).
+    level.live = read_live(src, &level)?;
     check(&level)?;
     Ok((level, warnings))
 }
@@ -648,6 +665,7 @@ fn read_base(
         distant: Vec::new(),
         surface: None,
         distant_surfaces,
+        live: None,
     };
     Ok((level, glow, distant))
 }

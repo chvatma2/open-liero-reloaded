@@ -430,6 +430,7 @@ fn pack() -> Pack {
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),
+        live: None,
     };
     Pack::new(manifest, Source::Level(level))
 }

@@ -53,6 +53,7 @@ fn blank(size: (u32, u32), s: u32, look: Option<LookSource>) -> LevelSource {
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),
+        live: None,
     }
 }
 

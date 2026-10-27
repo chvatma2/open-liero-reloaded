@@ -22,6 +22,13 @@
 //! starting state, stretched to their placed size (nearest neighbour), and
 //! their glow groups and materials are gathered into the level's look.
 //!
+//! Issue #85: a Live copy is not baked into the level's files: saving
+//! writes it, at its placed size and split into parts, to the level's
+//! played form, `live.ron` and `live/` (outside `editor/`, so they are
+//! play files: hashed, downloaded and replayed with the level), and
+//! matches keep it an object. A level whose played form does not check
+//! does not load.
+//!
 //! Issue #76: a level travels to be edited as one `.olrlevel` archive
 //! (`olr-cli level export`, `level import`): the pack whole, `editor/` and
 //! every asset copy and script included, in `.olpk`'s layout under its own
@@ -34,6 +41,8 @@ mod composition;
 pub use composition::*;
 mod placed;
 pub use placed::*;
+mod live;
+pub use live::*;
 mod files;
 pub(crate) use files::LevelFile;
 mod thumb;
@@ -269,6 +278,9 @@ pub struct LevelSource {
     /// `distant[i].surface`): the id of one of the look's materials; past
     /// its end, none. The readers and the bake leave no `None` at its end.
     pub distant_surfaces: Vec<Option<String>>,
+    /// The played form of its live copies (`live.ron` and `live/`, issue
+    /// #85); `None` for a level without live copies.
+    pub live: Option<LiveSource>,
 }
 
 /// A thing placed in a level.
@@ -565,6 +577,9 @@ pub(crate) fn check(src: &LevelSource) -> Result<(), FormatError> {
     check_distant_layers(&src.distant, src.art_scale)?;
     check_distant_surfaces(src)?;
     check_distant_glows(src)?;
+    if let Some(live) = &src.live {
+        check_live(live, src.size, src.art_scale, src.look.as_ref().map_or(0, |l| l.glow_groups.len()))?;
+    }
     for (file, img) in [(FRONT_FILE, &src.front), (BACK_FILE, &src.back)] {
         if (img.width(), img.height()) != (aw, ah) {
             return Err(FormatError::invalid(
@@ -625,6 +640,7 @@ pub fn lift_level(level: &Level, thumb: Option<Vec<u8>>) -> Result<LevelSource, 
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),
+        live: None,
     };
     if (level.material.width(), level.material.height()) != src.size {
         return Err(LiftError {
@@ -707,6 +723,7 @@ pub(crate) mod tests {
             distant: Vec::new(),
             surface: None,
             distant_surfaces: Vec::new(),
+            live: None,
         }
     }
 

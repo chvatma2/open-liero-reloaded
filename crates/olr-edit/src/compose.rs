@@ -1347,6 +1347,7 @@ fn as_level(
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),
+        live: None,
     }
 }
 

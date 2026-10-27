@@ -60,6 +60,7 @@ fn level_pack(id: &str, name: &str) -> Pack {
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),
+        live: None,
     };
     let manifest = PackManifest {
         format_version: PACK_FORMAT_VERSION,

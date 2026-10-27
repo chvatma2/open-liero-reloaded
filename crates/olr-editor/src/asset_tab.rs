@@ -227,6 +227,7 @@ impl Document {
             distant: Vec::new(),
             surface: None,
             distant_surfaces: Vec::new(),
+            live: None,
         };
         let mut originals = BTreeMap::new();
         let mut glow_masks = BTreeMap::new();

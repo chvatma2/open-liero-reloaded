@@ -595,6 +595,7 @@ impl Document {
             distant: Vec::new(),
             surface: None,
             distant_surfaces: Vec::new(),
+            live: None,
         };
         let mut pack = Pack::new(self.manifest.clone(), Source::Level(light));
         pack.placed = Some(before.clone());

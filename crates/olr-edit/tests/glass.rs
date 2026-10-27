@@ -58,6 +58,7 @@ fn window(glass: ElementGlass) -> Pack {
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),
+        live: None,
     };
     let mut p = Pack::new(manifest, Source::Level(level));
     let paint = |p: &mut Pack, id: &str, x: i32, w: i32, c: Rgba| {

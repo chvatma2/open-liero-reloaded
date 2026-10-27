@@ -432,6 +432,115 @@ level script is `editor/level.rhai`:
 )
 ```
 
+A level's **live** copies (issue #85) stay objects in the match: saving
+bakes each one, at its placed size and split into parts (a layer that a
+value targets its own part, untargeted layers flattened in runs of one
+kind), into `live.ron` and the files under `live/`, outside `editor/`,
+so the level's hash covers them and downloads carry them. Every state is
+a complete look (a value for each property any state sets), every value
+a whole number (positions in world pixels):
+
+<!-- file: level/live.ron -->
+```ron
+(
+    copies: [
+        (
+            id: "lamp-2",
+            asset: "Lamp",
+            at: (200, 80),
+            size: (8, 8),
+            props: [
+                (
+                    name: "strength",
+                    drives: GlowStrength(0),
+                    min: 0,
+                    max: 100,
+                    default: 100,
+                ),
+                (
+                    drives: GlowColour(0),
+                    min: -1,
+                    max: 16777215,
+                    default: -1,
+                ),
+            ],
+            pictures: [
+                (
+                    size: (8, 8),
+                    glow: true,
+                    groups: true,
+                ),
+                (
+                    size: (8, 8),
+                    glow: true,
+                    groups: true,
+                ),
+            ],
+            states: [
+                (
+                    name: "On",
+                    values: [
+                        (1, -1),
+                    ],
+                    parts: [
+                        (
+                            layer: 0,
+                            kind: Background,
+                            picture: 0,
+                            glow_strength: 80,
+                        ),
+                    ],
+                    enter_sound: 0,
+                ),
+                (
+                    name: "Off",
+                    values: [
+                        (1, 3355443),
+                    ],
+                    parts: [
+                        (
+                            layer: 0,
+                            kind: Background,
+                            picture: 1,
+                            glow_strength: 80,
+                        ),
+                    ],
+                ),
+            ],
+            start_values: [
+                (0, 60),
+            ],
+            animations: [
+                Steady,
+            ],
+            groups: [
+                (
+                    id: "lamps",
+                    intensity: 300,
+                    reach: Pixels(60),
+                ),
+            ],
+            scripts: [
+                1,
+                2,
+            ],
+            sounds: [
+                ("tick.wav", 0),
+            ],
+        ),
+    ],
+    scripts: [
+        "live/0.rhai",
+        "live/1.rhai",
+        "live/2.rhai",
+    ],
+    level_script: 0,
+    sounds: [
+        "live/0.wav",
+    ],
+)
+```
+
 ### An asset
 
 Not a pack: the level editor's ready-made piece of a level, a folder
