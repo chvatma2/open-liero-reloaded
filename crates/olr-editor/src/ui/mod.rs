@@ -10,10 +10,12 @@
 mod asset;
 mod browser;
 mod canvas;
+mod copy_panel;
 mod dialogs;
 mod elements;
 mod icons;
 mod level;
+mod level_script;
 mod level_tab;
 mod library;
 mod look;
@@ -302,6 +304,79 @@ pub mod labels {
     pub const SCRIPT_NOT_RUN: &str = "Scripts run from a later version: checked for syntax only";
     pub const NO_SCRIPT_ERRORS: &str = "No syntax errors";
 
+    // The copy panel, the level script, the library-change notice, export
+    // and import (issue #84).
+    /// The copy panel's Id field.
+    pub const COPY_ID: &str = "Id";
+    /// Under the Id field until #89 reports the scripts naming it.
+    pub const ID_HINT: &str = "Scripts use this id";
+    pub const LIVE: &str = "Live";
+    /// Under Live while on, until #87 makes live copies move in play.
+    pub const LIVE_NOT_YET: &str = "Moves in play from a later version: bakes as placed for now";
+    pub const STARTING_STATE: &str = "Starting state";
+    pub const VALUES: &str = "Values";
+    /// A value row's button clearing the copy's own value (shown; each
+    /// named `default_value(name)`).
+    pub const DEFAULT_VALUE: &str = "Default";
+    /// The copy panel's Script heading.
+    pub const COPY_SCRIPT: &str = "Copy script";
+    pub const EDIT_SCRIPT: &str = "Edit script";
+    /// The switch running the asset's default script too (shown "Also run
+    /// <asset>'s script").
+    pub const RUN_DEFAULT_SCRIPT: &str = "Also run the asset's script";
+    /// The level tab's script editor's way back to the canvas.
+    pub const BACK_TO_LEVEL: &str = "Back to level";
+    pub const LEVEL_SCRIPT: &str = "Level script";
+    /// The notice's title.
+    pub const LIBRARY_CHANGED: &str = "Your library changed since this level was saved";
+    pub const UPDATE_ALL: &str = "Update all";
+    pub const UPDATE_ANYWAY: &str = "Update anyway";
+    /// A missing asset's Add to your library (`RESTORE` is the eraser's
+    /// Restore since plan 14d).
+    pub const RESTORE_ASSET: &str = "Add to your library";
+    pub const ADOPT: &str = "Make it the level's own";
+    pub const LATER: &str = "Later";
+    /// File ▾'s entries.
+    pub const LIBRARY_CHANGES: &str = "Library changes…";
+    pub const EXPORT_LEVEL: &str = "Export level…";
+    pub const IMPORT_LEVEL: &str = "Import level…";
+    /// The export browser's file name field.
+    pub const FILE_NAME: &str = "File name";
+    /// The export browser's button.
+    pub const EXPORT: &str = "Export";
+
+    /// A copy's value row's field, by exposed name.
+    pub fn copy_value(name: &str) -> String {
+        format!("{VALUES}: {name}")
+    }
+
+    /// A copy's value row's Default.
+    pub fn default_value(name: &str) -> String {
+        format!("{DEFAULT_VALUE} {name}")
+    }
+
+    /// The starting state picker's first entry.
+    pub fn asset_start(start: &str) -> String {
+        format!("The asset's (★ {start})")
+    }
+
+    /// The notice's buttons, by the asset's name.
+    pub fn update(name: &str) -> String {
+        format!("Update {name}")
+    }
+
+    pub fn update_anyway(name: &str) -> String {
+        format!("{UPDATE_ANYWAY} {name}")
+    }
+
+    pub fn restore_asset(name: &str) -> String {
+        format!("{RESTORE_ASSET}: {name}")
+    }
+
+    pub fn adopt(name: &str) -> String {
+        format!("{ADOPT}: {name}")
+    }
+
     /// A library copy's origin in its panel (issue #83): "Built-in: Strip
     /// light", "Yours: crane".
     pub fn origin(builtin: bool, name: &str) -> String {
@@ -447,6 +522,10 @@ pub struct EditorData {
     /// editor's draft.
     column: parts::Column,
     script: parts::ScriptDraft,
+    /// The level tab's script editor's draft and the script it is of
+    /// (issue #84).
+    level_script: parts::ScriptDraft,
+    level_script_of: Option<crate::copy_ops::ScriptTarget>,
     /// The focus last seen, and the passes left to follow it (the asset
     /// tab's side panels scroll to it).
     seen_focus: Option<egui::Id>,
@@ -472,6 +551,10 @@ struct BrowserDraft {
     selected: Option<String>,
     /// The preview's texture, for the entry it shows.
     preview: Option<(String, egui::TextureHandle)>,
+    /// A save's File name as typed, and the state's name it started from
+    /// (issue #84).
+    name: String,
+    name_from: Option<String>,
 }
 
 impl EditorData {

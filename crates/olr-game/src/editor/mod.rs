@@ -68,6 +68,9 @@ pub enum HostOut {
     /// asset tab; the shell's `audio.preview`, as the mod editor's
     /// `ModOut::PlaySound`).
     PlaySound(Vec<u8>),
+    /// A level pack came into the data directory (issue #84's import): the
+    /// game's level lists are read again.
+    ContentChanged,
 }
 
 /// The level editor's host.
@@ -516,6 +519,22 @@ impl EditorHost {
             EditorCommand::RemoveAsset(id) => self.assets(queue, |dir| {
                 olr_edit::asset::remove_from_library(dir, &id).map(|()| None).map_err(|e| e.to_string())
             }),
+            // Issue #84: a level and its assets as one `.olrlevel` file.
+            EditorCommand::ExportLevel { pack_dir, to } => {
+                queue.push_back(match self.export_level(&pack_dir, &to) {
+                    Ok(said) => EditorAction::Note(said),
+                    Err(why) => EditorAction::Failed(why),
+                })
+            }
+            EditorCommand::ImportLevel(path) => match self.import_level(&path) {
+                Ok(report) => {
+                    out.push(HostOut::ContentChanged);
+                    // The assets it added are in the library now.
+                    self.assets(queue, |_| Ok(None));
+                    queue.push_back(EditorAction::LevelImported { dir: report.dir.clone(), report });
+                }
+                Err(why) => queue.push_back(EditorAction::Failed(why)),
+            },
             EditorCommand::PlaySound(bytes) => out.push(HostOut::PlaySound(bytes)),
             EditorCommand::ReadSound(path) => {
                 queue.push_back(match files::read_file(&path, olr_format::assets::MAX_ASSET_SOUND_BYTES) {
@@ -630,6 +649,53 @@ impl EditorHost {
             Some(dir) if olr_edit::asset::valid_asset_id(&key.id) => Ok(dir.join(&key.id)),
             _ => Err(format!("no asset {:?}", key.id)),
         }
+    }
+
+    /// A theme's back tile from the catalog, for an export's or an
+    /// import's bake check.
+    fn back_tile(&self, theme: &str) -> Result<olr_data::image::RgbaImage, String> {
+        let themes = &self.state.catalog().themes;
+        themes
+            .iter()
+            .find(|t| t.id == theme)
+            .map(|t| t.back_tile.clone())
+            .ok_or_else(|| format!("no theme {theme}"))
+    }
+
+    /// Writes the level at `dir` to `to` as one `.olrlevel` file
+    /// (`olr_edit::library::export`); what the status line says of it.
+    fn export_level(&self, dir: &Path, to: &Path) -> Result<String, String> {
+        let bytes = olr_edit::library::export(dir, &|t| self.back_tile(t)).map_err(|e| e.to_string())?;
+        let assets = olr_edit::pack::load(dir).ok().and_then(|p| {
+            olr_edit::pack::placement(&p)
+                .map(|s| s.file.assets.iter().filter(|a| a.key != olr_format::levels::GROUND_KEY).count())
+        });
+        let file =
+            to.file_name().map_or_else(|| to.display().to_string(), |n| n.to_string_lossy().into_owned());
+        std::fs::write(to, &bytes).map_err(|e| format!("{}: {e}", to.display()))?;
+        let assets = assets.unwrap_or(0);
+        let noun = if assets == 1 { "asset" } else { "assets" };
+        Ok(format!("Exported {file} ({}, {assets} {noun})", files::size_said(bytes.len() as u64)))
+    }
+
+    /// Imports the `.olrlevel` file at `path` into the data directory
+    /// (`olr_edit::library::import`): its pack in `packs/`, its new assets
+    /// in the user's library.
+    fn import_level(&self, path: &Path) -> Result<olr_edit::library::Imported, String> {
+        let (Some(packs), Some(user)) = (&self.packs_dir, &self.assets_dir) else {
+            return Err("importing a level needs a data directory".into());
+        };
+        let (name, bytes) = files::read_file(path, olr_pack::archive::MAX_ARCHIVE)?;
+        std::fs::create_dir_all(packs).map_err(|e| format!("{}: {e}", packs.display()))?;
+        std::fs::create_dir_all(user).map_err(|e| format!("{}: {e}", user.display()))?;
+        let bundled = files::pack_ids(&self.bundled);
+        let places = olr_edit::library::Places {
+            packs,
+            user,
+            builtin: self.builtin_assets_dir.as_deref(),
+            bundled: &bundled,
+        };
+        olr_edit::library::import(&bytes, &places, &|t| self.back_tile(t)).map_err(|e| format!("{name}: {e}"))
     }
 
     fn root_refs(&self) -> Vec<&Path> {

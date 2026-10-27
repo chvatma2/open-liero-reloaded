@@ -56,6 +56,18 @@ pub enum CopyChange {
     /// the width's aspect).
     KeepAspect(bool),
     Locked(bool),
+    // Issue #84's rows.
+    /// Its id (its script follows; scripts naming the old one do not).
+    Id(String),
+    Live(bool),
+    /// Its starting state (none: the asset's).
+    State(Option<String>),
+    /// Its value of exposed property `name` (none: Default).
+    Value(String, Option<olr_format::assets::ValueSource>),
+    /// Whether its asset's default script runs on it too.
+    DefaultScript(bool),
+    /// Placed distant at this depth (none: near).
+    Distant(Option<u8>),
 }
 
 /// The 8 handles of a box: (column, row) in 0..=2 each, the centre left out.
@@ -518,6 +530,7 @@ impl EditorState {
             return Vec::new();
         };
         let size = |s: Size| normal(s, natural);
+        let renamed = change.clone();
         let r = self.copy_edit(|d| {
             let change = match change {
                 CopyChange::At(at) => d.move_copies(&[(id.to_string(), at)]),
@@ -527,10 +540,27 @@ impl EditorState {
                 CopyChange::Height(h) => d.resize_copy(id, size(Size::Height(h)), b.0),
                 CopyChange::KeepAspect(on) => d.set_copy(id, CopyProperty::FreeAspect(!on)),
                 CopyChange::Locked(on) => d.set_copy(id, CopyProperty::Locked(on)),
+                CopyChange::Id(new) => d.set_copy(id, CopyProperty::Id(new)),
+                CopyChange::Live(on) => d.set_copy(id, CopyProperty::Live(on)),
+                CopyChange::State(state) => d.set_copy(id, CopyProperty::State(state)),
+                CopyChange::Value(name, v) => d.set_copy(id, CopyProperty::Value(name, v)),
+                CopyChange::DefaultScript(on) => d.set_copy(id, CopyProperty::DefaultScript(on)),
+                CopyChange::Distant(depth) => d.set_copy(id, CopyProperty::Distant(depth)),
             };
             change.map(|c| (c, ()))
         });
-        r.map(|r| r.0).unwrap_or_default()
+        let done = r.is_some();
+        let cmds = r.map(|r| r.0).unwrap_or_default();
+        // Issue #84: a renamed copy stays selected, its script open.
+        if done && let CopyChange::Id(new) = &renamed {
+            if self.selection == Selection::Copy(id.to_string()) {
+                self.selection = Selection::Copy(new.clone());
+            }
+            if self.script_open == Some(crate::copy_ops::ScriptTarget::Copy(id.to_string())) {
+                self.script_open = Some(crate::copy_ops::ScriptTarget::Copy(new.clone()));
+            }
+        }
+        cmds
     }
 
     /// A row of the Copies list dropped at place `to` (bottom 0): one step.

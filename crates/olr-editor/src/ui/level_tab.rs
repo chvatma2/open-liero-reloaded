@@ -5,7 +5,8 @@
 //! Spawn, the Haze brush), the chosen tool's options under them and the
 //! asset library (`library.rs`); on the right the copy panel (Copies |
 //! Spawns, then the selection's panel or the level's); the status line;
-//! the canvas in the middle. Both side panels take a share of the
+//! the canvas in the middle, or the open script (issue #84,
+//! `level_script.rs`). Both side panels take a share of the
 //! window's width; below [`NARROW`](super::NARROW) one shows at a time (the
 //! session bar's Library | Copy). They scroll vertically only and follow
 //! a focus that moved otherwise than by the pointer.
@@ -13,7 +14,9 @@
 use egui::Ui;
 
 use super::asset::{self, Side};
-use super::{EditorData, canvas, elements, labels, level, library, properties, rail, status, toolbar};
+use super::{
+    EditorData, canvas, elements, labels, level, level_script, library, properties, rail, status, toolbar,
+};
 use crate::state::{EditorAction, EditorState, Selection};
 
 /// Draws the level tab; its actions go to `out`: the bars' and the tools'
@@ -60,10 +63,15 @@ pub(super) fn show(
             });
         });
     }
+    level_script::sync(ui, state, data, fields);
     // No fill: the host draws the bake under the canvas (plan 14c).
-    egui::CentralPanel::default()
-        .frame(egui::Frame::NONE)
-        .show(ui, |ui| canvas::show(ui, state, data, canvas));
+    egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
+        if state.script_open().is_some() {
+            level_script::show(ui, state, data, fields);
+        } else {
+            canvas::show(ui, state, data, canvas);
+        }
+    });
     asset::see_focus(ui.ctx(), data);
 }
 

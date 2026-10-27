@@ -156,13 +156,15 @@ pub enum Edit {
     Name(String),
 }
 
-/// A side of `Edit::Placement` (issue #82): the placement's file and the
-/// copies' scripts, and the asset copies this side has that the other
+/// A side of `Edit::Placement` (issue #82): the placement's file, the
+/// copies' scripts and (issue #84) the level script, and the asset copies this side has that the other
 /// lacks or holds otherwise (never the ground: its layers are the items).
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlacementSnap {
     pub file: olr_format::levels::PlacedFile,
     pub scripts: BTreeMap<String, String>,
+    /// The level script (issue #84).
+    pub level_script: Option<String>,
     pub assets: BTreeMap<String, Arc<olr_format::assets::AssetSource>>,
 }
 
@@ -173,6 +175,7 @@ impl PlacementSnap {
             + self.file.copies.len() * std::mem::size_of::<olr_format::levels::PlacedCopy>()
             + self.file.copies.iter().map(|c| c.id.len() + c.asset.len()).sum::<usize>()
             + self.scripts.values().map(String::len).sum::<usize>()
+            + self.level_script.as_ref().map_or(0, String::len)
     }
 
     /// Its assets, by address, with their bytes.
@@ -409,6 +412,7 @@ impl Edit {
                 // otherwise: none when they are the same.
                 before.file == after.file
                     && before.scripts == after.scripts
+                    && before.level_script == after.level_script
                     && before.assets.is_empty()
                     && after.assets.is_empty()
             }

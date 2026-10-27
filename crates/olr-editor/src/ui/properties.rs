@@ -165,6 +165,7 @@ fn copy(ui: &mut Ui, state: &EditorState, data: &mut EditorData, id: &str, out: 
         out.push(EditorAction::EditCopy(id.to_string()));
     }
     link(ui, state, id, out);
+    super::copy_panel::rows(ui, state, data, &c, out);
     if ui.button("Delete").on_hover_text("Delete").clicked() {
         out.push(EditorAction::Remove);
     }

@@ -1,5 +1,6 @@
 //! The level's settings, shown when nothing is selected: name, notes,
-//! theme, art scale, and a resize with an offset.
+//! theme, art scale, the level script (issue #84), and a resize with an
+//! offset.
 
 use egui::Ui;
 use olr_data::image::Rgba;
@@ -8,6 +9,7 @@ use olr_format::levels::{MAX_ART_SCALE, MAX_SIDE};
 
 use super::look::LookScope;
 use super::{EditorData, labels, number, text};
+use crate::copy_ops::ScriptTarget;
 use crate::history::LevelMeta;
 use crate::state::{EditorAction, EditorState};
 
@@ -39,6 +41,7 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
     {
         out.push(EditorAction::ArtScale(to as u32));
     }
+    script(ui, state, out);
     ui.separator();
     ui.label(format!("Size: {} × {}", l.size.0, l.size.1));
     let mut fields = match data.resize {
@@ -78,6 +81,31 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
     // Issue #81: the glow groups and materials are the ground's (Edit in
     // level).
     super::look::level_look(ui, state, data, LookScope::Level, out);
+}
+
+/// The level script's New, or Edit and Remove (issue #84).
+fn script(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
+    let Some(doc) = state.document().filter(|d| d.placement().is_some()) else { return };
+    let target = ScriptTarget::Level;
+    ui.separator();
+    ui.strong(labels::LEVEL_SCRIPT);
+    let has = doc.script_of(&target).is_some();
+    ui.horizontal_wrapped(|ui| {
+        let open = if has { labels::EDIT_SCRIPT } else { labels::NEW_SCRIPT };
+        let r = ui.button(open).on_hover_text(target.file());
+        super::relabel(&r, egui::WidgetType::Button, None, &format!("{} {open}", labels::LEVEL_SCRIPT));
+        if r.clicked() {
+            out.push(EditorAction::OpenScript(target.clone()));
+        }
+        if has {
+            let r = ui.button(labels::REMOVE_SCRIPT);
+            let name = format!("{} {}", labels::LEVEL_SCRIPT, labels::REMOVE_SCRIPT);
+            super::relabel(&r, egui::WidgetType::Button, None, &name);
+            if r.clicked() {
+                out.push(EditorAction::RemoveTargetScript(target.clone()));
+            }
+        }
+    });
 }
 
 /// The asset tab's asset, shown when nothing is selected (issue #77): its

@@ -76,7 +76,7 @@ pub fn library_refusal(src: &AssetSource, ground: bool) -> Option<String> {
 /// Makes the level's assets of one library origin that are the same one
 /// asset: the copies of each later one point at the first, and the later
 /// ones go.
-fn merge_same(pack: &mut Pack) {
+pub(crate) fn merge_same(pack: &mut Pack) {
     let Some(p) = pack.placed.as_mut() else { return };
     let listed = p.file.assets.clone();
     let mut gone: Vec<String> = Vec::new();
@@ -215,20 +215,6 @@ impl EditorState {
     pub(crate) fn say(&mut self, message: String) {
         self.on_tab(DocTab::Level, |s| s.status.message = Some(message.clone()));
         self.status.message = Some(message);
-    }
-
-    /// The host's `LibraryCompared`: the level takes the library's
-    /// version of each changed asset that breaks no copy.
-    pub(crate) fn library_compared(&mut self, libs: Libraries) -> Vec<EditorCommand> {
-        let (cmds, said) = self.on_tab(DocTab::Level, |s| {
-            let links = s.doc.as_ref().map(|d| d.compare_library(&libs)).unwrap_or_default();
-            s.links = links;
-            s.take_library(&libs)
-        });
-        if !said.is_empty() {
-            self.say(said.join("; "));
-        }
-        cmds
     }
 
     /// The level tab's (in place) changed assets of `libs` taken, one step

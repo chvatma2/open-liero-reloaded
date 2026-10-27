@@ -187,6 +187,34 @@ pub fn read_file(path: &Path, max: u64) -> Result<(String, Vec<u8>), String> {
     Ok((name, bytes))
 }
 
+/// A file's size as the status line says it: "812 bytes", "34 KiB",
+/// "2.5 MiB" (issue #84's export).
+pub fn size_said(bytes: u64) -> String {
+    match bytes {
+        0..1024 => format!("{bytes} bytes"),
+        1024..1_048_576 => format!("{} KiB", bytes.div_ceil(1024)),
+        _ => format!("{:.1} MiB", bytes as f64 / 1_048_576.0),
+    }
+}
+
+/// The ids of the packs in `roots` (each pack folder's name and its
+/// manifest's id): an import takes none of them (issue #84).
+pub fn pack_ids(roots: &[PathBuf]) -> BTreeSet<String> {
+    let mut ids = BTreeSet::new();
+    for root in roots {
+        let Ok(rd) = std::fs::read_dir(root) else { continue };
+        for e in rd.filter_map(Result::ok) {
+            if let Some(n) = e.file_name().to_str() {
+                ids.insert(n.to_string());
+            }
+            if let Ok(m) = olr_pack::read_manifest(&olr_vfs::DirFs::new(e.path())) {
+                ids.insert(m.id);
+            }
+        }
+    }
+    ids
+}
+
 /// The longest side of the import browser's preview, in pixels.
 pub const PREVIEW_SIDE: u32 = 192;
 

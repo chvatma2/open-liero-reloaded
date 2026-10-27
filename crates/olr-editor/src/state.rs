@@ -137,6 +137,13 @@ pub enum Dialog {
     ExposeColour { property: PropertySource, label: String },
     /// Removing the asset's script (issue #80): Remove (`Confirm`), Cancel.
     RemoveScript,
+    /// Removing a copy's or the level's script (issue #84): Remove
+    /// (`Confirm`), Cancel.
+    RemoveTargetScript(crate::copy_ops::ScriptTarget),
+    /// The library-change notice (issue #84, call 7): the level's library
+    /// assets that changed or are missing (`EditorState::library_links`),
+    /// each with its answers (`EditorAction::Library`); Later (`Cancel`).
+    LibraryChanged,
 }
 
 /// The surface materials' tints in the Materials view and its legend
@@ -193,6 +200,9 @@ pub enum Pending {
     /// Issue #82: the asset tab opens the level's own asset `key` (a copy's
     /// Edit in level) in place of the asset open there.
     EditOwn(String),
+    /// Issue #84: Export level… once the level is saved (Save or Cancel:
+    /// an unsaved level is not exported).
+    Export,
 }
 
 /// The editor's two documents (issue #77): the level and the asset tab's
@@ -679,6 +689,41 @@ pub enum EditorAction {
     /// The script editor's text committed (on a pause or when it loses the
     /// keyboard).
     SetScript(String),
+    // The copy panel's and the level's scripts (issue #84).
+    /// New script / Edit script: the script editor in the level tab's
+    /// middle on `target`'s script (a new one made first, one step).
+    OpenScript(crate::copy_ops::ScriptTarget),
+    /// Back to level: the canvas again.
+    CloseScript,
+    /// The script editor's text of `target` committed (one step).
+    SetTargetScript {
+        target: crate::copy_ops::ScriptTarget,
+        text: String,
+    },
+    /// Remove script (asks first, `Dialog::RemoveTargetScript`).
+    RemoveTargetScript(crate::copy_ops::ScriptTarget),
+    // The library-change notice, export and import (issue #84).
+    /// File ▾ Library changes…: the notice again.
+    LibraryChanges,
+    /// One of the notice's answers.
+    Library(crate::notice::LibraryAction),
+    /// File ▾ Export level…: asks to save first, then the browser's file
+    /// name.
+    ExportLevel,
+    /// The export browser's Choose: the level written to `name` in the
+    /// browser's folder; an existing file asks first unless `replace`.
+    ExportTo {
+        name: String,
+        replace: bool,
+    },
+    /// The export browser's "Replace <name>?" answered Cancel.
+    CancelReplace,
+    /// `ImportLevel`'s answer: the level imported at `dir`, and what came
+    /// in with it.
+    LevelImported {
+        dir: PathBuf,
+        report: olr_edit::library::Imported,
+    },
     // The layout (issue #8).
     /// The right panel's tab, by hand.
     Tab(PanelTab),
@@ -760,6 +805,18 @@ pub enum EditorCommand {
     /// Read this sound file (at most `MAX_ASSET_SOUND_BYTES`); answer
     /// `SoundRead` or `ImportFailed`.
     ReadSound(PathBuf),
+    /// Export the level pack at `pack_dir` (`olr_edit::library::export`)
+    /// into the file `to`, written whole (issue #84); answer `Note("Exported
+    /// <file> (<size>, <n> assets)")` or `Failed`.
+    ExportLevel {
+        pack_dir: PathBuf,
+        to: PathBuf,
+    },
+    /// Import the `.olrlevel` file at this path into the user's data folder
+    /// (`olr_edit::library::import`: its packs and assets); answer
+    /// `LevelImported` or `Failed` (issue #84). The game's level lists see
+    /// the new pack.
+    ImportLevel(PathBuf),
     /// The document was saved, or is being closed or left: drop its
     /// recovery copy (R7).
     RecoveryDone,
@@ -907,6 +964,18 @@ pub struct EditorState {
     /// Issue #83: the level's own asset (by key) Save to library is
     /// saving: `AssetSaved` links it.
     pub(crate) pending_link: Option<String>,
+    /// Issue #84: the level's script the level tab's middle shows (the
+    /// canvas otherwise).
+    pub(crate) script_open: Option<crate::copy_ops::ScriptTarget>,
+    /// Issue #84: the library's sources last answered (`LibraryCompared`),
+    /// for the notice's updates; whether the next answer is an opening's
+    /// (it opens the notice); what forced updates resolved; the level's
+    /// asset (by key) Add to your library is saving; what an import said.
+    pub(crate) libs: Option<olr_edit::library::Libraries>,
+    pub(crate) notice_on_compare: bool,
+    pub(crate) resolutions: Vec<String>,
+    pub(crate) pending_restore: Option<String>,
+    pub(crate) import_note: Option<(PathBuf, String)>,
 }
 
 impl EditorState {
@@ -1009,6 +1078,12 @@ impl EditorState {
             links: Vec::new(),
             use_yours: None,
             pending_link: None,
+            script_open: None,
+            libs: None,
+            notice_on_compare: false,
+            resolutions: Vec::new(),
+            pending_restore: None,
+            import_note: None,
         }
     }
 
@@ -1304,6 +1379,8 @@ impl EditorState {
                 | EditorAction::AssetsChanged(_)
                 | EditorAction::AssetSaved { .. }
                 | EditorAction::LibraryCompared(_)
+                | EditorAction::Library(_)
+                | EditorAction::LevelImported { .. }
                 | EditorAction::AssetRead { .. }
                 | EditorAction::AssetToEdit { .. }
                 | EditorAction::NameAsset(_)
@@ -1499,7 +1576,9 @@ impl EditorState {
             EditorAction::AssetSaved { key, source } => {
                 let mut cmds = if self.tab_save.is_some() {
                     self.tab_saved(key, source.as_deref())
-                } else if let Some(link) = self.pending_link.take() {
+                } else if let Some(link) = self.pending_link.take().or_else(|| self.pending_restore.take()) {
+                    // Issue #84's Add to your library links as Save to
+                    // library does.
                     self.picked_asset = Some(key.clone());
                     self.placing = false;
                     self.link_saved(&link, &key, source.as_deref())
@@ -1518,7 +1597,18 @@ impl EditorState {
             EditorAction::SaveToLibrary(id) => self.save_to_library(&id),
             EditorAction::UseYourCopy => self.use_your_copy(),
             EditorAction::AssetRead { key, at, asset } => match asset {
-                Ok(asset) => self.place_copy(&key, &asset, at),
+                Ok(asset) => {
+                    let mut cmds = self.place_copy(&key, &asset, at);
+                    // Issue #84: a library asset the last answer lacks is
+                    // asked for.
+                    let known = |o: &olr_format::levels::AssetOrigin| {
+                        self.libs.as_ref().is_some_and(|l| l.contains_key(o))
+                    };
+                    if self.document().is_some_and(|d| d.linked_origins().iter().any(|o| !known(o))) {
+                        cmds.extend(self.compare_library());
+                    }
+                    cmds
+                }
                 Err(why) => {
                     self.dialog = Some(Dialog::Error(why));
                     Vec::new()
@@ -1728,6 +1818,31 @@ impl EditorState {
                 Vec::new()
             }
             EditorAction::SetScript(text) => self.edits(|d| d.set_script(Some(text))),
+            EditorAction::OpenScript(target) => self.open_script(target),
+            EditorAction::CloseScript => {
+                self.script_open = None;
+                Vec::new()
+            }
+            EditorAction::SetTargetScript { target, text } => self.commit_script(&target, text),
+            EditorAction::RemoveTargetScript(target) => {
+                if self.shown == DocTab::Level
+                    && self.doc.as_ref().is_some_and(|d| d.script_of(&target).is_some())
+                {
+                    self.dialog = Some(Dialog::RemoveTargetScript(target));
+                }
+                Vec::new()
+            }
+            EditorAction::LibraryChanges => self.library_changes(),
+            EditorAction::Library(a) => self.library_action(a),
+            EditorAction::ExportLevel => self.export_level(),
+            EditorAction::ExportTo { name, replace } => self.export_to(&name, replace),
+            EditorAction::CancelReplace => {
+                if let Some(b) = &mut self.browser {
+                    b.cancel_replace();
+                }
+                Vec::new()
+            }
+            EditorAction::LevelImported { dir, report } => self.level_imported(dir, report),
             EditorAction::RemoveAsset(id) => {
                 let key = AssetKey { builtin: false, id: id.clone() };
                 if let Some(a) = self.asset(&key) {
@@ -1735,13 +1850,9 @@ impl EditorState {
                 }
                 Vec::new()
             }
+            EditorAction::Browse(Purpose::ExportLevel) => self.export_level(),
             EditorAction::Browse(purpose) => {
-                let dir = self
-                    .settings
-                    .browse_dir
-                    .clone()
-                    .or_else(|| self.catalog.home.clone())
-                    .unwrap_or_else(|| PathBuf::from("."));
+                let dir = self.browse_start();
                 self.browser = Some(Browser::new(purpose, dir.clone()));
                 vec![EditorCommand::List(dir)]
             }
@@ -2151,8 +2262,10 @@ impl EditorState {
         // Issue #74: a level converted on opening is unsaved till saved.
         self.dirty = self.doc.as_ref().is_some_and(Document::converted);
         self.status.message = self.dirty.then(|| crate::document::CONVERTED.to_string());
+        let mut cmds = vec![EditorCommand::Upload(all)];
+        cmds.extend(self.opened_links());
         self.refresh_problems();
-        vec![EditorCommand::Upload(all)]
+        cmds
     }
 
     /// The browser's `Pick`: a file to import is read (its folder
@@ -2163,9 +2276,18 @@ impl EditorState {
         let Some(e) = b.entry(name) else { return Vec::new() };
         let (dir, path) = (b.dir().to_path_buf(), b.dir().join(name));
         let take = match b.purpose() {
-            Purpose::ImportImage | Purpose::ImportTexture | Purpose::ImportSound => !e.is_dir,
+            Purpose::ImportImage | Purpose::ImportTexture | Purpose::ImportSound | Purpose::ImportLevel => {
+                !e.is_dir
+            }
             Purpose::OpenPack => e.is_pack,
             Purpose::ImportAsset => e.is_asset,
+            // Issue #84: a file picked names the export (asking to replace it).
+            Purpose::ExportLevel => {
+                if e.is_dir {
+                    return vec![EditorCommand::List(path)];
+                }
+                return self.export_to(name, false);
+            }
         };
         if !take {
             return if e.is_dir { vec![EditorCommand::List(path)] } else { Vec::new() };
@@ -2179,6 +2301,8 @@ impl EditorState {
             Purpose::ImportTexture => cmds.insert(0, EditorCommand::AddTexture(path)),
             Purpose::ImportAsset => cmds.insert(0, EditorCommand::ImportAsset(path)),
             Purpose::ImportSound => cmds.insert(0, EditorCommand::ReadSound(path)),
+            Purpose::ImportLevel => cmds.insert(0, EditorCommand::ImportLevel(path)),
+            Purpose::ExportLevel => {}
             Purpose::OpenPack => cmds.extend(self.leave(Pending::Open(path))),
         }
         cmds
@@ -2340,8 +2464,16 @@ impl EditorState {
         self.preview_parallax
     }
 
-    fn refresh_problems(&mut self) {
+    pub(crate) fn refresh_problems(&mut self) {
         let mut problems = self.doc.as_ref().map(Document::diagnostics).unwrap_or_default();
+        // Issue #84: the level's links and its scripts' syntax.
+        if self.in_place == DocTab::Level {
+            self.relink_links();
+            if let Some(d) = &self.doc {
+                problems.extend(d.link_problems(&self.links));
+                problems.extend(d.script_problems());
+            }
+        }
         problems.sort_by_key(|p| p.severity);
         self.status.problems = problems;
     }
@@ -2837,6 +2969,7 @@ impl EditorState {
             Pending::NewAsset(n) => return self.open_asset_tab(None, &n.asset()),
             Pending::EditGround => return self.open_ground_tab(),
             Pending::EditOwn(key) => return self.open_own_tab(key),
+            Pending::Export => return self.browse_export(),
             Pending::CloseAsset => {
                 self.close_asset_tab();
                 return self.leave(Pending::Close);
@@ -2965,7 +3098,7 @@ impl EditorState {
     /// Issue #81: applies the asset tab's edits of the ground to the level
     /// as one level step, "Edit Ground" (`Edit::Ground`), marking the
     /// level unsaved; nothing when it holds none since the last time.
-    fn apply_ground(&mut self) {
+    pub(crate) fn apply_ground(&mut self) {
         let Some(applied) = self.ground else { return };
         let changes = self.on_tab(DocTab::Asset, |s| s.changes);
         if changes == applied {
@@ -3235,7 +3368,10 @@ impl EditorState {
                 | Pending::EditOwn(_) => self.save_asset(Some(then)),
                 then => self.on_tab(DocTab::Level, |s| s.save(Some(then))),
             },
+            // Issue #84: an unsaved level is not exported.
+            (Dialog::Unsaved { then: Pending::Export }, Choice::Discard) => Vec::new(),
             (Dialog::Unsaved { then }, Choice::Discard) => self.carry_out(then),
+            (Dialog::RemoveTargetScript(target), Choice::Confirm) => self.remove_script(&target),
             (Dialog::ArtScale { to }, Choice::Confirm) => self.edit(|d| d.set_art_scale(to)),
             (Dialog::RemoveGroup { id }, Choice::Confirm) => self.edits(|d| d.remove_group(&id)),
             (Dialog::AssetExists { id, .. }, Choice::Confirm) => self.send_asset(Some(id)),

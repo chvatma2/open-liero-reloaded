@@ -64,13 +64,27 @@ pub(super) struct ScriptDraft {
 
 impl ScriptDraft {
     /// Whether the text waits to be committed.
-    fn pending(&self) -> bool {
+    pub(super) fn pending(&self) -> bool {
         self.seen.is_some()
             && self.seen.as_deref() != Some(self.text.as_str())
             && self.sent.as_deref() != Some(self.text.as_str())
     }
 
-    fn issues(&mut self) -> &[ScriptIssue] {
+    /// The document's script it last followed.
+    pub(super) fn seen_text(&self) -> Option<String> {
+        self.seen.clone()
+    }
+
+    pub(super) fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Puts the cursor at `line`:`column` next.
+    pub(super) fn go_to(&mut self, line: u32, column: u32) {
+        self.goto = Some((line, column));
+    }
+
+    pub(super) fn issues(&mut self) -> &[ScriptIssue] {
         if self.checked.as_ref().is_none_or(|(t, _)| *t != self.text) {
             self.checked = Some((self.text.clone(), olr_script::check(&self.text)));
         }
@@ -80,7 +94,7 @@ impl ScriptDraft {
 
 /// A picker's width: egui's, at most the room left (its arrow and padding
 /// aside); its selected text is truncated to it.
-fn picker_width(ui: &Ui) -> f32 {
+pub(super) fn picker_width(ui: &Ui) -> f32 {
     let s = ui.spacing();
     let room = ui.available_width() - s.icon_width - 2.0 * s.button_padding.x - s.item_spacing.x;
     s.combo_width.min(room).max(s.interact_size.x)
@@ -108,8 +122,23 @@ pub(super) fn tabs(ui: &mut Ui, data: &mut EditorData) {
 /// pause or when the editor is not shown (once a frame, before the panels).
 pub(super) fn sync_script(ui: &Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
     let script = state.active_document().and_then(|d| d.parts_snap()).and_then(|p| p.script);
+    let shown = data.column == Column::Script;
+    sync_draft(ui, &mut data.script, script, shown, EditorAction::SetScript, out);
+}
+
+/// Follows the document's `script` into draft `d` unless it holds typing
+/// of its own, and commits `d` (by `commit`) after a pause in typing or
+/// when the editor is not focused (`shown`: it is drawn). Also the level
+/// tab's (issue #84).
+pub(super) fn sync_draft(
+    ui: &Ui,
+    d: &mut ScriptDraft,
+    script: Option<String>,
+    shown: bool,
+    commit: impl FnOnce(String) -> EditorAction,
+    out: &mut Vec<EditorAction>,
+) {
     let now = ui.input(|i| i.time);
-    let d = &mut data.script;
     let unchanged =
         d.text == d.seen.clone().unwrap_or_default() || d.sent.as_deref() == Some(d.text.as_str());
     if d.seen != script && unchanged {
@@ -122,10 +151,10 @@ pub(super) fn sync_script(ui: &Ui, state: &EditorState, data: &mut EditorData, o
         return;
     }
     if d.pending() {
-        let editing = data.column == Column::Script && ui.ctx().memory(|m| m.has_focus(script_id()));
+        let editing = shown && ui.ctx().memory(|m| m.has_focus(script_id()));
         if !editing || now - d.since >= SCRIPT_PAUSE {
             d.sent = Some(d.text.clone());
-            out.push(EditorAction::SetScript(d.text.clone()));
+            out.push(commit(d.text.clone()));
         } else {
             ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(SCRIPT_PAUSE));
         }
@@ -219,7 +248,7 @@ fn line(
 /// A value's editor by its kind: an `Int` a `DragValue` within `range`, a
 /// `Bool` a checkbox, a `Colour` a `#rrggbb` field, an `Animation` the
 /// look panel's animation editor. The new value when one is committed.
-fn value_field(
+pub(super) fn value_field(
     ui: &mut Ui,
     data: &mut EditorData,
     key: &str,
@@ -654,11 +683,21 @@ pub(super) fn script_editor(
         });
         return;
     }
+    script_text(ui, &mut data.script, out, EditorAction::SetScript);
+}
+
+/// Draft `d`'s editor: the line numbers (the first error's marked) and
+/// the text, filling the room; losing the keyboard commits by `commit`.
+pub(super) fn script_text(
+    ui: &mut Ui,
+    d: &mut ScriptDraft,
+    out: &mut Vec<EditorAction>,
+    commit: impl Fn(String) -> EditorAction,
+) {
     let now = ui.input(|i| i.time);
-    let error_line = data.script.issues().first().map(|i| i.line);
+    let error_line = d.issues().first().map(|i| i.line);
     egui::ScrollArea::both().id_salt("olr-editor-script").auto_shrink([false, false]).show(ui, |ui| {
         ui.horizontal_top(|ui| {
-            let d = &mut data.script;
             let lines = d.text.split('\n').count().max(1);
             let width = lines.to_string().len();
             let gutter: String = (1..=lines)
@@ -701,7 +740,7 @@ pub(super) fn script_editor(
             // Losing the keyboard commits (before the click that took it acts).
             if r.lost_focus() && d.pending() {
                 d.sent = Some(d.text.clone());
-                out.push(EditorAction::SetScript(d.text.clone()));
+                out.push(commit(d.text.clone()));
             }
             if let Some(at) = d.goto.take() {
                 let mut st = output.state;

@@ -2,7 +2,8 @@
 //! path (typed paths too: a Windows drive, a WSL path), Up, the entries,
 //! Choose and Cancel. A click selects an entry; Choose or a double click
 //! picks it: a file (or, to open a pack, a pack folder) is chosen, any
-//! other folder entered.
+//! other folder entered. Exporting a level (issue #84) saves: a File
+//! name field, Export, and "Replace <name>?" for an existing file.
 
 use egui::{Color32, Context, RichText};
 
@@ -63,14 +64,25 @@ pub(super) fn show(ctx: &Context, state: &EditorState, data: &mut EditorData, ou
             path: dir.display().to_string(),
             selected: None,
             preview: None,
+            name: std::mem::take(&mut draft.name),
+            name_from: draft.name_from.take(),
         };
     }
+    // The File name follows the state's when that changes (the default,
+    // the name a replace asks about); typing changes only the draft.
+    if b.file_name().map(str::to_owned) != draft.name_from {
+        draft.name_from = b.file_name().map(str::to_owned);
+        draft.name = draft.name_from.clone().unwrap_or_default();
+    }
+    let saving = b.file_name().is_some();
     let title = match b.purpose() {
         Purpose::ImportImage => "Import an image (PNG or JPEG)",
         Purpose::ImportTexture => "Import a texture (PNG or JPEG, at most 512 × 512)",
         Purpose::OpenPack => "Open a level pack",
         Purpose::ImportAsset => "Import an asset (a folder holding asset.ron)",
         Purpose::ImportSound => "Import a sound (WAV or Ogg)",
+        Purpose::ExportLevel => "Export the level (with its assets)",
+        Purpose::ImportLevel => "Import a level (an .olrlevel file)",
     };
     let modal = egui::Modal::new(egui::Id::new("olr-editor-browser")).show(ctx, |ui| {
         ui.set_width(620.0);
@@ -128,6 +140,9 @@ pub(super) fn show(ctx: &Context, state: &EditorState, data: &mut EditorData, ou
                             out.push(EditorAction::Pick(e.name.clone()));
                         } else if r.clicked() {
                             draft.selected = Some(e.name.clone());
+                            if saving && !e.is_dir {
+                                draft.name = e.name.clone();
+                            }
                             out.push(EditorAction::PreviewImage(e.name.clone()));
                         }
                     }
@@ -138,6 +153,10 @@ pub(super) fn show(ctx: &Context, state: &EditorState, data: &mut EditorData, ou
             }
         });
         ui.separator();
+        if saving {
+            save_row(ui, b, draft, out);
+            return;
+        }
         ui.horizontal(|ui| {
             let chosen = draft.selected.clone();
             if ui.add_enabled(chosen.is_some(), egui::Button::new(labels::CHOOSE)).clicked()
@@ -152,8 +171,52 @@ pub(super) fn show(ctx: &Context, state: &EditorState, data: &mut EditorData, ou
     });
     // Escape or the backdrop closes it, unless a button answered.
     if modal.should_close()
-        && !out.iter().any(|a| matches!(a, EditorAction::Pick(_) | EditorAction::CloseBrowser))
+        && !out.iter().any(|a| {
+            matches!(
+                a,
+                EditorAction::Pick(_)
+                    | EditorAction::CloseBrowser
+                    | EditorAction::ExportTo { .. }
+                    | EditorAction::CancelReplace
+            )
+        })
     {
         out.push(EditorAction::CloseBrowser);
     }
+}
+
+/// A save's File name, Export and Cancel, or its "Replace <name>?"
+/// (issue #84).
+fn save_row(
+    ui: &mut egui::Ui,
+    b: &crate::browser::Browser,
+    draft: &mut super::BrowserDraft,
+    out: &mut Vec<EditorAction>,
+) {
+    if let Some(name) = b.replacing() {
+        ui.label(format!("Replace {name}?"));
+        ui.horizontal(|ui| {
+            if ui.button(labels::REPLACE).clicked() {
+                out.push(EditorAction::ExportTo { name: name.to_owned(), replace: true });
+            }
+            if ui.button(labels::CANCEL).clicked() {
+                out.push(EditorAction::CancelReplace);
+            }
+        });
+        return;
+    }
+    ui.horizontal(|ui| {
+        let l = ui.label(labels::FILE_NAME);
+        let r = ui.add(egui::TextEdit::singleline(&mut draft.name).desired_width(360.0)).labelled_by(l.id);
+        let entered = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let named = !draft.name.trim().is_empty();
+        if (ui.add_enabled(named, egui::Button::new(labels::EXPORT)).clicked() || entered && named)
+            && !out.iter().any(|a| matches!(a, EditorAction::ExportTo { .. }))
+        {
+            out.push(EditorAction::ExportTo { name: draft.name.trim().to_owned(), replace: false });
+        }
+        if ui.button(labels::CANCEL).clicked() {
+            out.push(EditorAction::CloseBrowser);
+        }
+    });
 }

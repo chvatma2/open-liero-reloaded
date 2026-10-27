@@ -43,7 +43,7 @@ pub const GROUND_AT_THE_BOTTOM: &str = "the ground stays at the bottom: a copy u
 pub(crate) struct CopyCache {
     /// The library copies decoded, by key (never the ground: its layers are
     /// the items).
-    decoded: BTreeMap<String, Arc<Asset>>,
+    pub(crate) decoded: BTreeMap<String, Arc<Asset>>,
     /// Each copy laid, by id: the copy it was laid for (unlocked), the
     /// ground's generation it was laid from (a ground copy's), and the
     /// pieces.
@@ -655,6 +655,7 @@ impl Document {
         }
         p.file = to.file.clone();
         p.scripts = to.scripts.clone();
+        p.level_script = to.level_script.clone();
         for k in &changed_keys {
             self.copy_cache.decoded.remove(k);
         }
@@ -896,6 +897,7 @@ pub(crate) fn placement_edit(before: &PlacedSource, after: &PlacedSource) -> Edi
     let side = |a: &PlacedSource, b: &PlacedSource| PlacementSnap {
         file: a.file.clone(),
         scripts: a.scripts.clone(),
+        level_script: a.level_script.clone(),
         assets: a
             .assets
             .iter()

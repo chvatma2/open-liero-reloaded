@@ -23,6 +23,12 @@ pub enum Purpose {
     ImportAsset,
     /// A WAV or Ogg sound to add to the asset tab's asset (issue #80).
     ImportSound,
+    /// Where to write the level's export (issue #84): the browser's one
+    /// save purpose, with a File name field; folders and `.olrlevel` files
+    /// shown.
+    ExportLevel,
+    /// A `.olrlevel` file to import (issue #84).
+    ImportLevel,
 }
 
 impl Purpose {
@@ -52,6 +58,8 @@ pub const MAX_ENTRIES: usize = 10_000;
 const IMAGE_EXTENSIONS: [&str; 3] = ["png", "jpg", "jpeg"];
 /// The file extensions a sound's import offers (case aside, issue #80).
 const SOUND_EXTENSIONS: [&str; 2] = ["wav", "ogg"];
+/// A level export's (issue #84).
+const LEVEL_EXTENSIONS: [&str; 1] = [crate::notice::LEVEL_EXPORT_EXTENSION];
 
 /// The browser's state: its purpose, its directory, the entries of the
 /// last listing that succeeded (folders first, then by name, case aside)
@@ -65,6 +73,10 @@ pub struct Browser {
     /// The selected image's preview, and the file it was last asked for.
     preview: Option<Preview>,
     asked: Option<String>,
+    /// The save purpose's File name to start from (issue #84), and the
+    /// existing file whose replacing it asks about.
+    file_name: Option<String>,
+    replacing: Option<String>,
 }
 
 /// The selected image's preview for an import (the host made it small:
@@ -81,7 +93,52 @@ pub struct Preview {
 impl Browser {
     /// A browser at `dir`, empty until its first listing.
     pub(crate) fn new(purpose: Purpose, dir: PathBuf) -> Browser {
-        Browser { purpose, dir, entries: Vec::new(), message: None, preview: None, asked: None }
+        Browser {
+            purpose,
+            dir,
+            entries: Vec::new(),
+            message: None,
+            preview: None,
+            asked: None,
+            file_name: None,
+            replacing: None,
+        }
+    }
+
+    /// A browser choosing where to save, its File name starting at `name`
+    /// (issue #84).
+    pub(crate) fn new_save(purpose: Purpose, dir: PathBuf, name: String) -> Browser {
+        Browser { file_name: Some(name), ..Browser::new(purpose, dir) }
+    }
+
+    /// The File name a save purpose starts from.
+    pub fn file_name(&self) -> Option<&str> {
+        self.file_name.as_deref()
+    }
+
+    /// The file whose replacing the save asks about ("Replace <name>?").
+    pub fn replacing(&self) -> Option<&str> {
+        self.replacing.as_deref()
+    }
+
+    /// Whether the folder shown holds an entry `name` (case aside: a
+    /// Windows folder would take it for the same file).
+    pub(crate) fn has(&self, name: &str) -> bool {
+        self.entries.iter().any(|e| e.name.eq_ignore_ascii_case(name))
+    }
+
+    pub(crate) fn ask_replace(&mut self, name: String) {
+        self.file_name = Some(name.clone());
+        self.replacing = Some(name);
+    }
+
+    pub(crate) fn cancel_replace(&mut self) {
+        self.replacing = None;
+    }
+
+    /// Says `message` where a listing's failure shows.
+    pub(crate) fn say(&mut self, message: String) {
+        self.message = Some(message);
     }
 
     pub fn purpose(&self) -> Purpose {
@@ -131,6 +188,7 @@ impl Browser {
         let files: &[&str] = match self.purpose {
             p if p.images() => &IMAGE_EXTENSIONS,
             Purpose::ImportSound => &SOUND_EXTENSIONS,
+            Purpose::ExportLevel | Purpose::ImportLevel => &LEVEL_EXTENSIONS,
             _ => &[],
         };
         self.entries
@@ -164,6 +222,7 @@ impl Browser {
                 self.entries = entries;
                 self.preview = None;
                 self.asked = None;
+                self.replacing = None;
             }
             Err(why) => self.message = Some(why),
         }

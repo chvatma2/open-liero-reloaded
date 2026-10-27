@@ -87,6 +87,21 @@ pub(super) fn file_menu(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAc
         if ui.button(labels::SAVE).on_hover_text("Ctrl+S").clicked() {
             out.push(EditorAction::Save);
         }
+        // Issue #84: the level's library and its export and import.
+        if !asset {
+            let open = state.document().is_some();
+            let r = ui.add_enabled(open, egui::Button::new(labels::LIBRARY_CHANGES));
+            if r.on_hover_text("the level's assets your library changed or lacks").clicked() {
+                out.push(EditorAction::LibraryChanges);
+            }
+            let r = ui.add_enabled(open, egui::Button::new(labels::EXPORT_LEVEL));
+            if r.on_hover_text("one .olrlevel file: the level and its assets").clicked() {
+                out.push(EditorAction::ExportLevel);
+            }
+            if ui.button(labels::IMPORT_LEVEL).on_hover_text("a .olrlevel file into your levels").clicked() {
+                out.push(EditorAction::Browse(Purpose::ImportLevel));
+            }
+        }
         if ui.button(labels::CLOSE).clicked() {
             out.push(EditorAction::Close);
         }

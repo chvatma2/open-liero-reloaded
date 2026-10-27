@@ -131,6 +131,11 @@ impl Shell {
                 HostOut::Upload(_) | HostOut::FullUpload | HostOut::Distant(_) => canvas.push(o),
                 HostOut::Play(p) => self.play_edited(*p),
                 HostOut::Closed => self.close_editor(),
+                // Issue #84: an imported level is in the game's lists.
+                HostOut::ContentChanged => {
+                    self.list_content();
+                    self.refresh_editor_packs();
+                }
                 HostOut::Message(m) => {
                     log::warn!("editor: {m}");
                     if let Some(h) = &mut self.editor {
