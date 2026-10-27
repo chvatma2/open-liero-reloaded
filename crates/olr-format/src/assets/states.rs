@@ -535,8 +535,10 @@ pub(super) fn check_counts(file: &AssetFile) -> Result<(), FormatError> {
 }
 
 /// The rules of `file`'s states, exposed entries, sounds and health (its
-/// elements and groups checked before), each an error naming its path.
-pub(super) fn check_states(file: &AssetFile) -> Result<(), FormatError> {
+/// elements and groups checked before), each an error naming its path:
+/// metadata only, no file read (issue #77: the editor's asset tab runs
+/// them on every edit, refusing one that would break them).
+pub fn check_states(file: &AssetFile) -> Result<(), FormatError> {
     use PropertySource as P;
     let at = super::ASSET_FILE;
     let invalid = |path: &str, m: String| FormatError::invalid(at, path, m);
