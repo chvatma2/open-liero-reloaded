@@ -3,7 +3,9 @@
 //! arm64 under QEMU. Replays carry keys only, so the bots' own maths is not
 //! under test (bots think on the host only). `--bake` adds the digest of a
 //! composed level's bake (plan 14a): the image pipeline and the bake must
-//! give the same bytes everywhere too.
+//! give the same bytes everywhere too. `--content` given more than once
+//! layers the directories (issue #89: the live goldens play the fixture
+//! level, whose scripts run in Rhai on every platform).
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -13,9 +15,11 @@ use clap::Parser;
 #[derive(Parser)]
 #[command(name = "olr-detcheck", about = "Prints replays' checksum streams")]
 struct Args {
-    /// Imported content (packs).
+    /// Imported content (packs). Given more than once, the directories
+    /// are layered, the first over the next (issue #89: the live fixture
+    /// level over `content/packs`).
     #[arg(long, default_value = "content/packs")]
-    content: PathBuf,
+    content: Vec<PathBuf>,
     /// A line every this many ticks (tick 0 and the last tick always).
     #[arg(long, default_value_t = 10)]
     every: u32,
@@ -44,11 +48,14 @@ fn run(a: &Args) -> anyhow::Result<bool> {
     let mut ok = true;
     if a.replays.is_empty() {
         if let Some(pack) = &a.bake {
-            println!("bake {}", bake_digest(&a.content, pack)?);
+            println!("bake {}", bake_digest(base(a), pack)?);
         }
         return Ok(ok);
     }
-    let content = olr_content::Content::open(&a.content)?;
+    let content = match &a.content[..] {
+        [one] => olr_content::Content::open(one)?,
+        roots => olr_content::Content::open_layers(&roots.iter().map(PathBuf::as_path).collect::<Vec<_>>())?,
+    };
     for path in &a.replays {
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let replay = olr_replay::Replay::decode(&std::fs::read(path)?)
@@ -75,9 +82,14 @@ fn run(a: &Args) -> anyhow::Result<bool> {
         }
     }
     if let Some(pack) = &a.bake {
-        println!("bake {}", bake_digest(&a.content, pack)?);
+        println!("bake {}", bake_digest(base(a), pack)?);
     }
     Ok(ok)
+}
+
+/// The content the bake's theme comes from: the last `--content`.
+fn base(a: &Args) -> &std::path::Path {
+    a.content.last().map_or(std::path::Path::new("content/packs"), PathBuf::as_path)
 }
 
 /// SHA-256 over `material.png`, `front.png` and `back.png` as the bake of
