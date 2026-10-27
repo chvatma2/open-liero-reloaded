@@ -38,7 +38,7 @@ const WRAPPER_NAMES: [&str; 4] = ["__olr_run0", "__olr_run1", "__olr_run2", "__o
 /// The handlers a script may define, by name and arity.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-enum Handler {
+pub(crate) enum Handler {
     Start,
     Tick,
     Entered,
@@ -49,7 +49,7 @@ enum Handler {
     Arrived,
 }
 
-const HANDLERS: [(Handler, &str, usize); 8] = [
+pub(crate) const HANDLERS: [(Handler, &str, usize); 8] = [
     (Handler::Start, "start", 0),
     (Handler::Tick, "tick", 0),
     (Handler::Entered, "entered", 1),

@@ -3,7 +3,8 @@
 //! are Rhai text. Issue #80 checks their syntax ([`check`]); issue #88
 //! runs them: [`Scripts`] is the simulation's [`olr_sim::Director`], one
 //! engine and the compiled scripts behind an `Arc`, stateless, every bit
-//! of script state in the world. #89 adds the name checks beside this
+//! of script state in the world. Issue #89 adds the name checks
+//! ([`check_level`] against a [`ScriptNames`] table) beside the
 //! syntax-only `check`.
 //!
 //! Rhai is pinned (`=1.27.0`, [`RHAI_VERSION`]: its operation count is
@@ -18,6 +19,7 @@
 extern crate alloc;
 
 mod api;
+mod names;
 mod runtime;
 
 use alloc::string::{String, ToString};
@@ -25,6 +27,7 @@ use alloc::vec::Vec;
 
 use rhai::{Engine, OptimizationLevel};
 
+pub use names::{CopyNames, LevelIssue, RunScript, ScriptNames, check_level};
 pub use olr_sim::{MAX_LIVE_COMMANDS, MAX_MEMORY_BYTES, MAX_MEMORY_KEYS, MAX_SCRIPT_ERRORS, MAX_TIMERS};
 pub use runtime::{CompileError, Scripts, director};
 
@@ -105,7 +108,7 @@ pub fn engine() -> Engine {
 /// The syntax errors of script `text`: at most one (Rhai stops at the
 /// first), or a text longer than [`MAX_SCRIPT_BYTES`]. Compiles to an AST
 /// and runs nothing; which functions and names a script uses is not
-/// checked here (#89's checks).
+/// checked here ([`check_level`]).
 pub fn check(text: &str) -> Vec<ScriptIssue> {
     match compile_text(&engine(), text) {
         Ok(_) => Vec::new(),
