@@ -25,6 +25,7 @@ mod feel;
 mod hits;
 mod level;
 mod library;
+mod live_bots;
 mod look_preview;
 mod matches;
 mod material;

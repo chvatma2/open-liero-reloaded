@@ -1221,9 +1221,18 @@ scripts running) on the fixture levels laid over the content
 (`Content::open_layers`), each also `verify`d (determinism and the replay
 round trip) and its coverage asserting state changes, arrivals and no
 script error; accept a change with `cargo xtask bless-regression --reason
-"<why>"`, which records both directories) run in `check`; `tests/grid.rs`
-(both mods × 4 levels × 3 seeds, chaos and Deathmatch bots, every weapon and
-action kind covered; `long_bot_match_bounded`, 30 minutes) runs in `full`
+"<why>"`, which records both directories) run in `check`; so does
+issue #91's `tests/live_bots.rs` (`bots_rarely_die_crushed`: 4 Deathmatch
+bots, Classic, seed 101, 6000 ticks on the live fixture score kills and
+crushing makes at most a tenth of the deaths, a crush death being a kill
+whose last hit was a chunk right after its `Crushed` marker);
+`tests/grid.rs` (both mods × 4 levels × 3 seeds, chaos and Deathmatch
+bots, every weapon and action kind covered; issue #91's
+`live_levels_play_through_the_grid`: the same grid on `common::LIVE_LEVELS`
+(the live fixture; #97 adds the factory) through `common::live_content`
+(`fixtures/live/levels` laid over the content), each run `verify`d and
+within the 10 ms p99 tick, the weapons' coverage staying the imported
+levels'; `long_bot_match_bounded`, 30 minutes) runs in `full`
 (`OLR_FULL_TESTS=1`).
 `tests/transport.rs` (spec §9.4, real sockets on 127.0.0.1, every wait
 bounded; skipped without content): in `check`, two bot clients through

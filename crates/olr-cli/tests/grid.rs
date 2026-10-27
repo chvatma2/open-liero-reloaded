@@ -1,8 +1,9 @@
 //! The `cargo xtask full` tier (`OLR_FULL_TESTS`) of headless bot matches
 //! (spec §7.1): the grid of both mods × the 4 levels × 3 seeds with chaos
 //! and Deathmatch bots, whose coverage must include every weapon of both
-//! mods and every action kind they use; and a 30-minute match whose costs
-//! stay bounded (plan 6 Review Focus 5).
+//! mods and every action kind they use; issue #91's live levels
+//! (`LIVE_LEVELS`) in the same grid, verified and within the tick bound;
+//! and a 30-minute match whose costs stay bounded (plan 6 Review Focus 5).
 
 mod common;
 
@@ -39,15 +40,11 @@ fn run_all(c: &olr_content::Content, specs: &[MatchSpec]) -> Vec<(MatchRun, Opti
     runs
 }
 
-#[test]
-fn coverage_report_lists_every_weapon() {
-    if !full_tier() {
-        return;
-    }
-    let Some(c) = content() else { return };
+/// Both mods × `levels` × 3 seeds, chaos and Deathmatch bots.
+fn grid(levels: &[&str]) -> Vec<MatchSpec> {
     let mut specs = Vec::new();
     for m in MODS {
-        for level in LEVELS {
+        for &level in levels {
             for seed in [101, 202, 303] {
                 for personality in [Personality::Chaos, Personality::Deathmatch] {
                     specs.push(MatchSpec {
@@ -61,7 +58,36 @@ fn coverage_report_lists_every_weapon() {
             }
         }
     }
-    let runs = run_all(&c, &specs);
+    specs
+}
+
+/// Issue #91: the grid on the levels with live parts (laid over the
+/// content), each run verified (determinism and the replay) and within
+/// the tick bound; the weapons' coverage stays the imported levels'.
+#[test]
+fn live_levels_play_through_the_grid() {
+    if !full_tier() {
+        return;
+    }
+    let Some(c) = live_content() else { return };
+    let mut problems = Vec::new();
+    for (run, verified) in run_all(&c, &grid(&LIVE_LEVELS)) {
+        eprintln!("{}", run.summary());
+        problems.extend(verified);
+        if run.p99_us() > 10_000.0 {
+            problems.push(format!("{}: p99 tick {:.0} µs over 10 ms", run.spec.stem(), run.p99_us()));
+        }
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+#[test]
+fn coverage_report_lists_every_weapon() {
+    if !full_tier() {
+        return;
+    }
+    let Some(c) = content() else { return };
+    let runs = run_all(&c, &grid(&LEVELS));
     let mut by_mod: BTreeMap<String, Coverage> = BTreeMap::new();
     let mut problems = Vec::new();
     for (run, verified) in &runs {

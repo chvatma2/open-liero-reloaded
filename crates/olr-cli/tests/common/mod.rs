@@ -13,6 +13,23 @@ pub const MODS: [&str; 2] = [CLASSIC, MW];
 pub const LEVELS: [&str; 4] =
     ["olx-level-castlestrike", "olx-level-dirt-level", "olx-level-fossilfacility", "olx-level-liero-factory"];
 
+/// Issue #91: the levels with live parts the bot grid plays, from
+/// `fixtures/live/levels` laid over the content ([`live_content`]).
+pub const LIVE_LEVELS: [&str; 1] = ["olr-level-live-test"];
+
+/// The live fixture levels' directory (`fixtures/live/levels`).
+pub fn live_levels_dir() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/live/levels")
+}
+
+/// The imported content with the live fixture levels laid over it, or
+/// `None` (with a notice) without the content.
+pub fn live_content() -> Option<Content> {
+    let dir = content_dir()?;
+    let live = live_levels_dir();
+    Some(Content::open_layers(&[live.as_path(), Path::new(&dir)]).expect("the layered content"))
+}
+
 /// The content directory, or `None` (with a notice) without it.
 pub fn content_dir() -> Option<String> {
     let Some(dir) = std::env::var("OLR_CONTENT_DIR").ok().filter(|d| Path::new(d).is_dir()) else {
