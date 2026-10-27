@@ -41,10 +41,10 @@ fn the_fingerprint_hashes_the_simulation_and_session_sources() {
 }
 
 /// Issue #86: the state transfer's live copies changed every state's
-/// encoding; issue #88: their script state.
+/// encoding; issue #88: their script state; issue #89: their motions.
 #[test]
-fn the_protocol_version_is_8() {
-    assert_eq!(olr_proto::PROTOCOL_VERSION, 8);
+fn the_protocol_version_is_9() {
+    assert_eq!(olr_proto::PROTOCOL_VERSION, 9);
 }
 
 /// Issue #88: the scripts' runtime is in the fingerprint, and with it the
