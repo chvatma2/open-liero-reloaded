@@ -984,7 +984,9 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `fits`; the glow beam and haze maps when they changed, and any upload
   over a level with beams is a new `beams_generation`, so a directional
   element's strength, group or art re-derives the beams:
-  `a_beam_strength_edit_derives_the_beams_again`). `Canvas::lit(doc)` is true for a look, glow or
+  `a_beam_strength_edit_derives_the_beams_again`). The look is the
+  document's `canvas_look()` (issue #79: an asset's shown state may set
+  its glow groups' colour or intensity). `Canvas::lit(doc)` is true for a look, glow or
   clear solids, never in the material view; the app sets the renderer's
   lighting to it, uploading the canvas whole on a change.
   **Distant layers** (issue #11): a see-through bake makes the map

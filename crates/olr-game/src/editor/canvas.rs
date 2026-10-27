@@ -187,7 +187,8 @@ impl Canvas {
     /// renderer's lighting on and uploads the map whole when it changes.
     pub fn lit(&self, doc: &Document) -> bool {
         let l = doc.level();
-        self.showing == CanvasView::Bake && (l.look.is_some() || l.glow.is_some() || l.clear.is_some())
+        self.showing == CanvasView::Bake
+            && (doc.canvas_look().is_some() || l.glow.is_some() || l.clear.is_some())
     }
 
     /// The frame's look of `doc` at clock `t_ms` (the editor's) in `mode`;
@@ -197,10 +198,11 @@ impl Canvas {
         if !self.lit(doc) {
             return None;
         }
-        let l = doc.level();
-        if self.look.as_ref().is_none_or(|(_, look)| *look != l.look) {
-            let compiled = olr_format::levels::compile_look(l).ok().flatten();
-            self.look = Some((compiled, l.look.clone()));
+        // Issue #79: an asset's shown state may set its glow groups.
+        let look = doc.canvas_look();
+        if self.look.as_ref().is_none_or(|(_, l)| l.as_ref() != look) {
+            let compiled = look.and_then(|l| olr_format::look::compile_look_source(l, "level.ron").ok());
+            self.look = Some((compiled, look.cloned()));
         }
         let level = self.look.as_ref().and_then(|(c, ..)| c.as_ref());
         self.frame.mode = mode;
