@@ -179,6 +179,17 @@ impl AssetSource {
     }
 }
 
+/// An asset folder's name in a library (`content/assets/<id>`, the user's
+/// `<data>/assets/<id>`): 1 to 64 bytes of `[a-z0-9_-]`, not starting with
+/// `-` or `_` (portable everywhere, never hidden). A level's copy of a
+/// library asset names its folder by it (issue #73).
+pub fn valid_asset_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && !id.starts_with(['-', '_'])
+        && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-'))
+}
+
 /// A sound's path in an asset folder: `sounds/<name>`.
 pub fn sound_file(name: &str) -> String {
     format!("{SOUNDS_DIR}/{name}")

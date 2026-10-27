@@ -1402,14 +1402,9 @@ pub fn place_in_pack(
 /// The most assets a user's library holds (as `textures::MAX_USER_TEXTURES`).
 pub const MAX_USER_ASSETS: usize = 256;
 
-/// An asset folder's name in a library: 1 to 64 bytes of `[a-z0-9_-]`,
-/// not starting with `-` or `_` (portable everywhere, never hidden).
-pub fn valid_asset_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 64
-        && !id.starts_with(['-', '_'])
-        && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-'))
-}
+/// An asset folder's name in a library (the format's, issue #73: a placed
+/// copy's origin names one).
+pub use olr_format::assets::valid_asset_id;
 
 /// The asset folders of library `dir` (valid ids holding `asset.ron`),
 /// sorted; none when it cannot be read.
