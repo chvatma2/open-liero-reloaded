@@ -509,7 +509,7 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     `harness_at`), `ctrl_g_groups_and_ctrl_shift_g_ungroups`,
     `a_folders_panel_renames_it`).
 - **The asset tab (issues #77, #78)** (STATUS.md "Asset tab (issues #77,
-  #78)"; the design's "The asset tab", call 18):
+  #78, #79)"; the design's "The asset tab", call 18):
   - **Two sessions**: the level tab's and the asset tab's (`DocTab`,
     `state::Session`: document, history, unsaved mark, status,
     selection, saves, tool and its options, view, pixel selection, panel
@@ -547,10 +547,9 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     the status bar says `BUILT_IN_NOTE`.
   - **Refusals**: `update` notes the history's `pushes()` before an
     asset tab action; a new step is checked (`Document::asset_refusal`:
-    no distant layer, raster or spawn; a layer a state owns a picture of
-    keeps its box and picture shape and the asset its size, "state …
-    has its own picture of …: edit it in the states panel (issue #79)";
-    each exposed entry's and state value's layer still offering it,
+    no distant layer, raster or spawn; a state's own picture that no
+    longer fits its layer (`misfit_picture`, a safety net: #79 carries
+    them along); each exposed entry's and state value's layer still offering it,
     "lamps is used by exposed lamp_colour: unexpose it first"; then
     `olr_format::assets::check_states`) and a refused one reverted and
     forgotten (`guard`, `History::retract`), the unsaved mark, selection
@@ -579,8 +578,8 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     then the chosen tool's options (`toolbar::options_panel`: the options
     bar's functions in a column, a group of toggles in wrapped rows, a
     picker under its label at most the panel's width); on the right the
-    layers panel (`olr-editor-asset-layers`, 37 %, 240-400 points): room
-    for issue #79's states, `LAYERS` (the tree, `elements::tree`: no
+    layers panel (`olr-editor-asset-layers`, 37 %, 240-400 points): issue
+    #79's states panel (below), `LAYERS` (the tree, `elements::tree`: no
     scroll area of its own, names cut to the room), the selection's
     properties or the asset's, the previews; the status line; the
     canvas. Narrow, one side panel shows, 55 % of the width (235 points
@@ -597,8 +596,8 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     full bright) and dark (`PREVIEW_DARK`, under `preview_look`), each
     at game size (3 points a world pixel, shrunk to the panel) and
     enlarged (whole points a pixel fitting the panel, at most 12 and 480
-    points high), from `olr_edit::asset::preview(&doc.to_asset(), dark)`
-    on the CPU; made again only when the document's
+    points high), from `olr_edit::asset::preview_state(&doc.to_asset(),
+    shown, dark)` on the CPU (#79: the shown state, fully posed); made again only when the document's
     `bake_generation()` (bumped by every `rebake` and `apply`) moved and
     no drag is in progress (`EditorState::dragging`), kept as textures
     by (`shown_generation`, bake generation) in `EditorData::previews`
@@ -610,8 +609,65 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     `olr-ui/tests/fits.rs`' sizes and 1400 × 860 under `olr_ui::theme`,
     both switch positions below `NARROW`, the asset, a layer and a glass
     layer: every widget across the window and within its panel, every
-    enabled control focused and scrolled whole into view) and
-    `the_options_are_under_the_tools`.
+    enabled control focused and scrolled whole into view; #79: an asset
+    of 32 states) and `the_options_are_under_the_tools`.
+- **States in the asset tab (issue #79)** (STATUS.md "Asset tab (issues
+  #77, #78, #79)"; `state_ops.rs`, `ui/states.rs`):
+  - **The swap form**: `AssetParts::states` (`StateEntry`: name, `own`
+    pictures by layer id as `Arc<OwnPicture>`, values, sounds), `start`,
+    `shown`. While a state other than the start is shown, the document's
+    items and glow masks hold its own pictures and its `own` the start's
+    (`swap_shown`, an involution); `show_state(to)` swaps back, sets
+    `shown`, swaps again. `to_asset` swaps back on a copy, so saving and
+    the previews see the stored asset. Queries: `states()`,
+    `start_state()`, `shown_state()`, `in_state()`, `shown_owns(id)`,
+    `owners(id)`.
+  - **Edits**: `Edit::Show { before, after }` (forward shows `after`,
+    backward `before`) and `Edit::States` (`StatesSnap`: the entries,
+    start and shown; own pictures counted once by address in
+    `MAX_BYTES`). `EditorState::update` brackets every asset-tab step
+    with `[Show{k0,k0}] … [Show{k1,k1}]` (`carry_states`, through
+    `History::amend_last`), so undo and redo apply in the state the step
+    was made in and restore the shown state. `Whole::states` carries them
+    through a resize (`Document::resize` re-lays own pictures and masks).
+  - **Operations** (`EditorAction::SelectState` (no step, kept per
+    asset), `AddState` ("State N", `new_state_name`; selected, its name
+    field focused: `state_named()`), `DuplicateState` (`copy_name`),
+    `MakeStart`, `RemoveState` (asks `Dialog::RemoveState`; refused on
+    the start, `START_STAYS`, and health's state, `HEALTH_ENDS_HERE`:
+    `remove_refusal`), `RenameState`, `FollowStart(id)`): each through
+    `restate`, which shows the start, runs `olr_edit::asset`'s operation
+    on `to_asset()`, diffs it into Layer and GlowMask edits plus one
+    States edit, and shows the new state. Add and Duplicate stop at
+    `MAX_STATES` (`add_refusal`).
+  - **Painting per state**: `begin_stroke` returns the edits to record
+    first (`own_for_stroke`: the layer made the shown state's own, then
+    `convert_for_stroke`); the pointer drops them when the stroke changes
+    nothing. The Glow brush owns through `own_for_glow`; Copy, Cut and
+    Paste of pixels act on the shown pictures. Refused in a non-start
+    state: an image stroke (`IMAGE_IN_STATE`), its Glow brush
+    (`IMAGE_GLOW_IN_STATE`), the Surface brush (`SURFACE_IN_STATE`).
+  - **Carried along** (`Document::carry_states`, after each step):
+    removed layers' own pictures and the state values naming them are
+    forgotten (the status says "removed with it: …"), own pictures mixed
+    or unmixed to the layer, own masks dropped with the layer's. Merge
+    down and Split refuse an owned layer (`refuse_owned`).
+  - **Canvas**: `rebake` poses the shown state in place
+    (`olr_edit::asset::posed_in_place`: no X, Y, offsets or Facing) for
+    visibility, opacity and the glow groups (`canvas_look()`, which the
+    host's lit canvas compiles).
+  - **The panel** (`ui/states.rs`, top of the layers panel): each state
+    as a button of its picture posed light (at most `PICTURE_HEIGHT`, 48
+    points), its name under it (`labels::state(name, start)`, ★ on the
+    start); `ADD_STATE`, `DUPLICATE_STATE`, `MAKE_START`, `REMOVE_STATE`
+    (disabled with the reason as hover text); `STATE_NAME`. Pictures are
+    `StatePictures`, remade only for states whose version moved
+    (`AssetParts::versions`, bumped by `Document::touch`; `made()` for
+    tests). The layer list's dot `labels::owned(name)` marks layers the
+    shown state owns; their properties offer `FOLLOW_START`.
+  - Tests: `tests/states.rs`, `flows.rs`'s
+    `make_an_off_state_and_paint_it`, `fits.rs`' 32 states, and
+    `history.rs`' `every_state_operation_undoes_to_the_same_asset`.
 - **Tests** (`tests/`, one binary): `asset.rs` (issue #9: save, the name
   clash, the rectangle unclipped and hidden layers left out, placing as one
   step with lighting added, join and add, Remove, Import, and the

@@ -6755,14 +6755,15 @@ level library|export|import`. The level tab's notice and buttons are
   editable" is met by the export archive, the way levels are shared for
   editing.
 
-## Asset tab (issues #77, #78)
+## Asset tab (issues #77, #78, #79)
 
 No OLX counterpart. The design
 `docs/superpowers/specs/2026-10-26-asset-based-levels-design.md` ("The
 asset tab", call 18); the code is `olr-editor`'s `asset_tab.rs` and
 `state.rs`, laid out in `ui/asset.rs` and `ui/previews.rs`. Part 1
 (#77) is the second document on today's layout; #78 moves it to the
-skin editor's layout, #79 adds the states panel.
+skin editor's layout, #79 adds the states panel (`state_ops.rs`,
+`ui/states.rs`).
 
 - **Two tabs inside the level editor, not a second editor.** One session
   holds the level and an asset (#81 opens the level's ground in the asset
@@ -6798,23 +6799,52 @@ skin editor's layout, #79 adds the states panel.
   level's recovery copy as before; the asset tab's unsaved work is not
   recovered after a crash. Close asks once for each tab with unsaved
   changes, the asset first.
-- **Edits that would break states or exposure are refused, until #79 and
-  #80 edit them.** An asset made by #71's commands keeps its states,
-  exposed properties, sounds, script and health through an open and a
-  save. Each step the asset tab records is checked against them
-  (`Document::asset_refusal`: the exposed entries' and states' values'
-  layers still offering the property, then `olr_format::assets::
-  check_states`, metadata only); a refused step is reverted and
-  forgotten at once, so the document, the unsaved mark and the selection
-  are as they were and the status line names the entry ("lamps is used
-  by exposed lamp_colour: unexpose it first"). This applies the edit and
-  takes it back rather than editing a scratch copy, which gives the same
-  result without copying the document; a refused edit does clear the redo
-  list, as any edit does. A layer a state owns a picture of keeps its
-  place, size and kind, and the asset its size ("state Broken has its own
-  picture of lamps: edit it in the states panel (issue #79)"): #79 lifts
-  this by carrying the states' pictures along. An asset without states
-  and exposure (every built-in one) is never refused.
+- **Edits that would break exposure are refused, until #80 edits it.**
+  An asset made by #71's commands keeps its states, exposed properties,
+  sounds, script and health through an open and a save. Each step the
+  asset tab records is checked against them (`Document::asset_refusal`:
+  the exposed entries' and states' values' layers still offering the
+  property, then `olr_format::assets::check_states`, metadata only); a
+  refused step is reverted and forgotten at once, so the document, the
+  unsaved mark and the selection are as they were and the status line
+  names the entry ("lamps is used by exposed lamp_colour: unexpose it
+  first"). This applies the edit and takes it back rather than editing a
+  scratch copy, which gives the same result without copying the
+  document; a refused edit does clear the redo list, as any edit does.
+  An asset without states and exposure (every built-in one) is never
+  refused. #77 also refused moving or resizing a layer a state owns a
+  picture of; #79 lifted that (below).
+- **States edit pictures in place (#79).** The states panel shows one
+  state at a time on the canvas: while a state other than the start is
+  shown, the document's layers hold its own pictures (the start's wait
+  in its place), so every tool paints it unchanged and undo, redo and
+  saving swap back. Each step is bracketed by the state it was made in
+  (`Edit::Show`), so undoing it shows that state again; the states
+  themselves are one `Edit::States` (their own pictures shared, counted
+  once). A stroke, fill or Glow-brush stroke on a drawn layer the state
+  does not own makes it the state's own in the same step; a stroke that
+  changes nothing does not.
+- **Images and surfaces are the same in every state.** A state's own
+  picture is a drawn layer's (`olr_edit::asset`'s `OwnPicture`), so in a
+  state other than the start an image's stroke and Glow brush are
+  refused (merge it into a layer first, or paint its glow in the start),
+  and the Surface brush paints in the starting state only (an asset's
+  surface maps are not per state).
+- **The canvas ignores position values.** The canvas draws the shown
+  state as `olr_edit::asset::posed` gives it (its pictures, visibility,
+  opacity and glow values) but at the layers' own places: X, Y, the
+  offsets and Facing are left out (`posed_in_place`), since tools paint
+  at the layer's box. The previews show the state fully posed.
+- **Layer edits carry the states along.** Moving or resizing a layer and
+  resizing the asset re-lay the states' own pictures; turning a layer
+  mixed or plain converts them; removing a layer forgets the states'
+  pictures of it and the state values naming it (the status line lists
+  them; undo restores them), while an exposed entry naming it still
+  refuses. Merge down and Split are refused on a layer a state owns
+  ("Alarm paints screens itself: make it follow the start first"):
+  splitting or merging each state's picture would need a choice of
+  which state's layers survive. The starting state and health's state
+  cannot be removed.
 - **The skin editor's layout, fitted at every size (#78).** The asset tab
   is laid out as the skin editor (the session bar, the tools on the left,
   the canvas in the middle, the layers, properties and previews on the
