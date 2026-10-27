@@ -195,7 +195,7 @@ fn copy_light(
     let patches = drawn
         .iter()
         .map(|p| {
-            let s = ((p.art.len() / 4 / p.size.1.max(1) as usize) as u32).checked_div(p.size.0).unwrap_or(0);
+            let s = art_scale(p);
             match (&p.beam, &p.glow, &p.groups) {
                 (Some(beams), Some(glow), Some(groups)) => {
                     let layer = BeamLayer { world: p.size, art_scale: s, groups, glow, art: &p.art, beams };
@@ -206,6 +206,13 @@ fn copy_light(
         })
         .collect();
     CopyLight { id: c.id.clone(), groups: groups.to_vec(), props, animations, patches }
+}
+
+/// The art pixels per world pixel of picture `p` (its art's length over
+/// its size), 0 when none fits.
+fn art_scale(p: &LivePicture) -> u32 {
+    let world = u64::from(p.size.0) * u64::from(p.size.1) * 4;
+    (1..=16u32).find(|&s| world * u64::from(s) * u64::from(s) == p.art.len() as u64).unwrap_or(0)
 }
 
 /// Pushes every live copy's glow groups and beams into `look` as the
@@ -410,4 +417,22 @@ pub fn live_level(src: &LiveSource) -> LiveLevel {
         .collect();
     let sounds = u16::try_from(sounds.len()).unwrap_or(u16::MAX);
     LiveLevel::new(copies, src.scripts.clone(), *level_script, sounds)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A picture's art scale from its art's length: 1, 2 or 3; none for a
+    /// misfit.
+    #[test]
+    fn a_pictures_art_scale_is_its_arts_side_per_pixel() {
+        let pic =
+            |size: (u32, u32), n: usize| LivePicture { size, art: vec![0; n], ..LivePicture::default() };
+        assert_eq!(art_scale(&pic((3, 2), 3 * 2 * 4)), 1);
+        assert_eq!(art_scale(&pic((3, 2), 6 * 4 * 4)), 2);
+        assert_eq!(art_scale(&pic((1, 5), 3 * 15 * 4)), 3);
+        assert_eq!(art_scale(&pic((3, 2), 7)), 0);
+        assert_eq!(art_scale(&pic((0, 2), 0)), 1, "an empty picture fits any; it has no patch");
+    }
 }
