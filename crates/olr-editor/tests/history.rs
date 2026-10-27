@@ -500,8 +500,10 @@ fn a_forged_layer_swap_is_refused() {
 /// was made in).
 fn operate_states(s: &mut olr_editor::EditorState, (kind, a, b): (u8, i32, i32)) {
     use crate::common::run;
+    use olr_edit::asset::ExposedChange;
     use olr_editor::tools::{PointerKind, Tool};
     use olr_editor::{Choice, EditorAction as A, Selection};
+    use olr_format::assets::{HealthSource, ValueKind, ValueSource as V};
     let n = s.active_document().unwrap().states().len();
     let layers: Vec<String> =
         s.active_document().unwrap().items().iter().map(|i| i.element.id.clone()).collect();
@@ -553,6 +555,82 @@ fn operate_states(s: &mut olr_editor::EditorState, (kind, a, b): (u8, i32, i32))
             run(s, A::PaintMaterial(None));
         }
         15 => drop(run(s, A::MergeDown(layer.clone()))),
+        // Issue #80: values, exposure, health, sounds and the script.
+        16 | 17 => {
+            let offers = s.active_document().unwrap().offers();
+            let Some(o) = offers.get(a.unsigned_abs() as usize % offers.len().max(1)).cloned() else {
+                return;
+            };
+            let value = match o.kind {
+                ValueKind::Int => {
+                    let (lo, hi) = o.range.unwrap_or((0, 0));
+                    V::Int(lo + (b.unsigned_abs() as i32 % (hi - lo + 1).max(1)))
+                }
+                ValueKind::Bool => V::Bool(b & 1 == 0),
+                ValueKind::Colour => V::Colour(olr_format::Colour(Rgba::rgb(a as u8, b as u8, 9))),
+                ValueKind::Animation => V::Animation(olr_format::look::AnimationSource::Steady),
+            };
+            if kind == 16 {
+                run(s, A::SetValue { property: o.property, value: (b % 3 != 0).then_some(value) });
+            } else {
+                run(s, A::Expose { property: o.property, default: Some(value) });
+            }
+        }
+        18 => {
+            let names: Vec<String> = s
+                .active_document()
+                .unwrap()
+                .parts_snap()
+                .unwrap()
+                .exposed
+                .iter()
+                .map(|x| x.name.clone())
+                .collect();
+            if let Some(n) = names.get(a.unsigned_abs() as usize % names.len().max(1)) {
+                match b.rem_euclid(3) {
+                    0 => {
+                        run(s, A::Unexpose(n.clone()));
+                        run(s, A::Choose(Choice::Confirm));
+                    }
+                    1 => drop(run(
+                        s,
+                        A::RenameExposed { name: n.clone(), new: format!("e{}", b.unsigned_abs()) },
+                    )),
+                    _ => drop(run(s, A::SetExposed { name: n.clone(), change: ExposedChange::Max(b) })),
+                }
+            }
+        }
+        19 => drop(run(s, A::Destructible(b & 1 == 0))),
+        20 => {
+            let states: Vec<String> =
+                s.active_document().unwrap().states().iter().map(|st| st.name.clone()).collect();
+            let at_zero = states[b.unsigned_abs() as usize % states.len()].clone();
+            run(s, A::SetHealth(HealthSource { points: 1 + a.unsigned_abs(), at_zero }));
+        }
+        21 => drop(run(
+            s,
+            A::SoundRead {
+                name: format!("s{}.wav", a.unsigned_abs() % 3),
+                bytes: crate::properties::wav(10 + b.unsigned_abs()),
+            },
+        )),
+        22 => drop(run(s, A::RemoveSound(format!("s{}.wav", a.unsigned_abs() % 3)))),
+        23 => {
+            let pick = Some((b % 2 != 0).then(|| format!("s{}.wav", a.unsigned_abs() % 3)));
+            run(
+                s,
+                if a & 1 == 0 {
+                    A::StateSounds { loop_sound: pick, enter_sound: None }
+                } else {
+                    A::StateSounds { loop_sound: None, enter_sound: pick }
+                },
+            );
+        }
+        24 => drop(run(s, A::SetScript(format!("let x = {a}{};", if b & 1 == 0 { "" } else { " +" })))),
+        25 => {
+            run(s, A::RemoveScript);
+            run(s, A::Choose(Choice::Confirm));
+        }
         _ => drop(run(s, A::Undo)),
     }
 }
@@ -561,7 +639,7 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(24))]
     #[test]
     fn every_state_operation_undoes_to_the_same_asset(
-        ops in prop::collection::vec((0u8..17, -20i32..40, -20i32..40), 1..=8),
+        ops in prop::collection::vec((0u8..27, -20i32..40, -20i32..40), 1..=8),
     ) {
         use olr_editor::EditorAction as A;
         let Some((_tmp, mut s, _)) = crate::states::editing(&crate::states::alarm_lamp()) else { return Ok(()) };

@@ -16,7 +16,9 @@
 //! the window whole and not clipped. egui's scroll areas add no
 //! accessibility node and a scrolled-out widget reports its unclipped
 //! bounds, so only the focused control's rectangle is checked down the
-//! window.
+//! window. The script editor (issue #80) is a text area as large as its
+//! script (its lines unwrapped), in the central panel's scroll area: only
+//! its top-left corner is checked.
 
 use egui::accesskit::{Action, NodeId, Role};
 use egui::containers::panel::PanelState;
@@ -95,6 +97,14 @@ struct Widget {
     rect: Rect,
     id: NodeId,
     focusable: bool,
+    /// A text area larger than the room may be (the script editor).
+    area: bool,
+}
+
+/// Of a widget's rectangle, what has to fit: all of it, or a text area's
+/// top-left corner.
+fn fitting(r: Rect, area: bool) -> Rect {
+    if area { Rect::from_min_size(r.min, vec2(1.0, 1.0)) } else { r }
 }
 
 fn widgets(h: &Harness<'static, App>) -> Vec<Widget> {
@@ -120,7 +130,9 @@ fn widgets(h: &Harness<'static, App>) -> Vec<Widget> {
         let rect =
             Rect::from_min_max(egui::pos2(b.x0 as f32, b.y0 as f32), egui::pos2(b.x1 as f32, b.y1 as f32));
         let focusable = a.data().supports_action(Action::Focus) && !a.is_disabled();
-        out.push(Widget { name, rect, id: a.locate().0, focusable });
+        let area = a.role() == Role::TextInput && a.label().as_deref() == Some(labels::SCRIPT_EDITOR);
+        let rect = fitting(rect, area);
+        out.push(Widget { name, rect, id: a.locate().0, focusable, area });
     }
     out
 }
@@ -182,9 +194,10 @@ fn misfits(h: &mut Harness<'static, App>, panels: &[&str]) -> Vec<String> {
         if again.rect != r.rect {
             bad.push(format!("{} at {:?} keeps moving (to {:?})", w.name, r.rect, again.rect));
         }
-        if !window.expand(0.5).contains_rect(r.rect) {
+        let rect = fitting(r.rect, w.area);
+        if !window.expand(0.5).contains_rect(rect) {
             bad.push(format!("{} at {:?} cannot be scrolled into the window {window:?}", w.name, r.rect));
-        } else if !r.interact_rect.expand(0.5).contains_rect(r.rect) {
+        } else if !r.interact_rect.expand(0.5).contains_rect(rect) {
             bad.push(format!("{} at {:?} is clipped to {:?}", w.name, r.rect, r.interact_rect));
         }
         h.ctx.memory_mut(|m| m.surrender_focus(id));
@@ -198,6 +211,35 @@ fn misfits(h: &mut Harness<'static, App>, panels: &[&str]) -> Vec<String> {
 pub fn switch(h: &mut Harness<'static, App>, label: &str) {
     h.get_by_role_and_label(Role::Button, label).click_accesskit();
     settle(h);
+}
+
+/// Issue #80: the lamp's Offset X and health exposed, the second state's
+/// own glow, health, a sound looping in it and a script with an error.
+fn parts(s: &mut EditorState) {
+    use olr_format::assets::{PropertySource as P, ValueSource as V};
+    run(s, A::Expose { property: P::OffsetX("lamps".into()), default: None });
+    run(s, A::Destructible(true));
+    run(s, A::Expose { property: P::Health, default: None });
+    run(
+        s,
+        A::SoundRead {
+            name: "a-rather-long-sound-name-to-fit.wav".into(),
+            bytes: crate::properties::wav(200),
+        },
+    );
+    run(s, A::SelectState(1));
+    run(s, A::SetValue { property: P::GlowStrength("lamps".into()), value: Some(V::Int(20)) });
+    run(
+        s,
+        A::StateSounds {
+            loop_sound: Some(Some("a-rather-long-sound-name-to-fit.wav".into())),
+            enter_sound: None,
+        },
+    );
+    run(s, A::SetScript("fn alarm() {\n    let x = ;\n}\n".into()));
+    let p = s.active_document().unwrap().parts_snap().unwrap();
+    assert_eq!((p.exposed.len(), p.sounds.len()), (2, 1), "{:?}", s.status().message);
+    assert!(p.script.is_some() && p.health.is_some());
 }
 
 #[test]
@@ -216,14 +258,20 @@ fn the_asset_tab_fits() {
         let lamps = || Selection::Element("lamps".into());
         // Issue #79: an asset of 32 states (`MAX_STATES`), every state's
         // button reachable without a horizontal scroll.
+        // Issue #80: each of the right column's tabs, on an asset with an
+        // exposed property, a state's value, health, a sound and a broken
+        // script (the script editor open in the middle).
         let setups = [
-            ("the asset, Draw", Selection::None, Tool::Brush, false, 1),
-            ("a layer, the Glow brush", lamps(), Tool::Glow, false, 1),
-            ("a glass layer, the Surface brush", lamps(), Tool::Surface, true, 1),
-            ("an asset of 32 states", Selection::None, Tool::Brush, false, 32),
+            ("the asset, Draw", Selection::None, Tool::Brush, false, 1, None),
+            ("a layer, the Glow brush", lamps(), Tool::Glow, false, 1, None),
+            ("a glass layer, the Surface brush", lamps(), Tool::Surface, true, 1, None),
+            ("an asset of 32 states", Selection::None, Tool::Brush, false, 32, None),
+            ("the Properties tab", Selection::None, Tool::Brush, true, 2, Some(labels::PROPERTIES)),
+            ("the Sounds tab", Selection::None, Tool::Brush, false, 2, Some(labels::SOUNDS)),
+            ("the Script tab", Selection::None, Tool::Brush, false, 2, Some(labels::SCRIPT)),
         ];
         for &side in sides {
-            for (what, selection, tool, glass, states) in &setups {
+            for (what, selection, tool, glass, states, column) in &setups {
                 cases += 1;
                 let (_tmp, mut s) = lamp_open().unwrap();
                 for _ in 1..*states {
@@ -235,6 +283,9 @@ fn the_asset_tab_fits() {
                     run(&mut s, A::Set("lamps".into(), Property::Glass(Some(g))));
                     assert!(s.active_dirty(), "made glass");
                 }
+                if column.is_some() {
+                    parts(&mut s);
+                }
                 run(&mut s, A::Select(selection.clone()));
                 run(&mut s, A::Tool(*tool));
                 assert_eq!((s.selection(), s.tool()), (selection, *tool));
@@ -242,6 +293,13 @@ fn the_asset_tab_fits() {
                 settle(&mut h);
                 let switch_shown = h.query_by_role_and_label(Role::Button, labels::LAYERS_TAB).is_some();
                 assert_eq!(switch_shown, narrow, "{w}x{hgt}");
+                if let Some(column) = column {
+                    if narrow {
+                        switch(&mut h, labels::LAYERS_TAB);
+                    }
+                    h.get_by_role_and_label(Role::Button, column).click_accesskit();
+                    settle(&mut h);
+                }
                 if let Some(side) = side {
                     switch(&mut h, side);
                 }

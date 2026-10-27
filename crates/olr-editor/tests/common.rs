@@ -220,6 +220,15 @@ pub fn run(
                 EditorCommand::RemoveAsset(id) => change_assets(&mut queue, |dir| {
                     olr_edit::asset::remove_from_library(dir, id).map(|()| None)
                 }),
+                // Issue #80: as the game's host, bounded.
+                EditorCommand::ReadSound(path) => queue.push_back(match std::fs::read(path) {
+                    Ok(bytes) if bytes.len() as u64 <= olr_format::assets::MAX_ASSET_SOUND_BYTES => {
+                        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                        EditorAction::SoundRead { name, bytes }
+                    }
+                    Ok(_) => EditorAction::ImportFailed("too large".into()),
+                    Err(e) => EditorAction::ImportFailed(e.to_string()),
+                }),
 
                 _ => {}
             }

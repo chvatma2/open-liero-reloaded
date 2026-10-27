@@ -8,6 +8,7 @@ use egui_kittest::kittest::{NodeT, Queryable};
 use olr_editor::tools::{PaintChoice, TextureRef, Tool};
 use olr_editor::ui::{self, EditorData, labels};
 use olr_editor::{EditorAction as A, EditorCommand as C, EditorState, PanelTab, Selection};
+use olr_format::assets::PropertySource as P;
 use olr_format::levels::ElementKind;
 
 use crate::common::{content, editor, run};
@@ -1954,4 +1955,116 @@ fn previews_follow_edits_not_frames() {
     assert!(!h.state().state.dragging() && h.state().state.active_dirty());
     assert_eq!(generation(&h), Some(bake(&h)), "the release makes them again");
     assert_ne!(generation(&h), Some(first));
+}
+
+/// Types `text` over field `label`'s (focused, everything selected), then
+/// Enter.
+fn retype(h: &mut Harness<'static, App>, label: &str, text: &str) {
+    h.get_by_label(label).focus();
+    // The side panel follows the focus for a few frames.
+    h.run_steps(10);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.get_by_label(label).type_text(text);
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+}
+
+/// Issue #80's flow: expose the lamps' Offset X as `claw_x` with limits,
+/// give Alarm its own glow colour and a looping WAV, write a script with an
+/// error and fix it, and save: the saved asset holds them all.
+#[test]
+fn expose_a_claw_and_give_states_values() {
+    let Some((tmp, mut s)) = crate::fits::lamp_open() else { return };
+    let yours = tmp.path().join("yours");
+    run(&mut s, A::AssetsChanged(crate::common::set_library(&crate::common::built_in_assets(), &yours)));
+    run(&mut s, A::AddState);
+    run(&mut s, A::RenameState("Alarm".into()));
+    let mut h = harness(s);
+    h.run();
+    // 1. Expose Offset X as claw_x, -8 to 8.
+    h.get_by_label(labels::PROPERTIES).click();
+    h.run();
+    let row = labels::property("Lamps", "Offset X");
+    h.get_by_label(&labels::expose(&row)).click();
+    h.run();
+    retype(&mut h, &labels::exposed_name(&row), "claw_x");
+    retype(&mut h, &labels::exposed_min(&row), "-8");
+    retype(&mut h, &labels::exposed_max(&row), "8");
+    let x = h.state().state.active_document().unwrap().parts_snap().unwrap().exposed;
+    assert_eq!((x[0].name.as_str(), x[0].min, x[0].max), ("claw_x", Some(-8), Some(8)));
+    // 2. Alarm's glow colour.
+    h.get_by_role_and_label(Role::Button, &labels::state("Alarm", false)).click();
+    h.run();
+    retype(&mut h, &labels::property("Lamps", "Glow colour"), "#ff2020");
+    let shown = h.state().state.active_document().unwrap().shown_value(&P::GlowColour("lamps".into()));
+    assert!(shown.own, "Alarm sets it itself");
+    // 3. A WAV imported as Alarm's loop sound.
+    let sounds = tempfile::tempdir().unwrap();
+    std::fs::write(sounds.path().join("Siren.wav"), crate::properties::wav(400)).unwrap();
+    h.get_by_label(labels::SOUNDS).click();
+    h.run();
+    h.get_by_label(labels::IMPORT_SOUND).click();
+    h.run();
+    let dir = sounds.path().to_path_buf();
+    act(&mut h, A::Listed { dir: dir.clone(), entries: Ok(crate::common::list_dir(&dir)) });
+    h.get_by_label("Siren.wav").click();
+    h.run();
+    h.get_by_label(labels::CHOOSE).click();
+    h.run();
+    h.get_by_label(&labels::play("siren.wav"));
+    h.get_by_label(labels::LOOP_SOUND).click();
+    h.run();
+    h.get_by_label("siren.wav").click();
+    h.run();
+    // 4. A script with an error, listed, then fixed.
+    h.get_by_label(labels::SCRIPT).click();
+    h.run();
+    h.get_by_label(labels::NEW_SCRIPT).click();
+    h.run();
+    h.get_by_label(labels::SCRIPT_EDITOR).focus();
+    h.run_steps(10);
+    h.get_by_label(labels::SCRIPT_EDITOR).type_text("let x = ;");
+    h.run();
+    let text = format!("{}let x = ;", olr_editor::parts_ops::NEW_SCRIPT);
+    let issue = olr_script::check(&text).remove(0);
+    // A click on the error puts the cursor there: before the `;`.
+    h.get_by_label(&labels::script_error(&issue)).click();
+    h.run();
+    assert!(h.get_by_label(labels::SCRIPT_EDITOR).is_focused());
+    h.get_by_label(labels::SCRIPT_EDITOR).type_text("1");
+    h.run();
+    h.get_by_label(labels::LAYERS).click();
+    h.run();
+    assert!(h.state().state.active_document().unwrap().script_issues().is_empty());
+    // 5. Saved: written and read back, it holds them all.
+    file(&mut h, labels::SAVE);
+    let asset = h
+        .state()
+        .commands
+        .iter()
+        .rev()
+        .find_map(|c| match c {
+            C::SaveAsset { asset, .. } => Some(asset.clone()),
+            _ => None,
+        })
+        .expect("saved");
+    let out = tempfile::tempdir().unwrap();
+    let dir = out.path().join("claw");
+    olr_edit::asset::save_dir(&dir, &olr_edit::asset::encode(&asset).unwrap()).unwrap();
+    let back = olr_edit::asset::load_dir(&dir).unwrap();
+    let x = &back.exposed[0];
+    assert_eq!(
+        (x.name.as_str(), &x.property, x.min, x.max),
+        ("claw_x", &P::OffsetX("lamps".into()), Some(-8), Some(8))
+    );
+    let alarm = &back.states[back.state("Alarm").unwrap()];
+    let red = olr_format::assets::ValueSource::Colour(olr_format::Colour::parse("#ff2020").unwrap());
+    assert!(alarm.values.iter().any(|v| v.property == P::GlowColour("lamps".into()) && v.value == red));
+    assert_eq!(alarm.loop_sound.as_deref(), Some("siren.wav"));
+    assert_eq!(back.sounds["siren.wav"].as_slice(), crate::properties::wav(400).as_slice());
+    assert_eq!(
+        back.script.as_deref(),
+        Some(format!("{}let x = 1;", olr_editor::parts_ops::NEW_SCRIPT).as_str())
+    );
 }

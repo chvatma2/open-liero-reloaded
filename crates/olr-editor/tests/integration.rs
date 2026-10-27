@@ -13,6 +13,7 @@ mod folders;
 mod history;
 mod look;
 mod materials;
+mod properties;
 mod state;
 mod states;
 mod surface;
