@@ -19,7 +19,8 @@ Commands (`olr-runner <command>`):
 Modules:
 - `github`: the data model, the `GitHub` trait, its `gh` implementation and parsers.
 - `trust`: what counts as the maintainer's task.
-- `queue`: which issue is next.
+- `queue`: which issue is next; an open `needs-maintainer` issue older
+  than it holds the queue (`Pick::Held`, `status`'s `held: #<n>`).
 - `prompt`, `result`, `stream`, `limit`: the session's input and output.
 - `session`: the headless session and its watchdog.
 - `repo`: the workspace clone.

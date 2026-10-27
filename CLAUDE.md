@@ -124,7 +124,8 @@ fixtures, changed only with `cargo xtask bless-render --reason "<why>"`.
 implements GitHub issues the maintainer labels `approved` in the one open
 milestone, one at a time, in headless sessions on the maintainer's PC, and
 pushes them to `main`; it hands an issue back with `needs-maintainer` and
-a comment when it cannot. Its commits end with `(#<issue>)`; its done
+a comment when it cannot, and then starts no newer issue of the milestone
+until the maintainer retries it or removes `needs-maintainer`. Its commits end with `(#<issue>)`; its done
 comment gives the revert command. Work needing a real benchmark or a
 playtest is listed in `docs/deferred-verification.md` (label
 `needs-bench`). Commands: `olr-runner install | status | pause | resume |

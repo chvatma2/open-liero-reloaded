@@ -106,14 +106,20 @@ Labels the runner uses (it creates any that are missing):
 | `needs-bench` | Done, but wants a real benchmark run before release | session, via the runner |
 
 To retry a handed-back issue, the maintainer answers the comment if
-needed, removes `needs-maintainer` and adds `approved` again.
+needed, removes `needs-maintainer` and adds `approved` again. To let the
+queue go on without it, the maintainer removes only `needs-maintainer`.
 
 ### The queue
 
 GitHub is the queue; the runner keeps no queue of its own. On each poll it
 lists open issues that have `approved` and are in the **active
 milestone**, and that have neither `in-progress` nor `needs-maintainer`.
-It takes the oldest, ordered by when `approved` was added.
+It takes the oldest, ordered by when `approved` was added, unless an
+open issue of the milestone with a lower number is labelled
+`needs-maintainer`: issues more often than not build on each other, so a
+hand-back **holds** every newer issue until the maintainer unblocks it
+(the maintainer's ruling, 2026-10-27). `status` then shows `held: #<n>`.
+`run <n>` still works any approved issue.
 
 The active milestone is **the one open milestone**: only one milestone
 is ever open at a time (the user's rule), so it needs no config. Each poll

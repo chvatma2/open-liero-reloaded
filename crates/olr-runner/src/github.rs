@@ -75,6 +75,8 @@ pub trait GitHub {
     fn open_milestones(&self) -> Result<Vec<Milestone>>;
     /// Open issues of `milestone` labelled `approved`.
     fn approved_issues(&self, milestone: u64) -> Result<Vec<IssueRef>>;
+    /// Open issues of `milestone` labelled `needs-maintainer`.
+    fn handed_back_issues(&self, milestone: u64) -> Result<Vec<IssueRef>>;
     fn issue(&self, n: u64) -> Result<IssueDetail>;
     fn edit_labels(&self, n: u64, add: &[&str], remove: &[&str]) -> Result<()>;
     fn comment(&self, n: u64, body: &str) -> Result<()>;
@@ -199,6 +201,15 @@ impl GhCli {
         }
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }
+
+    /// Open issues of `milestone` labelled `label`.
+    fn labelled(&self, milestone: u64, label: &str) -> Result<Vec<IssueRef>> {
+        let path = format!(
+            "repos/{}/issues?milestone={milestone}&labels={label}&state=open&per_page=100",
+            self.repo
+        );
+        parse_issues(&self.gh(&["api", &path], None)?)
+    }
 }
 
 impl GitHub for GhCli {
@@ -209,11 +220,11 @@ impl GitHub for GhCli {
     }
 
     fn approved_issues(&self, milestone: u64) -> Result<Vec<IssueRef>> {
-        let path = format!(
-            "repos/{}/issues?milestone={milestone}&labels=approved&state=open&per_page=100",
-            self.repo
-        );
-        parse_issues(&self.gh(&["api", &path], None)?)
+        self.labelled(milestone, "approved")
+    }
+
+    fn handed_back_issues(&self, milestone: u64) -> Result<Vec<IssueRef>> {
+        self.labelled(milestone, "needs-maintainer")
     }
 
     fn issue(&self, n: u64) -> Result<IssueDetail> {

@@ -1,4 +1,7 @@
-//! Which issue is next: the oldest approval in the one open milestone.
+//! Which issue is next: the oldest approval in the one open milestone,
+//! unless an older issue of it was handed back. Issues more often than not
+//! build on each other, so a hand-back holds every newer issue until the
+//! maintainer unblocks it (retries it or removes `needs-maintainer`).
 
 use crate::github::{IssueRef, Milestone};
 
@@ -15,6 +18,12 @@ pub enum Pick {
         milestone: String,
         number: u64,
     },
+    /// Handed back (`needs-maintainer`) and older than the next issue:
+    /// nothing starts until the maintainer unblocks it.
+    Held {
+        milestone: String,
+        number: u64,
+    },
 }
 
 /// Approved, and neither being worked nor handed back.
@@ -23,8 +32,13 @@ pub fn eligible(labels: &[String]) -> bool {
     has("approved") && !has("in-progress") && !has("needs-maintainer")
 }
 
-/// The next issue among `candidates`, each with the time it was approved.
-pub fn pick(milestones: &[Milestone], candidates: &[(IssueRef, Option<String>)]) -> Pick {
+/// The next issue among `candidates`, each with the time it was approved;
+/// `handed_back` are the milestone's open `needs-maintainer` issues.
+pub fn pick(
+    milestones: &[Milestone],
+    candidates: &[(IssueRef, Option<String>)],
+    handed_back: &[u64],
+) -> Pick {
     let milestone = match milestones {
         [] => return Pick::NoMilestone,
         [one] => one.title.clone(),
@@ -34,8 +48,11 @@ pub fn pick(milestones: &[Milestone], candidates: &[(IssueRef, Option<String>)])
         // A missing approval time sorts last.
         (at_a.is_none(), at_a, a.number).cmp(&(at_b.is_none(), at_b, b.number))
     });
-    match next {
-        Some((i, _)) => Pick::Next { milestone, number: i.number },
-        None => Pick::Empty { milestone },
+    let held = handed_back.iter().copied().min();
+    match (next, held) {
+        (Some((i, _)), Some(h)) if h < i.number => Pick::Held { milestone, number: h },
+        (Some((i, _)), _) => Pick::Next { milestone, number: i.number },
+        (None, Some(h)) => Pick::Held { milestone, number: h },
+        (None, None) => Pick::Empty { milestone },
     }
 }

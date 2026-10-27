@@ -313,7 +313,7 @@ fn recover(gh: &dyn GitHub, s: &Settings, st: &State, mut current: Current) -> R
 /// What the next poll would do, with each candidate's approval time.
 pub fn plan_next(gh: &dyn GitHub) -> Result<Pick> {
     let milestones = gh.open_milestones()?;
-    let [milestone] = milestones.as_slice() else { return Ok(queue::pick(&milestones, &[])) };
+    let [milestone] = milestones.as_slice() else { return Ok(queue::pick(&milestones, &[], &[])) };
     let mut candidates = Vec::new();
     for issue in gh.approved_issues(milestone.number)? {
         let at = if queue::eligible(&issue.labels) {
@@ -323,7 +323,8 @@ pub fn plan_next(gh: &dyn GitHub) -> Result<Pick> {
         };
         candidates.push((issue, at));
     }
-    Ok(queue::pick(&milestones, &candidates))
+    let handed_back: Vec<u64> = gh.handed_back_issues(milestone.number)?.iter().map(|i| i.number).collect();
+    Ok(queue::pick(&milestones, &candidates, &handed_back))
 }
 
 fn describe(pick: &Pick) -> String {
@@ -332,6 +333,7 @@ fn describe(pick: &Pick) -> String {
         Pick::ManyMilestones(titles) => format!("idle: more than one open milestone ({})", titles.join(", ")),
         Pick::Empty { milestone } => format!("idle: no approved issue in {milestone}"),
         Pick::Next { milestone, number } => format!("next: #{number} in {milestone}"),
+        Pick::Held { milestone, number } => format!("held: #{number} in {milestone} needs the maintainer"),
     }
 }
 

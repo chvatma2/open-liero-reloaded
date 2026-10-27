@@ -101,8 +101,9 @@ pub fn done_comment(d: &Done) -> String {
 
 pub fn handback_comment(h: &HandBack, log: &Path) -> String {
     format!(
-        "{MARKER}\nHanded back to the maintainer.\n\n{}\n\nSession log on the runner's PC: `{}`\n\nTo retry: answer here if \
-         needed, then remove `needs-maintainer` and add `approved`.",
+        "{MARKER}\nHanded back to the maintainer.\n\n{}\n\nSession log on the runner's PC: `{}`\n\nUntil this is unblocked \
+         the runner starts no newer issue of the milestone.\n\nTo retry: answer here if needed, then remove \
+         `needs-maintainer` and add `approved`. To go on without it: remove `needs-maintainer`.",
         h.describe(),
         log.display()
     )

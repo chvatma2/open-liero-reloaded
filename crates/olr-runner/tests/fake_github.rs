@@ -60,6 +60,18 @@ impl GitHub for FakeGitHub {
             .collect())
     }
 
+    fn handed_back_issues(&self, _milestone: u64) -> Result<Vec<IssueRef>> {
+        self.up()?;
+        let closed = self.closed.borrow();
+        Ok(self
+            .details
+            .borrow()
+            .values()
+            .filter(|d| !closed.contains(&d.number) && d.labels.iter().any(|l| l == "needs-maintainer"))
+            .map(|d| IssueRef { number: d.number, title: d.title.clone(), labels: d.labels.clone() })
+            .collect())
+    }
+
     fn issue(&self, n: u64) -> Result<IssueDetail> {
         self.up()?;
         self.details.borrow().get(&n).cloned().ok_or_else(|| anyhow::anyhow!("no issue {n}"))

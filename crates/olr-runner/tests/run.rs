@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use olr_runner::github::{IssueDetail, LabelEvent, Milestone};
+use olr_runner::github::{GitHub, IssueDetail, LabelEvent, Milestone};
 use olr_runner::repo::Repo;
 use olr_runner::run::{RunResult, run_issue, run_now, tick};
 use olr_runner::settings::Settings;
@@ -111,6 +111,21 @@ fn blocked_hands_back() {
     assert!(handed_back(&e, 7));
     assert!(!origin_has(&e, "src/new.rs"));
     assert!(e.st.current().is_none());
+}
+
+#[test]
+fn a_hand_back_holds_newer_issues_until_the_maintainer_unblocks() {
+    let e = env("FAKE_MODE=done\nFAKE_STATUS=blocked");
+    e.gh.details.borrow_mut().insert(8, approved(8));
+    tick(&e.gh, &e.s, &e.st).unwrap();
+    assert!(handed_back(&e, 7));
+    assert_eq!(e.gh.labels(8), ["approved"], "#8 is not started: {:?}", e.gh.logged());
+    assert!(e.st.history(1)[0].contains("held: #7"), "{:?}", e.st.history(1));
+    assert!(e.gh.logged().iter().any(|l| l.starts_with("comment 7 ") && l.contains("starts no newer issue")));
+    // Removing `needs-maintainer` lets the queue go on without #7.
+    e.gh.edit_labels(7, &[], &["needs-maintainer"]).unwrap();
+    tick(&e.gh, &e.s, &e.st).unwrap();
+    assert!(handed_back(&e, 8));
 }
 
 #[test]
