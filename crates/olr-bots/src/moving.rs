@@ -408,4 +408,4 @@ pub(crate) fn sign(x: f32) -> i32 {
 
 #[cfg(test)]
 #[path = "moving_tests.rs"]
-mod tests;
+pub(crate) mod tests;

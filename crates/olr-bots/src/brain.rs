@@ -274,7 +274,8 @@ impl Bot {
         }
         let mut best: Option<(usize, f32)> = None;
         for (i, bonus) in c.w.bonuses().iter().enumerate() {
-            if bonus.used && bonus.kind == kind {
+            // Issue #91: a bonus where a live part can come is left.
+            if bonus.used && bonus.kind == kind && self.in_reach(c, bonus.pos).is_none() {
                 let d2 = (bonus.pos - c.me.pos).length2();
                 if best.is_none_or(|(_, d)| d2 < d) {
                     best = Some((i, d2));
@@ -290,11 +291,15 @@ impl Bot {
 
     /// `findRandomSpot(highSpot = true)` (`CWormBot.cpp:1516-1541`): up to
     /// 10 tries in the top fifth of the map for a spot without rock.
-    fn find_random_spot(&mut self, c: &Ctx, b: &mut Budget) -> bool {
+    pub(crate) fn find_random_spot(&mut self, c: &Ctx, b: &mut Budget) -> bool {
         let (w, h) = (c.t.width() as f32, c.t.height() as f32 / 5.0);
         for _ in 0..10 {
             let x = (libm::fabsf(self.rng.random_num()) * w) as i64;
             let y = (libm::fabsf(self.rng.random_num()) * h) as i64;
+            // Issue #91: never a spot a live part can come to.
+            if self.in_reach(c, Vec2::new(x as f32, y as f32)).is_some() {
+                continue;
+            }
             if good_spawn_point(c.t, b, x, y) != Some(true) {
                 continue;
             }
@@ -331,13 +336,16 @@ impl Bot {
     }
 
     /// Where the path goes: the target, or a spot to shoot a worm from
-    /// (`AI_FindShootingSpot`).
+    /// (`AI_FindShootingSpot`). Issue #91: never inside a live part's
+    /// reach (the path's last node), but for a scripted goal (a race's
+    /// flag is the mode's to place; getting out heads out of one).
     pub(crate) fn path_target(&mut self, c: &Ctx, b: &mut Budget) -> Vec2 {
         let trg = self.target_pos(c);
-        match self.target_worm(c) {
+        let trg = match self.target_worm(c) {
             Some(w) => self.shooting_spot(c, b, w),
             None => trg,
-        }
+        };
+        if self.goal.is_some() { trg } else { self.out_of_reach(c, b, trg) }
     }
 
     /// `AI_CreatePath(force_break)` (`CWormBot.cpp:2869-2955`): installs a

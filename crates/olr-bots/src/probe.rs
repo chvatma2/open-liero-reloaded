@@ -4,8 +4,9 @@
 //! left of the budget this tick; a probe longer than a whole budget gives
 //! what a blocked probe gives.
 
+use crate::ground::Ground;
 use olr_math::{Vec2, normalize_vector};
-use olr_terrain::{PX_DIRT, PX_EMPTY, PX_ROCK, Terrain};
+use olr_terrain::{PX_DIRT, PX_EMPTY, PX_ROCK};
 
 use crate::budget::{Afford, Budget};
 
@@ -37,7 +38,7 @@ fn afford(b: &Budget, worst: u64) -> Option<bool> {
 /// (`PX_EMPTY` when none did). A trace longer than a whole budget stops at
 /// once on "rock".
 pub(crate) fn trace_line(
-    t: &Terrain,
+    t: &impl Ground,
     b: &mut Budget,
     start: Vec2,
     target: Vec2,
@@ -67,7 +68,7 @@ pub(crate) fn trace_line(
 /// [`trace_line`] from the worm, with `fDist` (`(int)length / reached`, an
 /// integer division, as OLX has it; 0 when nothing was reached).
 pub(crate) fn trace_line_dist(
-    t: &Terrain,
+    t: &impl Ground,
     b: &mut Budget,
     pos: Vec2,
     target: Vec2,
@@ -84,7 +85,7 @@ pub(crate) fn trace_line_dist(
 /// added), then `divs` px, until dirt or rock. Gives the fraction of the
 /// way travelled and the flags met (`PX_EMPTY` when clear).
 pub(crate) fn trace_weapon_line(
-    t: &Terrain,
+    t: &impl Ground,
     b: &mut Budget,
     pos: Vec2,
     target: Vec2,
@@ -118,7 +119,7 @@ pub(crate) fn trace_weapon_line(
 
 /// `AI_GetRockBetween` (`CWormBot.cpp:2958-2983`): how many 4 px steps from
 /// `pos` to `trg` land on rock.
-pub(crate) fn rock_between(t: &Terrain, b: &mut Budget, pos: Vec2, trg: Vec2) -> Option<i32> {
+pub(crate) fn rock_between(t: &impl Ground, b: &mut Budget, pos: Vec2, trg: Vec2) -> Option<i32> {
     let (total, dir) = length_and_dir(pos, trg);
     if !afford(b, (total / 4) as u64 + 1)? {
         return Some(i32::MAX);
@@ -140,7 +141,7 @@ pub(crate) fn rock_between(t: &Terrain, b: &mut Budget, pos: Vec2, trg: Vec2) ->
 /// whether no pixel of `x..x2` × `y..y2` (ends excluded) has `flags`
 /// (outside the map is rock).
 pub(crate) fn area_clear(
-    t: &Terrain,
+    t: &impl Ground,
     b: &mut Budget,
     (x, y, x2, y2): (i64, i64, i64, i64),
     flags: u8,
@@ -165,20 +166,20 @@ pub(crate) fn area_clear(
 
 /// `CMap::IsGoodSpawnPoint` (`src/game/CMap.h:460`): no rock in the 6 × 6
 /// box from `(x - 3, y - 3)`.
-pub(crate) fn good_spawn_point(t: &Terrain, b: &mut Budget, x: i64, y: i64) -> Option<bool> {
+pub(crate) fn good_spawn_point(t: &impl Ground, b: &mut Budget, x: i64, y: i64) -> Option<bool> {
     area_clear(t, b, (x - 3, y - 3, x + 3, y + 3), PX_ROCK)
 }
 
 /// `CMap::IsEmptyForWorm` (`src/game/CMap.h:462`): no rock or dirt in the
 /// 6 × 6 box from `(x - 3, y - 3)`.
-pub(crate) fn empty_for_worm(t: &Terrain, b: &mut Budget, p: Vec2) -> Option<bool> {
+pub(crate) fn empty_for_worm(t: &impl Ground, b: &mut Budget, p: Vec2) -> Option<bool> {
     let (x, y) = (p.x as i64, p.y as i64);
     area_clear(t, b, (x - 3, y - 3, x + 3, y + 3), PX_ROCK | PX_DIRT)
 }
 
 /// `AI_IsInAir(pos, area_a)` (`CWormBot.cpp:3287-3297`): inside the map and
 /// no rock or dirt in the `15·area_a` square around `pos`.
-pub(crate) fn in_air(t: &Terrain, b: &mut Budget, pos: Vec2, area_a: i64) -> Option<bool> {
+pub(crate) fn in_air(t: &impl Ground, b: &mut Budget, pos: Vec2, area_a: i64) -> Option<bool> {
     if !(pos.x >= 0.0 && pos.y >= 0.0 && pos.x < t.width() as f32 && pos.y < t.height() as f32) {
         return Some(false);
     }
@@ -192,6 +193,7 @@ mod tests {
     use super::*;
     use alloc::vec::Vec;
     use olr_data::level::{Material, MaterialGrid};
+    use olr_terrain::Terrain;
 
     fn terrain() -> Terrain {
         // Dirt at x 50..=59, rock at x 80..=89, on a 100 × 20 map.

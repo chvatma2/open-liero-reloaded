@@ -19,11 +19,13 @@ mod brain;
 mod budget;
 mod chaos;
 mod config;
+mod ground;
 pub mod loadout;
 pub mod motor;
 mod moving;
 pub mod nav;
 mod probe;
+mod reach;
 mod rng;
 mod rope;
 mod shoot;
@@ -37,6 +39,7 @@ pub use config::{
     AIM_ERROR_FLOOR, AimModel, BotConfig, BotConfigError, DEFAULT_BUDGET, Difficulty, DifficultyParams,
     LoadoutPolicy, Personality,
 };
+pub use ground::Ground;
 pub use loadout::{
     BotWeapons, GameType, choose_loadout, get_random_weapons, olx_bot_weapons, random_enabled_weapon,
     unique_weapons,

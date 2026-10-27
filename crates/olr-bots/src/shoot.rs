@@ -4,9 +4,10 @@
 //! checks the real arc through the terrain; with OLX's direct aim it aims
 //! at the target and checks OLX's parabola.
 
+use crate::ground::Ground;
 use olr_math::Vec2;
 use olr_sim::{WeaponType, Worm};
-use olr_terrain::{PX_DIRT, PX_EMPTY, PX_ROCK, Terrain};
+use olr_terrain::{PX_DIRT, PX_EMPTY, PX_ROCK};
 
 use crate::AimModel;
 use crate::aim::{Launch, aim_direction, ballistic_from, olx_aiming_angle};
@@ -237,7 +238,7 @@ impl Bot {
 /// Flies a shot from `p` with velocity `v` under gravity `g` in steps of at
 /// most 2 px: false at the first rock or dirt pixel (or the map's edge)
 /// before it comes within 5 px of `trg` or passes it.
-fn fly_clear(t: &Terrain, b: &mut Budget, mut p: Vec2, mut v: Vec2, g: f32, trg: Vec2) -> bool {
+fn fly_clear(t: &impl Ground, b: &mut Budget, mut p: Vec2, mut v: Vec2, g: f32, trg: Vec2) -> bool {
     if b.afford(ARC_STEPS) != Afford::Yes
         || !(p.x.is_finite() && p.y.is_finite() && v.x.is_finite() && v.y.is_finite())
     {
@@ -267,7 +268,7 @@ fn fly_clear(t: &Terrain, b: &mut Budget, mut p: Vec2, mut v: Vec2, g: f32, trg:
 /// OLX's `Parabola(p1, angle, p2)` (`src/common/MathLib.cpp:204-225`) and
 /// `weaponCanHit`'s walk along it, 1 px at a time from 5 px past the left
 /// end to the right one (the centre pixel only).
-fn parabola_clear(t: &Terrain, b: &mut Budget, me: Vec2, alpha: f32, trg: Vec2) -> bool {
+fn parabola_clear(t: &impl Ground, b: &mut Budget, me: Vec2, alpha: f32, trg: Vec2) -> bool {
     let (from, to) = if me.x > trg.x { (trg, me) } else { (me, trg) };
     if me.x == trg.x {
         return true;

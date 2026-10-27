@@ -1,7 +1,8 @@
 //! A search area's checklist test and OLX's area costs.
 
+use crate::ground::Ground;
 use olr_math::Vec2;
-use olr_terrain::{PX_ROCK, Terrain};
+use olr_terrain::PX_ROCK;
 
 use super::areas::{Rect, WORM_SIZE};
 use super::trace::simple_trace_line;
@@ -14,7 +15,7 @@ use crate::budget::Budget;
 /// (at most the rest). Gives the point to add an area at: one step past the
 /// last -`dir` trace, then `dist` out.
 pub(super) fn check_checkpoint(
-    t: &Terrain,
+    t: &impl Ground,
     b: &mut Budget,
     start: (i32, i32),
     dist: (i32, i32),

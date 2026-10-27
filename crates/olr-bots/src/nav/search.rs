@@ -9,13 +9,13 @@
 //! area whose priority ties with a queued one); `simplifyPath`'s dead second
 //! loop is left out; the areas per search and the path's nodes are capped.
 
+use crate::ground::Ground;
 use alloc::collections::BinaryHeap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::cmp::Reverse;
 
 use olr_math::Vec2;
-use olr_terrain::Terrain;
 
 use super::areas::{AreaCache, Grower, Rect};
 use super::checks::{center, center_i, check_checkpoint, connector, dist_between, length, v};
@@ -212,8 +212,8 @@ impl Search {
     }
 
     /// Searches on until done or until `b` is spent.
-    pub fn step(&mut self, t: &Terrain, b: &mut Budget) -> SearchStatus {
-        if !self.cache.same_size(t) && !matches!(self.phase, Phase::Idle) {
+    pub fn step(&mut self, t: &impl Ground, b: &mut Budget) -> SearchStatus {
+        if !self.cache.same_size(t.ground()) && !matches!(self.phase, Phase::Idle) {
             self.phase = Phase::Failed(SearchError::WrongLevel);
         }
         loop {
@@ -255,7 +255,7 @@ impl Search {
                         self.add_area_node(p, node, Some((node, next + 1)), b);
                     }
                 }
-                Phase::Grow { mut grower, at, pred, resume } => match grower.step(t, b) {
+                Phase::Grow { mut grower, at, pred, resume } => match grower.step(t.ground(), b) {
                     None => {
                         self.phase = Phase::Grow { grower, at, pred, resume };
                         return SearchStatus::Pending;
@@ -442,7 +442,7 @@ impl Search {
     /// each node of the (shortened) path, a node at least 3 ahead becomes
     /// its successor when it is closer than the summed squared lengths of
     /// the way there and a worm line reaches it. False when `b` ran out.
-    fn simplify(&mut self, t: &Terrain, b: &mut Budget) -> bool {
+    fn simplify(&mut self, t: &impl Ground, b: &mut Budget) -> bool {
         let Phase::Simplify { mut o, mut j, mut count, mut len, mut last } = self.phase else { return true };
         let n = self.raw.len() as u32;
         while o < n {

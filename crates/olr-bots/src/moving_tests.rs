@@ -12,7 +12,7 @@ use olr_data::image::Rgba;
 use olr_data::level::{Material, MaterialGrid};
 use olr_data::mod_def::*;
 use olr_math::Vec2;
-use olr_sim::{Loadout, MatchSetup, OracleMode, SimMod, SimSettings, Slot, World, WormSetup};
+use olr_sim::{Loadout, MatchSetup, OracleMode, SimMod, SimSettings, Slot, Solid, World, WormSetup};
 use olr_terrain::Terrain;
 
 use super::sign;
@@ -22,7 +22,7 @@ use crate::brain::{State, Target};
 use crate::budget::Budget;
 
 /// A mod with one lobbed weapon (gravity 100, speed 130).
-fn lob_mod() -> Arc<SimMod> {
+pub(crate) fn lob_mod() -> Arc<SimMod> {
     let shell = ProjectileDef {
         gfx: ProjectileGfx::Pixel { colours: vec![Rgba::rgb(255, 255, 255)] },
         gravity: None,
@@ -96,8 +96,8 @@ fn moving_bot(w: &World, path: &[Vec2]) -> Bot {
     bot
 }
 
-fn ctx(w: &World) -> Ctx<'_> {
-    Ctx { w, me: &w.worms()[0], now: w.time(), s: w.settings(), t: w.terrain() }
+fn ctx<'a>(w: &'a World, t: &'a Solid<'a>) -> Ctx<'a> {
+    Ctx { w, me: &w.worms()[0], now: w.time(), s: w.settings(), t }
 }
 
 /// Review fix 1: a tick that starts a shooting-spot search still runs the
@@ -113,7 +113,8 @@ fn a_spot_search_tick_still_checks_the_jump() {
     let w = world(bubble, &[(50, 150), (200, 100)]);
     for limit in [800, 1200, 1500, 2000] {
         let mut bot = moving_bot(&w, &[Vec2::new(50.0, 150.0), Vec2::new(150.0, 60.0)]);
-        let c = ctx(&w);
+        let solid = w.solid();
+        let c = ctx(&w, &solid);
         let mut b = Budget::new(limit);
         bot.move_to_target(&c, &mut b, &mut Act::default());
         let check = bot.mind.jump_check.map(|(t, _, answer)| (t == c.now, answer));
@@ -131,7 +132,8 @@ fn dig_on_only_digs_through_dirt() {
         let w = world(at, &[(80, 100), (125, 100)]);
         let end = Vec2::new(80.0, 100.0);
         let mut bot = moving_bot(&w, &[end]);
-        let c = ctx(&w);
+        let solid = w.solid();
+        let c = ctx(&w, &solid);
         bot.dig_on(&c, &mut Budget::new(5000), end);
         let nodes: Vec<Vec2> = bot.follow.nodes().to_vec();
         assert_eq!(nodes.len() == 2, pushed, "{wall:?}: {nodes:?}");

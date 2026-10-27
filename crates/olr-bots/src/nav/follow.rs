@@ -2,11 +2,11 @@
 //! advance, `src/common/CWormBot.cpp:3578-3627`, notes §1.5), and the
 //! checks it makes before jumping.
 
+use crate::ground::Ground;
 use alloc::vec::Vec;
 
 use olr_math::{AbsTime, Vec2};
 use olr_sim::SimSettings;
-use olr_terrain::Terrain;
 
 use super::search::MAX_PATH_NODES;
 use super::trace::{worm_line_clear, worm_line_worst};
@@ -89,7 +89,14 @@ impl Follower {
     /// share: a node is looked at only when the budget still fits that
     /// node's worm line and then the jump check of whichever node the bot
     /// would head for. A scan cut short by the budget does not go back.
-    pub fn advance(&mut self, pos: Vec2, t: &Terrain, b: &mut Budget, now: AbsTime, s: &SimSettings) -> Step {
+    pub fn advance(
+        &mut self,
+        pos: Vec2,
+        t: &impl Ground,
+        b: &mut Budget,
+        now: AbsTime,
+        s: &SimSettings,
+    ) -> Step {
         let Some(node) = self.current() else { return Step::default() };
         if (node - pos).length2() <= 100.0 && self.current + 1 < self.nodes.len() {
             self.current += 1;
@@ -185,7 +192,13 @@ pub fn jump_rise(s: &SimSettings) -> f32 {
 /// `isJumpingGivingDisadvantage` (`CWormBot.cpp:3324-3333`): a jump loses
 /// the node when no worm line reaches it from where the jump would get to.
 /// `None` when the budget does not allow the check this tick.
-pub fn jump_loses_node(node: Vec2, pos: Vec2, s: &SimSettings, t: &Terrain, b: &mut Budget) -> Option<bool> {
+pub fn jump_loses_node(
+    node: Vec2,
+    pos: Vec2,
+    s: &SimSettings,
+    t: &impl Ground,
+    b: &mut Budget,
+) -> Option<bool> {
     worm_line_clear(t, b, node, pos + Vec2::new(0.0, jump_rise(s))).map(|clear| !clear)
 }
 
@@ -194,6 +207,7 @@ mod tests {
     use super::*;
     use alloc::vec::Vec;
     use olr_data::level::{Material, MaterialGrid};
+    use olr_terrain::Terrain;
 
     fn terrain(rock: impl Fn(u32, u32) -> bool) -> Terrain {
         let cells: Vec<Material> = (0..400 * 100)

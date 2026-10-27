@@ -7,7 +7,7 @@
 use alloc::sync::Arc;
 
 use olr_math::{AbsTime, Vec2};
-use olr_sim::{Dir, EventKind, Keys, SimSettings, TickEvents, World, Worm};
+use olr_sim::{Dir, EventKind, Keys, SimSettings, Solid, TickEvents, World, Worm};
 use olr_terrain::Terrain;
 
 use crate::aim::{AimState, ShotNoise};
@@ -17,6 +17,7 @@ use crate::chaos::Chaos;
 use crate::loadout::GameType;
 use crate::motor::{Intent, Motor};
 use crate::nav::{AreaCache, Follower, Search, SearchStatus};
+use crate::reach::Escape;
 use crate::rope::RopeMind;
 use crate::spot::SpotFinder;
 use crate::weapons::{Arsenal, game_type};
@@ -31,7 +32,9 @@ pub(crate) struct Ctx<'a> {
     pub me: &'a Worm,
     pub now: AbsTime,
     pub s: &'a SimSettings,
-    pub t: &'a Terrain,
+    /// The world's terrain query: the ground and the live rock parts
+    /// where they are this tick (issue #91).
+    pub t: &'a Solid<'a>,
 }
 
 /// What the bot does this tick, as OLX writes it into the worm
@@ -75,6 +78,10 @@ pub struct Bot {
     spawn_time: Option<AbsTime>,
     /// `iCurrentWeapon` as the bot set it (the motor switches to it).
     pub(crate) weapon: usize,
+    /// Getting out of a live part's reach (issue #91).
+    pub(crate) escape: Option<Escape>,
+    /// How many reach checks ran (issue #91's test hook).
+    pub(crate) reach_checks: u64,
 }
 
 /// The least budget a bot gets on a level: the shooting and moving take at
@@ -119,6 +126,8 @@ impl Bot {
             goal: None,
             spawn_time: me.filter(|w| w.alive).map(|_| world.time()),
             weapon: me.map_or(0, |w| usize::try_from(w.current_weapon).unwrap_or(0)),
+            escape: None,
+            reach_checks: 0,
         }
     }
 
@@ -162,13 +171,33 @@ impl Bot {
     /// A scripted target: the bot heads for `goal` and does not shoot (as
     /// OLX's bot does in a race to a flag), or plays Deathmatch again with
     /// `None`.
+    /// While the bot gets out of a live part's reach (issue #91) the goal
+    /// waits until it is out.
     pub fn set_goal(&mut self, goal: Option<Vec2>) {
-        self.goal = goal.filter(|g| g.x.is_finite() && g.y.is_finite());
+        let goal = goal.filter(|g| g.x.is_finite() && g.y.is_finite());
+        if let Some(e) = &mut self.escape {
+            e.goal = goal;
+            return;
+        }
+        self.goal = goal;
         self.mind.state = crate::brain::State::Think;
     }
 
     pub fn goal(&self) -> Option<Vec2> {
-        self.goal
+        self.escape.map_or(self.goal, |e| e.goal)
+    }
+
+    /// Where the bot is getting out of a live part's reach to, if it is
+    /// (issue #91).
+    pub fn escaping_to(&self) -> Option<Vec2> {
+        self.escape.map(|e| e.point)
+    }
+
+    /// How many reach checks the bot has run (issue #91's test hook: none
+    /// on a level without live parts that can move or appear).
+    #[doc(hidden)]
+    pub fn reach_checks(&self) -> u64 {
+        self.reach_checks
     }
 
     /// The weapon ids this bot has fired (a chaos bot tracks them for
@@ -188,6 +217,8 @@ impl Bot {
         }
         let now = world.time();
         let mut b = Budget::new(self.budget);
+        // Issue #91: the live part that crushed the worm last tick.
+        let mut crushed = None;
         for e in events.iter() {
             match e.kind {
                 EventKind::Spawned { worm } if usize::try_from(worm) == Ok(self.worm) => {
@@ -197,6 +228,9 @@ impl Bot {
                 EventKind::WeaponFired { worm, weapon } if usize::try_from(worm) == Ok(self.worm) => {
                     self.chaos.record(weapon);
                 }
+                EventKind::Crushed { worm, copy } if usize::try_from(worm) == Ok(self.worm) => {
+                    crushed = Some(copy);
+                }
                 _ => {}
             }
         }
@@ -204,9 +238,13 @@ impl Bot {
             None => Keys(0),
             Some(me) => {
                 let paused = self.spawn_time.is_some_and(|t| now.0.saturating_sub(t.0) < SPAWN_PAUSE_MS);
-                let c = Ctx { w: world, me, now, s: world.settings(), t: world.terrain() };
+                let solid = world.solid();
+                let c = Ctx { w: world, me, now, s: world.settings(), t: &solid };
                 let intent = if me.alive && !paused && world.result().is_none() {
+                    self.get_out(&c, &mut b, crushed);
                     let act = match self.cfg.personality {
+                        // Getting out races to a point, chaos bots too.
+                        Personality::Chaos if self.escape.is_some() => self.get_input(&c, &mut b),
                         Personality::Deathmatch => self.get_input(&c, &mut b),
                         Personality::Chaos => self.chaos_input(&c, &mut b),
                         Personality::Idle => return Keys(0),
@@ -245,6 +283,7 @@ impl Bot {
 
     /// `onRespawn` (`CWormBot.cpp:4120-4126`, `993-997`).
     fn on_respawn(&mut self, world: &World, b: &mut Budget) {
+        self.end_escape();
         self.aim.reset();
         self.rope = RopeMind::default();
         self.spot = SpotFinder::default();
@@ -253,12 +292,13 @@ impl Bot {
         }
         match self.cfg.personality {
             Personality::Deathmatch => {
+                let solid = world.solid();
                 let c = world.worms().get(self.worm).map(|me| Ctx {
                     w: world,
                     me,
                     now: world.time(),
                     s: world.settings(),
-                    t: world.terrain(),
+                    t: &solid,
                 });
                 if let Some(c) = c {
                     self.respawned(&c, b);

@@ -113,6 +113,11 @@ impl Bot {
                     return Try::Next;
                 }
                 let p = Vec2::new(40.0 * libm::sinf(j) + trg.x, 40.0 * libm::cosf(j) + trg.y);
+                // Issue #91: never a spot a live part can come to.
+                if self.in_reach(c, p).is_some() {
+                    job.phase = Phase::Circle(j + STEP);
+                    return Try::Next;
+                }
                 // The worst case of both probes first, so neither is lost.
                 if u64::from(b.left()) < 15 * 15 + 40 / 5 + 2 {
                     return Try::Later;
@@ -133,8 +138,9 @@ impl Bot {
                         job.phase = Phase::Left(0, trg.x);
                         return Try::Next;
                     }
-                    // Not found: the last position tried.
-                    return Try::Spot(Vec2::new(x, trg.y));
+                    // Not found: the last position tried (issue #91: out
+                    // of a live part's reach).
+                    return Try::Spot(self.out_of_reach(c, b, Vec2::new(x, trg.y)));
                 }
                 let x = if right { x + 5.0 } else { x - 5.0 };
                 let p = Vec2::new(x, trg.y);
@@ -146,7 +152,8 @@ impl Bot {
                 let back = if right { x - 5.0 } else { x + 5.0 };
                 job.phase = if right { Phase::Right(i + 1, x) } else { Phase::Left(i + 1, x) };
                 if !clear {
-                    if libm::fabsf(trg.x - back) >= 15.0 {
+                    if libm::fabsf(trg.x - back) >= 15.0 && self.in_reach(c, Vec2::new(back, trg.y)).is_none()
+                    {
                         return Try::Spot(Vec2::new(back, trg.y));
                     }
                     job.phase = if right { Phase::Right(i + 1, back) } else { Phase::Left(i + 1, back) };

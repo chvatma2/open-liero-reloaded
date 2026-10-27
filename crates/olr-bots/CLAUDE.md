@@ -43,6 +43,28 @@ loadouts, §4 the recommendations this crate follows).
   `spot.rs`: `AI_FindShootingSpot` (both spread over ticks under the
   budget). `probe.rs`: the budgeted terrain probes (`traceLine`,
   `traceWeaponLine`, `AI_GetRockBetween`, area checks).
+- **Live parts** (issue #91, call 23; STATUS.md "Live assets"): every
+  probe (`probe.rs`, `nav/trace.rs`, `nav/checks.rs`, `shoot.rs`,
+  `rope.rs`, `chaos.rs`, the search's traces) is generic over `Ground`
+  (`ground.rs`: `Terrain`, or `olr_sim::Solid`), and `Ctx::t` is the
+  world's `Solid`: a part is rock where it is this tick, a pixel still a
+  unit. **The cache stays the ground's:** the `Grower`, `AreaCache` and
+  `rock_hash` read `Terrain` (`Ground::ground`), never a part. **Reach**
+  (`reach.rs`): `in_reach` tests a point against `World::live()`'s
+  `reach_rects` grown by `HALF_WORM` (4); `find_random_spot`,
+  `find_bonus`, the shooting spot search and `path_target` (the path's
+  last node; not a scripted goal) never choose a stop inside one
+  (`out_of_reach`, `way_out`: just past a side, in the map, preferring
+  no reach and a worm's room). **Getting out** (`get_out`, before the
+  brain each tick): a `Crushed` marker on its worm in the last tick's
+  events, or a part whose motion heads at it while it stands in its
+  reach, starts an `Escape`: a racing goal to the way out for up to
+  `ESCAPE_MS` (1 s) or until out (chaos bots race through `get_input`
+  meanwhile); `set_goal` during it is kept for after, `goal()` gives the
+  scripted one, `escaping_to()` the point. Rectangle tests only: no unit
+  and no rng draw, and none at all on a level without reaches
+  (`reach_checks()`, the test hook), so classic play is unchanged.
+  Tests: `reach_tests.rs` (hand-made worlds with a block part).
 - **Chaos** (`chaos.rs`, F10, notes §4.6): fires whatever is ready,
   prefers weapons it has not fired, moves at random, records what it fired
   (`Bot::fired_weapons`); its loadout rotates by the mode
@@ -63,7 +85,7 @@ loadouts, §4 the recommendations this crate follows).
 - **Navigation** (`nav/`, notes §1.4-1.5): `areas.rs` grows OLX's rock-free
   rectangles (`Grower`, resumable per pixel) into an `AreaCache` (atomics,
   `Arc`, append-only, fixed capacity, keyed by the level's `rock_hash`;
-  rock never changes in LX56);
+  rock never changes in LX56, and live parts stay out of it: issue #91);
   `search.rs` is `searchpath_base` as a resumable state machine (checklist,
   7-trace passage rule, costs, worm-line goal test, `simplifyPath`);
   `path.rs` the 50 px splitting; `follow.rs` the node advance (8 nodes

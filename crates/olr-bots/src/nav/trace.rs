@@ -1,8 +1,9 @@
 //! The bot's line traces over the terrain flags, with their cost in work
 //! units (one per pixel read).
 
+use crate::ground::Ground;
 use olr_math::{Vec2, normalize_vector};
-use olr_terrain::{PX_ROCK, Terrain};
+use olr_terrain::PX_ROCK;
 
 use crate::budget::{Afford, Budget};
 
@@ -10,7 +11,12 @@ use crate::budget::{Afford, Budget};
 /// whether the axis-aligned line from `start` over `dist` (along its larger
 /// axis) has no pixel with `flag`; a line leaving the map is not free. Also
 /// returns the pixels read.
-pub(crate) fn simple_trace_line(t: &Terrain, start: (i32, i32), dist: (i32, i32), flag: u8) -> (bool, u32) {
+pub(crate) fn simple_trace_line(
+    t: &impl Ground,
+    start: (i32, i32),
+    dist: (i32, i32),
+    flag: u8,
+) -> (bool, u32) {
     let (w, h) = (i64::from(t.width()), i64::from(t.height()));
     let (mut sx, mut sy) = (i64::from(start.0), i64::from(start.1));
     let (mut dx, mut dy) = (i64::from(dist.0), i64::from(dist.1));
@@ -59,7 +65,7 @@ pub(crate) fn fast_worst(target: Vec2, start: Vec2) -> u64 {
 /// map (every bot action returns false). Returns that pixel, if any, and the
 /// pixels read. At most `max` pixels are read (the caller's worst case).
 pub(crate) fn fast_trace_line(
-    t: &Terrain,
+    t: &impl Ground,
     target: Vec2,
     start: Vec2,
     flag: u8,
@@ -115,7 +121,7 @@ pub(crate) fn worm_line_worst(target: Vec2, start: Vec2) -> u64 {
 ///
 /// `None` when the worst case does not fit in what is left of `b` (try
 /// again next tick); a line longer than a whole budget is blocked.
-pub fn worm_line_clear(t: &Terrain, b: &mut Budget, target: Vec2, start: Vec2) -> Option<bool> {
+pub fn worm_line_clear(t: &impl Ground, b: &mut Budget, target: Vec2, start: Vec2) -> Option<bool> {
     let one = fast_worst(target, start);
     match b.afford(worm_line_worst(target, start)) {
         Afford::Yes => {}
@@ -128,11 +134,11 @@ pub fn worm_line_clear(t: &Terrain, b: &mut Budget, target: Vec2, start: Vec2) -
 }
 
 /// [`worm_line_clear`] without a budget, for tests and tools.
-pub fn trace_worm_line(t: &Terrain, target: Vec2, start: Vec2) -> bool {
+pub fn trace_worm_line(t: &impl Ground, target: Vec2, start: Vec2) -> bool {
     worm_line(t, target, start, fast_worst(target, start)).0
 }
 
-fn worm_line(t: &Terrain, mut target: Vec2, start: Vec2, max: u64) -> (bool, u32) {
+fn worm_line(t: &impl Ground, mut target: Vec2, start: Vec2, max: u64) -> (bool, u32) {
     // `wormsize = 3`: lines at -1, 0 and +1 across.
     let mut dir = Vec2::new(target.y - start.y, start.x - target.x);
     normalize_vector(&mut dir);
@@ -156,6 +162,7 @@ mod tests {
     use super::*;
     use alloc::vec::Vec;
     use olr_data::level::{Material, MaterialGrid};
+    use olr_terrain::Terrain;
 
     fn terrain(w: u32, h: u32, rock: impl Fn(u32, u32) -> bool) -> Terrain {
         let cells: Vec<Material> = (0..w * h)
