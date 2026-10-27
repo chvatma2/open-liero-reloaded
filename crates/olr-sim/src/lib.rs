@@ -29,6 +29,7 @@ mod effects;
 mod events;
 mod input;
 mod live;
+mod live_step;
 mod mod_rt;
 mod mode;
 mod physics;
@@ -44,6 +45,7 @@ mod setup;
 mod shot_codec;
 mod shots;
 mod snapshot;
+mod solid;
 mod spawn;
 mod state;
 mod tally;
@@ -61,8 +63,9 @@ pub use events::{
 };
 pub use input::{KeyLatch, Keys, Latches};
 pub use live::{
-    LIVE_SUBPIXELS, LiveCopy, LiveCopySetup, LiveCopyView, LiveError, LiveHealth, LiveLevel, LiveMotion,
-    LivePart, LivePartKind, LiveProp, LiveSolid, LiveState, LiveTarget, LiveView, LiveWire, MAX_MOTION_SPEED,
+    CRUSH_CHUNK, CRUSH_EVERY, LIVE_SUBPIXELS, LiveCopy, LiveCopySetup, LiveCopyView, LiveError, LiveHealth,
+    LiveLevel, LiveMotion, LivePart, LivePartKind, LiveProp, LiveSolid, LiveState, LiveTarget, LiveView,
+    LiveWire, MAX_MOTION_SPEED, MAX_PART_STEP, PUSH_OUT_PX,
 };
 pub use mod_rt::{
     MAX_AMOUNT, MAX_DEPTH, MAX_PROJECTILES, SimMod, SimModError, SimProjectile, SimWeapon, SpawnInfo,
@@ -83,6 +86,7 @@ pub use settings::{SettingsError, SimSettings};
 pub use setup::{MAX_SLOTS, MatchSetup, SetupError, WormSetup};
 pub use shots::{MAX_SHOOTINGS, RoundTrip, Shot, encode_decode, spawn_time};
 pub use snapshot::{RestoreError, Snapshot};
+pub use solid::{MAX_LIVE_SOLID_PARTS, Solid, SolidParts};
 pub use state::{StateError, WorldState};
 pub use tally::{ACTION_KINDS, ActionTally, HitAudit, projectile_actions};
 pub use world::{CLOCK_OFFSET_MS, MAX_WORMS, World};

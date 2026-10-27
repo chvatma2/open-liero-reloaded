@@ -7,7 +7,6 @@
 
 use olr_data::level::Material;
 use olr_math::{GlibcRand, TimeDiff};
-use olr_terrain::Terrain;
 
 use crate::SimSettings;
 use crate::beam::{BeamCtx, draw_beam, shoot_special};
@@ -15,6 +14,7 @@ use crate::events::CosmeticKind;
 use crate::mod_rt::{SimMod, SimWeapon, WeaponType};
 use crate::rng::Draws;
 use crate::shots::ShootList;
+use crate::solid::Solid;
 use crate::spawn::vec_from_angle;
 use crate::worm::{Dir, Slot, Worm};
 
@@ -147,8 +147,9 @@ pub(crate) fn player_shoot(worms: &mut [Worm], i: usize, m: &SimMod, ctx: &mut B
 /// it spawns every sub-step (the worm is visible to everybody outside Hide
 /// and Seek), which fills the dedicated server's entity pool (spec §18 D4)
 /// and is reported with the aim direction and the trace's length
-/// ([`CosmeticKind::LaserSight`]).
-pub(crate) fn laser_sight(worms: &[Worm], i: usize, m: &SimMod, terrain: &Terrain, draws: &mut Draws) {
+/// ([`CosmeticKind::LaserSight`]). Issue #90: the trace reads the one
+/// terrain query, so a live rock part stops it.
+pub(crate) fn laser_sight(worms: &[Worm], i: usize, m: &SimMod, terrain: Solid<'_>, draws: &mut Draws) {
     let w = &worms[i];
     if w.slots.is_empty() {
         return;
@@ -231,8 +232,13 @@ mod tests {
                 server_time: TimeDiff(0),
             };
             worm_shoot(w, &mut ctx);
-            let mut beam =
-                BeamCtx { terrain: &mut terrain, holes: &[], draws: &mut draws, parts: &mut parts };
+            let mut beam = BeamCtx {
+                live: None,
+                terrain: &mut terrain,
+                holes: &[],
+                draws: &mut draws,
+                parts: &mut parts,
+            };
             player_shoot(core::slice::from_mut(w), 0, &m, &mut beam);
             *w.current_slot()
         };
@@ -315,7 +321,7 @@ mod tests {
         };
         let len = |worms: &[Worm]| {
             let mut draws = Draws::new(GlibcRand::new(1), Mt19937::new(1), 0);
-            laser_sight(worms, 0, &m, &terrain, &mut draws);
+            laser_sight(worms, 0, &m, Solid::new(&terrain, None), &mut draws);
             let lens: Vec<i16> = draws
                 .events
                 .iter()

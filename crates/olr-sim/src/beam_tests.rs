@@ -104,7 +104,7 @@ fn beam_carves_first_solid_pixel() {
     let mut ws = vec![worm(0, 20.0, 25.0), worm(1, 40.0, 30.0)];
     ws[0].slots = vec![slot(0), slot(1), slot(1)];
     let shot = Shot { worm: 0, weapon: 1, pos: Vec2::new(20.0, 25.0), angle: 0, ..Shot::default() };
-    let mut ctx = BeamCtx { terrain: &mut t, holes: &holes, draws: &mut d, parts: &mut parts };
+    let mut ctx = BeamCtx { live: None, terrain: &mut t, holes: &holes, draws: &mut d, parts: &mut parts };
     process_shot_beam(
         &shot,
         &m.weapons()[1],
@@ -220,7 +220,7 @@ fn a_drawn_beam_says_what_stopped_it() {
             &mut ws,
             0,
             &m,
-            &mut BeamCtx { terrain: &mut t, holes: &holes, draws: &mut d, parts: &mut parts },
+            &mut BeamCtx { live: None, terrain: &mut t, holes: &holes, draws: &mut d, parts: &mut parts },
         );
         let (beams, hits, blasts) = seen(&d);
         assert_eq!(beams, [(0, 1, true)]);
@@ -238,7 +238,7 @@ fn a_drawn_beam_says_what_stopped_it() {
             &mut ws,
             0,
             &m,
-            &mut BeamCtx { terrain: &mut t, holes: &holes, draws: &mut d, parts: &mut parts },
+            &mut BeamCtx { live: None, terrain: &mut t, holes: &holes, draws: &mut d, parts: &mut parts },
         );
         // A worm in the way stops the parts it is on (all of a 1-wide
         // beam: no hit); the rest go on to the dirt.
@@ -252,7 +252,7 @@ fn a_drawn_beam_says_what_stopped_it() {
             &mut ws,
             0,
             &m,
-            &mut BeamCtx { terrain: &mut t, holes: &holes, draws: &mut d, parts: &mut parts },
+            &mut BeamCtx { live: None, terrain: &mut t, holes: &holes, draws: &mut d, parts: &mut parts },
         );
         let (beams, hits, _) = seen(&d);
         assert_eq!((beams, hits.len()), (vec![(0, 1, false)], 0));
@@ -288,7 +288,8 @@ fn beam_sets_lastfire_burst() {
         if rand.calls() > before {
             fired.push(step);
         }
-        let mut ctx = BeamCtx { terrain: &mut t, holes: &holes, draws: &mut d, parts: &mut parts };
+        let mut ctx =
+            BeamCtx { live: None, terrain: &mut t, holes: &holes, draws: &mut d, parts: &mut parts };
         player_shoot(&mut ws, 0, &m, &mut ctx);
         if step == 2 {
             // Model R delivers the first shots between frames.
@@ -322,7 +323,7 @@ fn jetpack_quirks() {
             ShootCtx { sim_mod: m, settings: &s, list: &mut list, rand: &mut rand, server_time: TimeDiff(0) };
         worm_shoot(w, &mut sctx);
         assert_eq!(rand.calls(), 0, "specials add no shot");
-        let mut ctx = BeamCtx { terrain: &mut t, holes: &holes, draws: d, parts: &mut parts };
+        let mut ctx = BeamCtx { live: None, terrain: &mut t, holes: &holes, draws: d, parts: &mut parts };
         player_shoot(core::slice::from_mut(w), 0, m, &mut ctx);
     };
     // ROF > 0: WormShoot sets LastFire and drains, so PlayerShoot returns: no thrust.
@@ -373,7 +374,7 @@ fn beam_explodes_a_bonus_within_3_px() {
     // x = 60 is never reached.
     let mut t = terrain(60);
     let mut bonuses = bonus_at(40.0, 27.0);
-    let mut ctx = BeamCtx { terrain: &mut t, holes: &holes, draws: &mut d, parts: &mut parts };
+    let mut ctx = BeamCtx { live: None, terrain: &mut t, holes: &holes, draws: &mut d, parts: &mut parts };
     process_shot_beam(
         &shot,
         &m.weapons()[1],

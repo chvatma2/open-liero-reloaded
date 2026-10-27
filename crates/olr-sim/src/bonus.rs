@@ -16,6 +16,8 @@ use alloc::vec::Vec;
 use olr_math::{AbsTime, GlibcRand, Vec2};
 use olr_terrain::{PX_DIRT, PX_ROCK, Stamp, Terrain};
 
+use crate::solid::Solid;
+
 use crate::SimSettings;
 use crate::buf::Buf;
 use crate::damage::{Harm, injure_worm, min};
@@ -336,9 +338,9 @@ impl Bonuses {
 
     /// `PhysicsEngine::simulateBonuses` (`src/common/PhysicsLX56.cpp:699-715`),
     /// after the projectiles in every sub-step, with `Bonuses` on.
-    pub fn simulate_client(&mut self, terrain: &Terrain, dt: f32) {
+    pub fn simulate_client(&mut self, terrain: Solid<'_>, dt: f32) {
         for b in self.client.iter_mut().filter(|b| b.used) {
-            simulate_bonus(b, terrain, dt);
+            simulate_bonus(b, &terrain, dt);
         }
     }
 
@@ -349,7 +351,7 @@ impl Bonuses {
     pub fn simulate_server(
         &mut self,
         s: &SimSettings,
-        terrain: &Terrain,
+        terrain: Solid<'_>,
         draws: &mut Draws,
         wall_clock: AbsTime,
         over: bool,
@@ -374,8 +376,8 @@ impl Bonuses {
     /// the kind's `rand()` come first, so they are spent even when no slot is
     /// free; the weapon is drawn for a health bonus too, unless no weapon is
     /// allowed. The server carves no hole.
-    fn spawn_natural(&mut self, s: &SimSettings, terrain: &Terrain, draws: &mut Draws, now: AbsTime) {
-        let pos = find_spot(terrain, &mut draws.mt);
+    fn spawn_natural(&mut self, s: &SimSettings, terrain: Solid<'_>, draws: &mut Draws, now: AbsTime) {
+        let pos = find_spot(&terrain, &mut draws.mt);
         let r = draws.rand.random_int(999);
         let kind = if r as f32 >= s.bonus_health_to_weapon_chance * 1000.0 {
             BonusKind::Health
@@ -441,7 +443,7 @@ fn give_bonus(h: &mut Harm, i: usize, b: &Bonus, num_weapons: i32) -> bool {
 /// scanned row by row from the top; at the first dirt or rock pixel, or the
 /// bottom or right map edge, the bonus stops 2 px above that row. So a bonus
 /// with solid ground in its top row moves up 2 px a sub-step.
-fn simulate_bonus(b: &mut Bonus, t: &Terrain, dt: f32) {
+fn simulate_bonus(b: &mut Bonus, t: &Solid<'_>, dt: f32) {
     b.life += dt;
     if b.life > (BONUS_LIFETIME - 3) as f32 {
         b.flash_time += dt;

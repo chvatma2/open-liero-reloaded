@@ -284,6 +284,12 @@ pub enum ScriptEvent {
         copy: u16,
         prop: u16,
     },
+    /// Copy `copy`'s value `prop` stopped short of its motion's target:
+    /// rock was in the way of a part it moves (issue #90).
+    Blocked {
+        copy: u16,
+        prop: u16,
+    },
     Spawned {
         worm: i32,
     },
@@ -310,6 +316,7 @@ impl ScriptEvent {
         Some(match *e {
             EventKind::LiveState { copy, state } => ScriptEvent::Entered { copy, state },
             EventKind::LiveArrived { copy, prop } => ScriptEvent::Arrived { copy, prop },
+            EventKind::LiveBlocked { copy, prop } => ScriptEvent::Blocked { copy, prop },
             EventKind::Spawned { worm } => ScriptEvent::Spawned { worm },
             EventKind::Kill { victim, killer } => ScriptEvent::Killed { victim, killer },
             EventKind::Explosion { pos, damage, .. } => {

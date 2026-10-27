@@ -35,7 +35,7 @@ pub struct Coverage {
 }
 
 /// The kinds of `olr_sim::EventKind`, as the report names them.
-pub const EVENT_KINDS: [&str; 14] = [
+pub const EVENT_KINDS: [&str; 16] = [
     "Sound",
     "TerrainEdit",
     "Explosion",
@@ -50,6 +50,8 @@ pub const EVENT_KINDS: [&str; 14] = [
     "LiveState",
     "ScriptError",
     "LiveArrived",
+    "LiveBlocked",
+    "Crushed",
 ];
 
 fn event_index(kind: &EventKind) -> usize {
@@ -68,6 +70,8 @@ fn event_index(kind: &EventKind) -> usize {
         EventKind::LiveState { .. } => 11,
         EventKind::ScriptError { .. } => 12,
         EventKind::LiveArrived { .. } => 13,
+        EventKind::LiveBlocked { .. } => 14,
+        EventKind::Crushed { .. } => 15,
     }
 }
 

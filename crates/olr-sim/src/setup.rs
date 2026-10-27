@@ -113,7 +113,8 @@ impl MatchSetup {
     /// ranges ([`SimSettings::validate`]), more than [`MAX_WORMS`] worms, a
     /// pool size outside `1..=MAX_POOL_CAPACITY`, a loadout of more than
     /// [`MAX_SLOTS`] slots, live copies, states or values past what a
-    /// `u16` index reaches, or a director without live copies or with more
+    /// `u16` index reaches, more rock parts shown at once than
+    /// [`crate::MAX_LIVE_SOLID_PARTS`] (issue #90), or a director without live copies or with more
     /// script instances than a `u16` indexes.
     pub fn validate(&self) -> Result<(), SetupError> {
         self.settings.validate().map_err(SetupError::Settings)?;
@@ -132,6 +133,10 @@ impl MatchSetup {
             let max = usize::from(u16::MAX);
             let fits = |c: &crate::LiveCopy| c.states.len() <= max && c.props.len() <= max;
             if live.copies.len() > max || !live.copies.iter().all(fits) {
+                return Err(SetupError::Live);
+            }
+            // Issue #90: the parts' index keeps a bit per rock part.
+            if crate::solid::most_rock_parts(live) > crate::solid::MAX_LIVE_SOLID_PARTS {
                 return Err(SetupError::Live);
             }
         }
@@ -157,7 +162,8 @@ pub enum SetupError {
         slots: usize,
     },
     /// More live copies, or a copy with more states or values, than a
-    /// `u16` indexes.
+    /// `u16` indexes, more rock parts than [`crate::MAX_LIVE_SOLID_PARTS`],
+    /// or scripts without copies.
     Live,
 }
 
@@ -244,6 +250,7 @@ impl World {
             director,
         } = setup;
         let terrain_min = terrain.width().min(terrain.height());
+        let map = (terrain.width(), terrain.height());
         let bonuses = Bonuses::new(sim_mod.weapons().len(), start + TimeDiff(CLOCK_OFFSET_MS));
         let draws = Draws::new(GlibcRand::new(seed), Mt19937::new(seed), sim_mod.projectiles().len());
         let referee = Referee::new(mode, sim_mod.weapons().len(), holes.len());
@@ -271,18 +278,23 @@ impl World {
             },
             spare: Spare::new(MAX_WORMS.saturating_sub(worms.len())),
             setup_worms: 0,
-            live: live.map(|l| LiveWorld::new(l, director, seed, start)),
+            live: live.map(|l| LiveWorld::new(l, director, seed, start, map)),
         };
         if let Some(ids) = bonus_weapons {
             world.set_bonus_weapons(&ids);
+        }
+        // Issue #90: the parts stand where they start before the worms
+        // spawn beside them; their events still come after the worms'.
+        if let Some(live) = &mut world.live {
+            live.start();
         }
         for w in worms {
             world.add_worm(w.team, w.loadout, w.spawn);
         }
         world.apply_commands();
         world.setup_worms = world.worms.len();
-        if let Some(live) = &mut world.live {
-            live.start(&mut world.draws.events);
+        if let Some(live) = &world.live {
+            live.announce_start(&mut world.draws.events);
         }
         world
     }
@@ -294,7 +306,13 @@ impl World {
         if self.worms.len() >= MAX_WORMS {
             return None;
         }
-        let (x, y) = at.unwrap_or_else(|| self.find_spot());
+        // Issue #90: a fixed place whose spawn square holds a live rock
+        // part falls back to `FindSpot`.
+        let (x, y) = match at {
+            Some((x, y)) if !self.solid().spawn_clear_of_parts(x, y) => self.find_spot(),
+            Some(p) => p,
+            None => self.find_spot(),
+        };
         let i = self.spawn_worm(x, y)?;
         let w = &mut self.worms[i];
         w.team = team;

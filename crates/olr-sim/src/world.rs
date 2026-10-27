@@ -28,6 +28,7 @@ use crate::respawn::{SPAWN_HOLE, Spawner, find_spot, simulate_respawns};
 use crate::rng::Draws;
 use crate::setup::Spare;
 use crate::shots::{MAX_SHOOTINGS, ShootList, Shot, ShotCtx, encode_decode, process_shot, spawn_time};
+use crate::solid::Solid;
 use crate::tally::{ActionTally, HitAudit};
 use crate::worm::Worm;
 
@@ -253,6 +254,12 @@ impl World {
         self.live.as_ref().map(LiveView::new)
     }
 
+    /// The one terrain query (issue #90): the ground with the shown live
+    /// rock parts over it, as the simulation collides with them.
+    pub fn solid(&self) -> Solid<'_> {
+        Solid::new(&self.terrain, self.live.as_ref().and_then(LiveWorld::solid_parts))
+    }
+
     /// Live copy `copy` enters state `state` at once (indices: names
     /// through [`crate::LiveLevel`]): every value its complete look names
     /// is set, and its [`EventKind::LiveState`] comes with the next tick's
@@ -274,6 +281,21 @@ impl World {
     pub fn set_live_value(&mut self, copy: u16, prop: u16, value: i64) -> Result<(), LiveError> {
         let live = self.live.as_mut().ok_or(LiveError::NoCopy(copy))?;
         live.set_value(copy, prop, value)
+    }
+
+    /// Starts live copy `copy`'s value `prop` moving (issue #89's motion,
+    /// as a script's `move_to`), for tests and benches of worlds without
+    /// scripts: such a world neither hashes nor transfers motions.
+    #[doc(hidden)]
+    pub fn move_live_value_for_test(
+        &mut self,
+        copy: u16,
+        prop: u16,
+        target: i64,
+        speed: i64,
+    ) -> Result<(), LiveError> {
+        let live = self.live.as_mut().ok_or(LiveError::NoCopy(copy))?;
+        live.move_value(copy, prop, target, speed)
     }
 
     /// `CClient::fLastSimulationTime`: where the physics clock is, at most
@@ -345,8 +367,10 @@ impl World {
     /// `FindSpot` generator, as `GameServer::SpawnWorm` picks a spawn
     /// position, for setup before [`World::spawn_worm`]. It advances the
     /// generator, so call it in the same order to replay a match.
+    /// Issue #90: it reads the live rock parts too (none spawns in one).
     pub fn find_spot(&mut self) -> (i32, i32) {
-        let p = find_spot(&self.terrain, &mut self.draws.mt);
+        let solid = Solid::new(&self.terrain, self.live.as_ref().and_then(LiveWorld::solid_parts));
+        let p = find_spot(&solid, &mut self.draws.mt);
         (c_int(p.x), c_int(p.y))
     }
 
@@ -481,10 +505,11 @@ impl World {
             latch.set(keys.get(i).copied().unwrap_or(Keys(0)));
         }
         // Issue #89: the live copies' motions, once a tick before the first
-        // sub-step (so #90's solid parts move between the worms' sub-steps
-        // alike every tick); none in a frozen world.
-        if !frozen && let Some(live) = &mut self.live {
-            live.step_motions(&mut self.draws.events);
+        // sub-step, so the solid parts move between the worms' sub-steps
+        // alike every tick; issue #90: they push, carry and crush worms
+        // (`live_step.rs`). None in a frozen world.
+        if !frozen {
+            self.live_step();
         }
         let step = self.physics_dt();
         let step_clock = self.step_clock();
@@ -506,6 +531,7 @@ impl World {
         self.check_game_over();
         let mut spawner = Spawner {
             settings: &self.settings,
+            live: self.live.as_ref().and_then(LiveWorld::solid_parts),
             terrain: &mut self.terrain,
             holes: &self.holes,
             draws: &mut self.draws,
@@ -515,7 +541,8 @@ impl World {
         };
         simulate_respawns(&mut self.worms, &mut self.latches, &mut spawner);
         let over = self.referee.over.is_some();
-        self.bonuses.simulate_server(&self.settings, &self.terrain, &mut self.draws, wall_clock, over);
+        let solid = Solid::new(&self.terrain, self.live.as_ref().and_then(LiveWorld::solid_parts));
+        self.bonuses.simulate_server(&self.settings, solid, &mut self.draws, wall_clock, over);
         // `CGameMode::Simulate`, and the commands (hook H1).
         self.mode_tick();
         // Issue #88: the level's scripts, after the mode and its commands.
@@ -574,6 +601,7 @@ impl World {
             sim_mod: &self.sim_mod,
             settings: &self.settings,
             pool: &mut self.projectiles,
+            live: self.live.as_ref().and_then(LiveWorld::solid_parts),
             terrain: &mut self.terrain,
             holes: &self.holes,
             draws: &mut self.draws,

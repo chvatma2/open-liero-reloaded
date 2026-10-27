@@ -101,6 +101,7 @@ impl Bench {
             sim_mod: &self.sim_mod,
             settings: &self.settings,
             terrain: &mut self.terrain,
+            live: None,
             worms: &mut self.worms,
             draws: &mut self.draws,
             holes: &self.holes,

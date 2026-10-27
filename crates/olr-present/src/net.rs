@@ -62,7 +62,8 @@ pub struct EventKey {
 /// (explosion); an explosion's shake; a pickup's worm and bonus; a
 /// message's text and numbers; a match end's winner and reason; a live
 /// copy's entry its copy and state (issue #86); a script's error its
-/// instance (issue #88).
+/// instance (issue #88); a motion's end its copy and value (issues #89,
+/// #90); a crush its worm and copy (issue #90).
 pub fn event_keys(tick: u32, events: &[Event]) -> Vec<Option<EventKey>> {
     let mut seen: BTreeMap<(u8, u64), u16> = BTreeMap::new();
     events
@@ -140,6 +141,9 @@ fn class(kind: &EventKind, next: Option<&EventKind>) -> Option<u64> {
         EventKind::ScriptError { instance } => h.words(&[12, instance.into()]),
         // Issue #89: by its copy and value.
         EventKind::LiveArrived { copy, prop } => h.words(&[13, copy.into(), prop.into()]),
+        // Issue #90: by its copy and value; a crush by its worm and copy.
+        EventKind::LiveBlocked { copy, prop } => h.words(&[14, copy.into(), prop.into()]),
+        EventKind::Crushed { worm, copy } => h.words(&[15, worm.into(), copy.into()]),
     }
     Some(h.0)
 }

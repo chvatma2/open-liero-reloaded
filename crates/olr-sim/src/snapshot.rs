@@ -46,9 +46,11 @@ impl World {
         self.terrain.journal_mark().is_some()
     }
 
-    /// A snapshot of the world as it is now.
+    /// A snapshot of the world as it is now. The live parts' index (issue
+    /// #90), derived from the rest, stays out of it: a restore rebuilds it.
     pub fn save(&mut self) -> Snapshot {
-        match self.terrain.journal_mark() {
+        let solids = self.live.as_mut().map(|l| mem::take(&mut l.solids));
+        let s = match self.terrain.journal_mark() {
             Some(mark) => {
                 let terrain = mem::take(&mut self.terrain);
                 let world = self.clone();
@@ -56,6 +58,25 @@ impl World {
                 Snapshot { world, mark: Some(mark) }
             }
             None => Snapshot { world: self.clone(), mark: None },
+        };
+        if let (Some(l), Some(solids)) = (&mut self.live, solids) {
+            l.solids = solids;
+        }
+        s
+    }
+
+    /// [`World::clone_from`] `s`, keeping this world's terrain and live
+    /// parts' index (rebuilt from the restored copies).
+    fn take_snapshot(&mut self, s: &World) {
+        let terrain = mem::take(&mut self.terrain);
+        let solids = self.live.as_mut().map(|l| mem::take(&mut l.solids));
+        self.clone_from(s);
+        self.terrain = terrain;
+        if let Some(l) = &mut self.live {
+            if let Some(solids) = solids {
+                l.solids = solids;
+            }
+            l.refresh_solids();
         }
     }
 
@@ -68,21 +89,16 @@ impl World {
         match (s.mark, self.rollback_enabled()) {
             (Some(mark), true) => {
                 self.terrain.undo_to(mark).map_err(RestoreError::Journal)?;
-                let terrain = mem::take(&mut self.terrain);
-                self.clone_from(&s.world);
-                self.terrain = terrain;
+                self.take_snapshot(&s.world);
                 Ok(())
             }
             (None, false) => {
                 // The snapshot's copy of the map, loaded so that the whole
                 // map is reported restored.
-                let mut terrain = mem::take(&mut self.terrain);
-                if !terrain.load_cells(s.world.terrain.cells()) {
-                    self.terrain = terrain;
+                if !self.terrain.load_cells(s.world.terrain.cells()) {
                     return Err(RestoreError::NotThisWorld);
                 }
-                self.clone_from(&s.world);
-                self.terrain = terrain;
+                self.take_snapshot(&s.world);
                 Ok(())
             }
             _ => Err(RestoreError::NotThisWorld),

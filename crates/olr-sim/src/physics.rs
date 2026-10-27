@@ -12,6 +12,7 @@ use crate::events::{CosmeticKind, SoundId, TerrainOp, TickEvents};
 use crate::input::Latches;
 use crate::mod_rt::SimMod;
 use crate::rng::Draws;
+use crate::solid::{Solid, SolidParts, Solidity, with_solid};
 use crate::worm::{Dir, Worm};
 
 /// Everything one worm's sub-step needs besides the worm itself.
@@ -19,6 +20,8 @@ pub(crate) struct Ctx<'a> {
     pub now: AbsTime,
     pub dt: f32,
     pub terrain: &'a mut Terrain,
+    /// The shown live rock parts over the terrain (issue #90), if any.
+    pub live: Option<SolidParts<'a>>,
     pub holes: &'a [Stamp],
     pub settings: &'a SimSettings,
     pub sim_mod: &'a SimMod,
@@ -169,8 +172,9 @@ fn select_slot(w: &mut Worm, keys: &Latches, slots: i32, olx_quirks: bool) {
     }
 }
 
-/// `CWorm::CheckOnGround` (`src/common/CWorm.cpp:1363-1379`).
-fn check_on_ground(w: &Worm, t: &Terrain) -> bool {
+/// `CWorm::CheckOnGround` (`src/common/CWorm.cpp:1363-1379`), reading the
+/// one terrain query (issue #90: a worm stands on a live rock part).
+fn check_on_ground<S: Solidity>(w: &Worm, t: &S) -> bool {
     let (px, py) = (w.pos.x as i32 as i64, w.pos.y as i32 as i64);
     (1..=6).rev().any(|y| t.flags(px - 2, py + y) & PX_EMPTY == 0 || t.flags(px + 2, py + y) & PX_EMPTY == 0)
 }
@@ -251,7 +255,7 @@ pub(crate) fn simulate_worm(w: &mut Worm, keys: &mut Latches, ctx: &mut Ctx) {
 
     if w.rope.released {
         let (id, pos) = (w.id, w.pos);
-        w.rope.simulate(dt, id, pos, ctx.worms, ctx.terrain, s, ctx.draws);
+        w.rope.simulate(dt, id, pos, ctx.worms, Solid::new(ctx.terrain, ctx.live), s, ctx.draws);
         w.vel += w.rope.force(w.pos, s) * dt;
     }
 
@@ -271,7 +275,7 @@ pub(crate) fn simulate_worm(w: &mut Worm, keys: &mut Latches, ctx: &mut Ctx) {
     }
 
     let mut jumped = false;
-    let on_ground = check_on_ground(w, ctx.terrain);
+    let on_ground = with_solid!(&*ctx.terrain, ctx.live, |t| check_on_ground(w, t));
     if on_ground {
         w.last_air_jump_time = AbsTime(0);
     }
@@ -308,7 +312,10 @@ pub(crate) fn simulate_worm(w: &mut Worm, keys: &mut Latches, ctx: &mut Ctx) {
 
     let mut vel = w.vel;
     let pos = w.pos;
-    move_and_check_collision(dt, w, pos, &mut vel, pos, jumped, ctx.terrain, &mut ctx.draws.events);
+    let ev = &mut ctx.draws.events;
+    with_solid!(&*ctx.terrain, ctx.live, |t| move_and_check_collision(
+        dt, w, pos, &mut vel, pos, jumped, t, ev
+    ));
     w.vel = vel;
 
     if w.on_ground {
@@ -325,16 +332,17 @@ pub(crate) fn simulate_worm(w: &mut Worm, keys: &mut Latches, ctx: &mut Ctx) {
 
 /// `moveAndCheckWormCollision` (`PhysicsLX56.cpp:88-269`) without wrap-around.
 /// It writes `w.pos` and `w.on_ground` directly and updates `vel`. A fast
-/// collision makes the bump sound (`:261-266`).
+/// collision makes the bump sound (`:261-266`). Issue #90: it reads the one
+/// terrain query, so live rock parts stop a worm.
 #[allow(clippy::too_many_arguments)]
-fn move_and_check_collision(
+fn move_and_check_collision<S: Solidity>(
     mut dt: f32,
     w: &mut Worm,
     mut pos: Vec2,
     vel: &mut Vec2,
     old_pos: Vec2,
     jump: bool,
-    t: &Terrain,
+    t: &S,
     ev: &mut TickEvents,
 ) -> bool {
     const MAX_SPEED2: f32 = 10.0;

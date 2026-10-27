@@ -15,8 +15,10 @@
 //! copy's state and values (cloned for rollback, hashed after the rest of
 //! the world, transferred as [`LiveWire`]); [`LiveView`] reads them.
 //! Issue #89 adds motions ([`LiveMotion`]): a position-like value moving
-//! towards a target at a speed, once a tick before the physics. Nothing
-//! reads the parts yet (#90, #91).
+//! towards a target at a speed, once a tick before the physics. Issue #90
+//! makes the rock parts solid: [`LiveWorld`] keeps their index
+//! ([`crate::solid::SolidIndex`]), a motion steps them a whole pixel at a
+//! time ([`PartMover`], `live_step.rs`), and each worm slot's crush count.
 
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -32,6 +34,8 @@ use crate::buf::Buf;
 use crate::checksum::Fnv;
 use crate::events::{EventKind, TickEvents};
 use crate::script::{Director, ScriptWire, ScriptWorld};
+use crate::solid::{SolidIndex, SolidPart, SolidParts};
+use crate::world::MAX_WORMS;
 
 /// What a live copy's value drives (`olr_format::levels::Target`): a
 /// layer property names the asset layer its parts show
@@ -319,6 +323,145 @@ impl LiveTarget {
 /// tick, in 1/[`LIVE_SUBPIXELS`] pixel. A faster speed is clamped to it.
 pub const MAX_MOTION_SPEED: i64 = 8 * LIVE_SUBPIXELS;
 
+/// The most whole pixels a motion steps a rock part a tick (issue #90):
+/// [`MAX_MOTION_SPEED`] in whole pixels.
+pub const MAX_PART_STEP: i64 = MAX_MOTION_SPEED / LIVE_SUBPIXELS;
+
+/// The health a crushing chunk takes (issue #90): a cautious start, set by
+/// issue #100's playtest.
+pub const CRUSH_CHUNK: f32 = 5.0;
+
+/// A wedged worm takes a chunk on its first wedged tick and again every
+/// this many consecutive wedged ticks (issue #90; set by issue #100's
+/// playtest): a full worm held about 2 s dies.
+pub const CRUSH_EVERY: u16 = 10;
+
+/// How far a part that appears over a worm pushes it out, at most, world
+/// pixels (issue #90).
+pub const PUSH_OUT_PX: i32 = 8;
+
+/// How a motion's step of rock parts went ([`PartMover::step`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PartStep {
+    /// The parts moved (and the worms they pushed, carried or hooked).
+    Taken,
+    /// Rock, another part or the level's edge is in the way: the motion
+    /// ends.
+    Blocked,
+    /// A worm with nowhere to go is in the way: wedged, it holds the
+    /// motion until the next tick.
+    Wait,
+}
+
+/// Steps rock parts for a motion (issue #90; the world's side,
+/// `live_step.rs`).
+pub(crate) trait PartMover {
+    /// Moves each `(part, place)` of `moves` (indices into `solids`' parts,
+    /// all of copy `copy`, each a pixel from where it is) if nothing stops
+    /// them, with the worms in their way.
+    fn step(
+        &mut self,
+        solids: &mut SolidIndex,
+        level: &LiveLevel,
+        copy: u16,
+        moves: &[(usize, (i32, i32))],
+    ) -> PartStep;
+}
+
+/// The axis a position-like value places parts on, and which.
+#[derive(Clone, Copy)]
+enum Axis {
+    /// `X` or `Y`: every part of the copy (`y` true for `Y`).
+    Copy { y: bool },
+    /// `OffsetX(l)` or `OffsetY(l)`: the parts of layer `l`.
+    Layer { y: bool, layer: u16 },
+}
+
+impl Axis {
+    /// The axis value `prop` of `c` places parts on: none unless it is
+    /// position-like and the first value driving its target.
+    fn of(c: &LiveCopy, prop: u16) -> Option<Axis> {
+        let t = c.props.get(usize::from(prop))?.target;
+        if c.props.iter().position(|p| p.target == t) != Some(usize::from(prop)) {
+            return None;
+        }
+        match t {
+            LiveTarget::X => Some(Axis::Copy { y: false }),
+            LiveTarget::Y => Some(Axis::Copy { y: true }),
+            LiveTarget::OffsetX(layer) => Some(Axis::Layer { y: false, layer }),
+            LiveTarget::OffsetY(layer) => Some(Axis::Layer { y: true, layer }),
+            _ => None,
+        }
+    }
+
+    fn places(self, p: &SolidPart) -> bool {
+        match self {
+            Axis::Copy { .. } => true,
+            Axis::Layer { layer, .. } => p.layer == Some(layer),
+        }
+    }
+
+    /// Part `p`'s position sum on this axis, 1/[`LIVE_SUBPIXELS`] pixel
+    /// without the whole-pixel places (the copy's value and its layer's
+    /// offset), and, for a mirrored part moved by `X`, the copy's own
+    /// (the rectangle it is mirrored in).
+    fn sum(self, c: &LiveCopy, values: &[i64], p: &SolidPart) -> (i64, Option<i64>) {
+        let y = matches!(self, Axis::Copy { y: true } | Axis::Layer { y: true, .. });
+        let (copy_t, off_t): (LiveTarget, fn(u16) -> LiveTarget) =
+            if y { (LiveTarget::Y, LiveTarget::OffsetY) } else { (LiveTarget::X, LiveTarget::OffsetX) };
+        let base = c.value_of(values, copy_t).unwrap_or(0);
+        let off = p.layer.and_then(|l| c.value_of(values, off_t(l))).unwrap_or(0);
+        let mirrored = p.flip && !y && matches!(self, Axis::Copy { .. });
+        (base.saturating_add(off), mirrored.then_some(base))
+    }
+}
+
+/// The value, from `v` going `dir`, at which `v + off` first enters
+/// another whole pixel; `None` past `i64`'s range.
+fn crossing(v: i64, off: i64, dir: i64) -> Option<i64> {
+    let s = v.checked_add(off)?;
+    let floor = s.div_euclid(LIVE_SUBPIXELS).checked_mul(LIVE_SUBPIXELS)?;
+    if dir > 0 {
+        floor.checked_add(LIVE_SUBPIXELS)?.checked_sub(off)
+    } else {
+        floor.checked_sub(1)?.checked_sub(off)
+    }
+}
+
+/// A part's picture's top-left, world pixels, in copy `c` with `values`:
+/// the copy's place and `X`/`Y`, the part's place `part_at` and its layer's
+/// `OffsetX`/`OffsetY`, rounded down, then (`flip`, the copy's `Facing`)
+/// mirrored within the copy's rectangle, as presentation draws it
+/// (`olr_content::live_frame`).
+fn part_place(
+    c: &LiveCopy,
+    values: &[i64],
+    part_at: (i32, i32),
+    layer: Option<u16>,
+    pw: u32,
+    flip: bool,
+) -> (i32, i32) {
+    let v = |t| c.value_of(values, t).unwrap_or(0);
+    let (ox, oy) = (
+        (i64::from(c.at.0) * LIVE_SUBPIXELS).saturating_add(v(LiveTarget::X)),
+        (i64::from(c.at.1) * LIVE_SUBPIXELS).saturating_add(v(LiveTarget::Y)),
+    );
+    let (mut x, mut y) = (
+        ox.saturating_add(i64::from(part_at.0) * LIVE_SUBPIXELS),
+        oy.saturating_add(i64::from(part_at.1) * LIVE_SUBPIXELS),
+    );
+    if let Some(l) = layer {
+        x = x.saturating_add(v(LiveTarget::OffsetX(l)));
+        y = y.saturating_add(v(LiveTarget::OffsetY(l)));
+    }
+    let (x, y) = (whole(x), whole(y));
+    if !flip {
+        return (x, y);
+    }
+    let m = 2 * i64::from(whole(ox)) + i64::from(c.size.0) - i64::from(x) - i64::from(pw);
+    (m.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32, y)
+}
+
 /// A position-like value's motion (issue #89): towards `target` (the
 /// world's units, within the value's limits) by `speed` (1/
 /// [`LIVE_SUBPIXELS`] pixel a tick, 1 to [`MAX_MOTION_SPEED`]) once a
@@ -422,6 +565,11 @@ pub(crate) struct LiveWorld {
     /// The scripts' state (issue #88), present when the setup has a
     /// director.
     pub(crate) script: Option<ScriptWorld>,
+    /// Issue #90: each worm slot's consecutive wedged ticks (crushing).
+    crush: Buf<u16>,
+    /// Issue #90: the shown rock parts' index, derived from the rest (in
+    /// no checksum or transfer; [`LiveWorld::refresh_solids`]).
+    pub(crate) solids: SolidIndex,
 }
 
 impl LiveWorld {
@@ -432,6 +580,7 @@ impl LiveWorld {
         director: Option<Box<dyn Director>>,
         seed: u32,
         start: AbsTime,
+        map: (u32, u32),
     ) -> LiveWorld {
         let n = level.copies.len();
         let mut offsets = Buf::with_capacity(n + 1);
@@ -446,7 +595,11 @@ impl LiveWorld {
         let mut motions = Buf::with_capacity(values.len());
         motions.resize(values.len(), LiveMotion::default());
         let script = director.map(|d| ScriptWorld::new(d, &level, seed));
-        LiveWorld { level, offsets, states, values, motions, start, script }
+        let mut crush = Buf::with_capacity(MAX_WORMS);
+        crush.resize(MAX_WORMS, 0);
+        let rock = level.copies.iter().flat_map(|c| &c.pictures).any(|p| p.bits.is_some());
+        let solids = SolidIndex::new(map, rock);
+        LiveWorld { level, offsets, states, values, motions, start, script, crush, solids }
     }
 
     /// Every copy's state, every value and its motion, the values'
@@ -461,14 +614,16 @@ impl LiveWorld {
         }
     }
 
-    /// At setup: every copy enters its starting state (an event each, with
-    /// the first tick's), then its own starting values apply.
-    pub(crate) fn start(&mut self, events: &mut TickEvents) {
+    /// At setup: every copy enters its starting state, then its own
+    /// starting values apply; the parts' index follows. Their events come
+    /// from [`LiveWorld::announce_start`], after the worms' (issue #90: the
+    /// worms spawn beside the parts where they start).
+    pub(crate) fn start(&mut self) {
         let level = self.level.clone();
         for (i, c) in level.copies.iter().enumerate() {
             let Ok(copy) = u16::try_from(i) else { break };
             if usize::from(c.start_state) < c.states.len() {
-                self.enter(copy, c.start_state, events);
+                self.look(copy, c.start_state);
             }
             for &(prop, v) in &c.start_values {
                 if let Some(p) = c.props.get(usize::from(prop)) {
@@ -476,6 +631,55 @@ impl LiveWorld {
                 }
             }
         }
+        self.refresh_solids();
+    }
+
+    /// The starting states' [`EventKind::LiveState`], one a copy in order
+    /// (with the first tick's events).
+    pub(crate) fn announce_start(&self, events: &mut TickEvents) {
+        for (i, c) in self.level.copies.iter().enumerate() {
+            let Ok(copy) = u16::try_from(i) else { break };
+            if usize::from(c.start_state) < c.states.len() {
+                events.push(EventKind::LiveState { copy, state: c.start_state });
+            }
+        }
+    }
+
+    /// Rebuilds the rock parts' index from the copies' states and values
+    /// (issue #90): after anything that may change a footprint other than
+    /// a motion's step (setup, a script phase, a restore, a state load).
+    /// Allocates nothing.
+    pub(crate) fn refresh_solids(&mut self) {
+        let mut solids = core::mem::take(&mut self.solids);
+        solids.clear();
+        for c in LiveView::new(self).copies() {
+            let flip = c.target(LiveTarget::Facing).is_some_and(|v| v != 0);
+            for (p, _) in c.rock_parts() {
+                let Some(pic) = c.setup.pictures.get(usize::from(p.picture)) else { continue };
+                if pic.bits.is_none() {
+                    continue;
+                }
+                let at = part_place(c.setup, c.values, p.at, p.layer, pic.size.0, flip);
+                let (picture, layer, part_at, size) = (p.picture, p.layer, p.at, pic.size);
+                solids.push(SolidPart { copy: c.index, picture, layer, part_at, at, size, flip });
+            }
+        }
+        self.solids = solids;
+    }
+
+    /// The shown rock parts, to read; `None` when none shows (the ground
+    /// alone then).
+    pub(crate) fn solid_parts(&self) -> Option<SolidParts<'_>> {
+        (!self.solids.is_empty()).then_some(SolidParts { index: &self.solids, level: &self.level })
+    }
+
+    /// Each worm slot's consecutive wedged ticks.
+    pub(crate) fn crush(&self) -> &[u16] {
+        &self.crush
+    }
+
+    pub(crate) fn crush_mut(&mut self) -> &mut [u16] {
+        &mut self.crush
     }
 
     fn range(&self, copy: u16) -> core::ops::Range<usize> {
@@ -511,10 +715,18 @@ impl LiveWorld {
     /// Copy `copy` enters `state`: every value the state's complete look
     /// names is set, then [`EventKind::LiveState`] is emitted.
     fn enter(&mut self, copy: u16, state: u16, events: &mut TickEvents) {
+        if self.look(copy, state) {
+            events.push(EventKind::LiveState { copy, state });
+        }
+    }
+
+    /// Copy `copy` takes `state` and every value its complete look names;
+    /// whether it has that state.
+    fn look(&mut self, copy: u16, state: u16) -> bool {
         let level = self.level.clone();
         let Some(s) = level.copies.get(usize::from(copy)).and_then(|c| c.states.get(usize::from(state)))
         else {
-            return;
+            return false;
         };
         if let Some(slot) = self.states.get_mut(usize::from(copy)) {
             *slot = state;
@@ -525,7 +737,7 @@ impl LiveWorld {
                 self.put(copy, prop, p.target.scale(v));
             }
         }
-        events.push(EventKind::LiveState { copy, state });
+        true
     }
 
     /// [`crate::World::set_live_state`].
@@ -540,6 +752,7 @@ impl LiveWorld {
             return Err(LiveError::NoState { copy, state });
         }
         self.enter(copy, state, events);
+        self.refresh_solids();
         Ok(())
     }
 
@@ -552,6 +765,7 @@ impl LiveWorld {
         }
         self.put(copy, prop, value);
         self.set_motion(copy, prop, LiveMotion::default());
+        self.refresh_solids();
         Ok(())
     }
 
@@ -597,7 +811,15 @@ impl LiveWorld {
     /// level and value order, each moving value goes towards its target by
     /// its speed, clamped into its limits; one that reaches it stops and
     /// emits [`EventKind::LiveArrived`]. Integers only.
-    pub(crate) fn step_motions(&mut self, events: &mut TickEvents) {
+    ///
+    /// Issue #90: a value that places shown rock parts (`X`, `Y` all the
+    /// copy's, `OffsetX`, `OffsetY` its layer's) moves them a whole pixel
+    /// at a time, as it crosses whole pixels: at each crossing the parts
+    /// that change place go there through `mover` ([`PartMover`]). Rock in
+    /// their way ends the motion there ([`EventKind::LiveBlocked`]); a
+    /// wedged worm holds the value until the next tick. Either way the
+    /// value stays short of the crossing, where its parts are.
+    pub(crate) fn step_motions(&mut self, events: &mut TickEvents, mover: &mut impl PartMover) {
         if self.motions.iter().all(|m| !m.moving()) {
             return;
         }
@@ -618,22 +840,122 @@ impl LiveWorld {
                     v.saturating_sub(m.speed).max(m.target)
                 };
                 let next = c.clamped(p, next);
-                self.values[at] = next;
-                if next == m.target {
+                let prop = k as u16;
+                let (reached, blocked) = self.walk(c, copy, prop, at, next, mover);
+                if blocked {
                     self.motions[at] = LiveMotion::default();
-                    events.push(EventKind::LiveArrived { copy, prop: k as u16 });
+                    events.push(EventKind::LiveBlocked { copy, prop });
+                } else if reached == m.target {
+                    self.motions[at] = LiveMotion::default();
+                    events.push(EventKind::LiveArrived { copy, prop });
                 }
             }
         }
+    }
+
+    /// Moves value `at` (prop `prop` of `copy`, setup `c`) to `to`, crossing
+    /// by crossing as its shown rock parts change place (issue #90).
+    /// Returns where it got and whether rock stopped it.
+    fn walk(
+        &mut self,
+        c: &LiveCopy,
+        copy: u16,
+        prop: u16,
+        at: usize,
+        to: i64,
+        mover: &mut impl PartMover,
+    ) -> (i64, bool) {
+        let Some(axis) = Axis::of(c, prop) else {
+            self.values[at] = to;
+            return (to, false);
+        };
+        let r = self.range(copy);
+        // The parts it places: their bits, and every offset at which one of
+        // their whole-pixel terms crosses (the other values in the sum).
+        let mut moved = 0u64;
+        let mut offs = [0i64; 2 * crate::solid::MAX_LIVE_SOLID_PARTS];
+        let mut n = 0;
+        for (i, sp) in self.solids.parts().iter().enumerate() {
+            if sp.copy != copy || !axis.places(sp) {
+                continue;
+            }
+            moved |= 1 << i;
+            let (sum, flip_term) = axis.sum(c, &self.values[r.clone()], sp);
+            offs[n] = sum.saturating_sub(self.values[at]);
+            n += 1;
+            // A mirrored part also moves with its copy's rectangle.
+            if let Some(t) = flip_term {
+                offs[n] = t.saturating_sub(self.values[at]);
+                n += 1;
+            }
+        }
+        let mut v = self.values[at];
+        if moved == 0 {
+            self.values[at] = to;
+            return (to, false);
+        }
+        let dir = (to - v).signum();
+        let mut moves = [(0usize, (0i32, 0i32)); crate::solid::MAX_LIVE_SOLID_PARTS];
+        // Every part crosses at most `MAX_PART_STEP` + 1 times; a bound
+        // keeps a pathological setup from stalling.
+        for _ in 0..(n + 1) * (MAX_PART_STEP as usize + 2) {
+            if v == to {
+                break;
+            }
+            let Some(cross) = offs[..n]
+                .iter()
+                .filter_map(|&o| crossing(v, o, dir))
+                .reduce(|a, b| if dir > 0 { a.min(b) } else { a.max(b) })
+            else {
+                break;
+            };
+            if (dir > 0 && cross > to) || (dir < 0 && cross < to) {
+                v = to;
+                break;
+            }
+            self.values[at] = cross;
+            let values = &self.values[r.clone()];
+            let mut k = 0;
+            for (i, sp) in self.solids.parts().iter().enumerate() {
+                if moved & (1 << i) == 0 {
+                    continue;
+                }
+                let place = part_place(c, values, sp.part_at, sp.layer, sp.size.0, sp.flip);
+                if place != sp.at {
+                    moves[k] = (i, place);
+                    k += 1;
+                }
+            }
+            if k == 0 {
+                v = cross;
+                continue;
+            }
+            match mover.step(&mut self.solids, &self.level, copy, &moves[..k]) {
+                PartStep::Taken => v = cross,
+                PartStep::Blocked => {
+                    self.values[at] = cross - dir;
+                    return (cross - dir, true);
+                }
+                PartStep::Wait => {
+                    v = cross - dir;
+                    break;
+                }
+            }
+        }
+        self.values[at] = v;
+        (v, false)
     }
 
     /// The live part of [`crate::World::checksum`]: every copy's state,
     /// then every value, after their counts; then, in a world with
     /// scripts (only then, so a level without them hashes as before), the
     /// scripts' state (issue #88) and every value's motion (issue #89:
-    /// only scripts start one).
+    /// only scripts start one); last, only while a worm is wedged (so a
+    /// world nobody was crushed in hashes as before), the crush counts
+    /// (issue #90).
     pub(crate) fn hash(&self, h: &mut Fnv) {
-        let LiveWorld { level: _, offsets: _, states, values, motions, start: _, script } = self;
+        let LiveWorld { level: _, offsets: _, states, values, motions, start: _, script, crush, solids: _ } =
+            self;
         h.usize(states.len());
         for &s in states.iter() {
             h.bytes(&s.to_le_bytes());
@@ -649,16 +971,24 @@ impl LiveWorld {
                 h.u64(m.speed as u64);
             }
         }
+        if crush.iter().any(|&c| c != 0) {
+            h.usize(crush.len());
+            for &c in crush.iter() {
+                h.bytes(&c.to_le_bytes());
+            }
+        }
     }
 
     /// The live part of [`crate::World::state`].
     pub(crate) fn wire(&self) -> LiveWire {
-        let LiveWorld { level: _, offsets: _, states, values, motions, start: _, script } = self;
+        let LiveWorld { level: _, offsets: _, states, values, motions, start: _, script, crush, solids: _ } =
+            self;
         LiveWire {
             states: states.to_vec(),
             values: values.to_vec(),
             motions: motions.to_vec(),
             script: script.as_ref().map(|s| s.wire()),
+            crush: crush.to_vec(),
         }
     }
 
@@ -667,9 +997,10 @@ impl LiveWorld {
     /// motion per value (a moving one position-like, its target within
     /// the limits, its speed 1 to [`MAX_MOTION_SPEED`]; none in a world
     /// without scripts), and a scripts' part exactly when this world has
-    /// one, fitting it (`ScriptWorld::can_load`).
+    /// one, fitting it (`ScriptWorld::can_load`); a crush count per worm
+    /// slot (issue #90).
     pub(crate) fn can_load(&self, w: &LiveWire) -> bool {
-        let LiveWire { states, values, motions, script } = w;
+        let LiveWire { states, values, motions, script, crush } = w;
         let script_ok = match (&self.script, script) {
             (None, None) => true,
             (Some(s), Some(w)) => s.can_load(w, &self.level),
@@ -683,6 +1014,7 @@ impl LiveWorld {
                     && c.clamped(p, m.target) == m.target)
         };
         script_ok
+            && crush.len() == self.crush.len()
             && states.len() == self.states.len()
             && values.len() == self.values.len()
             && motions.len() == self.values.len()
@@ -696,27 +1028,32 @@ impl LiveWorld {
             })
     }
 
-    /// Takes `w`, checked by [`LiveWorld::can_load`]; keeps every buffer.
+    /// Takes `w`, checked by [`LiveWorld::can_load`]; keeps every buffer
+    /// and rebuilds the parts' index.
     pub(crate) fn load(&mut self, w: LiveWire) {
-        let LiveWire { states, values, motions, script } = w;
+        let LiveWire { states, values, motions, script, crush } = w;
         self.states.copy_from_slice(&states);
         self.values.copy_from_slice(&values);
         self.motions.copy_from_slice(&motions);
+        self.crush.copy_from_slice(&crush);
         if let (Some(s), Some(w)) = (&mut self.script, script) {
             s.load(w);
         }
+        self.refresh_solids();
     }
 }
 
 /// The live copies' part of a [`crate::WorldState`]: each copy's state and
 /// every value and its motion (issue #89), as [`LiveWorld`] holds them,
-/// and the scripts' state in a world with scripts (issue #88).
+/// the scripts' state in a world with scripts (issue #88), and each worm
+/// slot's crush count (issue #90).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LiveWire {
     states: Vec<u16>,
     values: Vec<i64>,
     motions: Vec<LiveMotion>,
     script: Option<ScriptWire>,
+    crush: Vec<u16>,
 }
 
 impl LiveWire {
@@ -725,6 +1062,13 @@ impl LiveWire {
     #[doc(hidden)]
     pub fn script_mut_for_test(&mut self) -> &mut Option<ScriptWire> {
         &mut self.script
+    }
+
+    /// The crush counts by worm slot, for tests of
+    /// [`crate::World::load_state`]'s checks.
+    #[doc(hidden)]
+    pub fn crush_mut_for_test(&mut self) -> &mut Vec<u16> {
+        &mut self.crush
     }
 
     /// Sets value `i`'s motion (flat), for tests of

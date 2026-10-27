@@ -16,6 +16,7 @@ use crate::mod_rt::{SimMod, SimProjectile};
 use crate::projectile::{Projectile, ProjectilePool, attr_set, c_int, c_u64};
 use crate::referee::Referee;
 use crate::rng::Draws;
+use crate::solid::{Solidity, with_solid};
 use crate::world::MAX_WORMS;
 use crate::worm::Worm;
 
@@ -51,6 +52,8 @@ pub(crate) struct ProjCtx<'a> {
     pub sim_mod: &'a SimMod,
     pub settings: &'a SimSettings,
     pub terrain: &'a mut Terrain,
+    /// The shown live rock parts over the terrain (issue #90), if any.
+    pub live: Option<crate::solid::SolidParts<'a>>,
     pub worms: &'a mut [Worm],
     pub draws: &'a mut Draws,
     /// The theme's hole stamps, smallest first.
@@ -256,13 +259,13 @@ fn check_coll_and_move(p: &mut Projectile, pi: &SimProjectile, dt: TimeDiff, ctx
 }
 
 /// `CProjectile::ColInfo`.
-struct ColInfo {
+pub(crate) struct ColInfo {
     left: i32,
     right: i32,
     top: i32,
     bottom: i32,
-    collided: bool,
-    only_dirt: bool,
+    pub(crate) collided: bool,
+    pub(crate) only_dirt: bool,
 }
 
 /// `LX56Projectile_checkCollAndMove_Frame` (`:367-430`). `vOldPos` is the
@@ -299,7 +302,7 @@ fn move_frame(p: &mut Projectile, pi: &SimProjectile, dt: TimeDiff, ctx: &mut Pr
     if p.last_sim_time <= AbsTime(p.spawn_time.0.wrapping_add(window.0)) {
         return final_worm_check(p, pi, frame_old_pos, old_vel, NO_COL, ctx);
     }
-    let c = terrain_collision(p, px, py, ctx.terrain);
+    let c = with_solid!(&*ctx.terrain, ctx.live, |t| terrain_collision(p, px, py, t));
     if c.collided && handle_collision(p, pi, &c, frame_old_pos, old_vel, dt) {
         let mask = PJC_TERRAIN | if c.only_dirt { PJC_DIRT } else { 0 };
         return final_worm_check(p, pi, frame_old_pos, old_vel, Col::Terrain(mask), ctx);
@@ -329,8 +332,9 @@ fn map_bounds_collision(p: &mut Projectile, px: i32, py: i32, t: &Terrain) -> bo
 }
 
 /// `CProjectile::TerrainCollision` (`:220-280`) for rectangles without
-/// wrap-around: every solid pixel in the projectile's box.
-fn terrain_collision(p: &Projectile, px: i32, py: i32, t: &Terrain) -> ColInfo {
+/// wrap-around: every solid pixel in the projectile's box, through the one
+/// terrain query (issue #90: a live rock part is rock, never dirt).
+pub(crate) fn terrain_collision<S: Solidity>(p: &Projectile, px: i32, py: i32, t: &S) -> ColInfo {
     let mut res = ColInfo { left: 0, right: 0, top: 0, bottom: 0, collided: false, only_dirt: true };
     let (rx, ry) = p.radius;
     for y in py - ry..=py + ry {

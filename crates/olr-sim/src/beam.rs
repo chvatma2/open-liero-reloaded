@@ -25,6 +25,7 @@ use crate::projectile::c_int;
 use crate::referee::Referee;
 use crate::rng::Draws;
 use crate::shots::Shot;
+use crate::solid::{Solid, SolidParts};
 use crate::spawn::vec_from_angle;
 use crate::world::{CLOCK_OFFSET_MS, MAX_WORMS};
 use crate::worm::{Dir, Worm};
@@ -32,6 +33,9 @@ use crate::worm::{Dir, Worm};
 /// What the client's beam and special code reads or changes besides the worms.
 pub(crate) struct BeamCtx<'a> {
     pub terrain: &'a mut Terrain,
+    /// The shown live rock parts over the terrain (issue #90), which stop
+    /// a beam as rock; it carves the ground under them.
+    pub live: Option<SolidParts<'a>>,
     pub holes: &'a [Stamp],
     pub draws: &'a mut Draws,
     /// `goodWidthParts`. A beam is never wider than the map's smaller side,
@@ -107,8 +111,10 @@ fn trace(
     pos
 }
 
-/// `(p.x <= 0 || p.y <= 0) ? PX_ROCK : GetPixelFlag((int)p.x, (int)p.y)`.
-fn solid(t: &Terrain, p: Vec2) -> bool {
+/// `(p.x <= 0 || p.y <= 0) ? PX_ROCK : GetPixelFlag((int)p.x, (int)p.y)`,
+/// through the one terrain query (issue #90).
+pub(crate) fn solid(t: &Terrain, live: Option<SolidParts<'_>>, p: Vec2) -> bool {
+    let t = Solid::new(t, live);
     let px = if p.x <= 0.0 || p.y <= 0.0 { PX_ROCK } else { t.flags(c_int(p.x) as i64, c_int(p.y) as i64) };
     px & (PX_DIRT | PX_ROCK) != 0
 }
@@ -179,7 +185,8 @@ pub(crate) fn process_shot_beam(
     let dir = vec_from_angle(shot.angle as f32);
     let map_min = ctx.terrain.width().min(ctx.terrain.height());
     let mut set = others(worms, shot.worm);
-    let BeamCtx { terrain, holes, draws, parts } = ctx;
+    let BeamCtx { terrain, live, holes, draws, parts } = ctx;
+    let live = *live;
     // The trace only ever frees bonuses, so without one at the start no part
     // needs the 32-slot scan (a wide, long beam has many parts).
     let bonus_check = beam.damage != -1 && bonuses.iter().any(|b| b.used);
@@ -200,7 +207,7 @@ pub(crate) fn process_shot_beam(
             explosion(&mut blast, shot.spawn, p, 0.0, 5, shot.worm, -1);
             return Part::Stopped;
         }
-        if solid(terrain, p) {
+        if solid(terrain, live, p) {
             if beam.damage != -1 {
                 let size = spread(beam.damage, beam, width);
                 let d = carve_at(terrain, holes, &mut draws.events, TerrainOp::Beam, size, p);
@@ -244,13 +251,14 @@ pub(crate) fn draw_beam(worms: &mut [Worm], i: usize, m: &SimMod, ctx: &mut Beam
     let (id, pos, dir, weapon) = (w.id, w.pos, vec_from_angle(angle), slot.weapon);
     let map_min = ctx.terrain.width().min(ctx.terrain.height());
     let mut set = others(worms, id);
-    let BeamCtx { terrain, holes, draws, parts } = ctx;
+    let BeamCtx { terrain, live, holes, draws, parts } = ctx;
+    let live = *live;
     // Issue #69: whether a part stopped on something, and where the first
     // parts stopped on terrain (the beam's heat); the level's edge, which
     // stops a beam as rock, is neither (a beam into the sky ends there).
     let (mut stopped, mut hits, mut n) = (false, [Vec2::ZERO; MAX_BEAM_HITS], 0);
     let end = trace(beam, pos, dir, map_min, parts, |p, width| {
-        if solid(terrain, p) {
+        if solid(terrain, live, p) {
             if within(terrain, p) {
                 stopped = true;
                 if n < MAX_BEAM_HITS {

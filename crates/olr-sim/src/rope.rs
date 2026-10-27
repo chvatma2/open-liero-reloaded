@@ -3,9 +3,9 @@
 
 use olr_data::level::Material;
 use olr_math::Vec2;
-use olr_terrain::Terrain;
 
 use crate::rng::Draws;
+use crate::solid::Solid;
 
 use crate::SimSettings;
 
@@ -95,7 +95,8 @@ impl NinjaRope {
     /// `simulateNinjarope` for one sub-step of `dt` seconds. `owner_pos` is the
     /// owner's position at the start of the step; `worms` is `(id, alive, pos)`
     /// of every worm, for hooking onto other worms. Hooking dirt for the first
-    /// time throws particles, which consume `draws`.
+    /// time throws particles, which consume `draws`. Issue #90: the hook
+    /// reads the one terrain query, so it holds on a live rock part.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn simulate(
         &mut self,
@@ -103,7 +104,7 @@ impl NinjaRope {
         owner_id: i32,
         owner_pos: Vec2,
         worms: &[(i32, bool, Vec2)],
-        terrain: &Terrain,
+        terrain: Solid<'_>,
         s: &SimSettings,
         draws: &mut Draws,
     ) {

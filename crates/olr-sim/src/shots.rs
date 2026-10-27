@@ -145,6 +145,8 @@ pub(crate) struct ShotCtx<'a> {
     pub settings: &'a SimSettings,
     pub pool: &'a mut ProjectilePool,
     pub terrain: &'a mut Terrain,
+    /// The shown live rock parts (issue #90), which stop a beam.
+    pub live: Option<crate::solid::SolidParts<'a>>,
     pub holes: &'a [Stamp],
     pub draws: &'a mut Draws,
     /// The beam trace's `goodWidthParts`.
@@ -177,7 +179,13 @@ pub(crate) fn process_shot(shot: &mut Shot, spawn: AbsTime, worms: &mut [Worm], 
     let fired = EventKind::WeaponFired { worm: shot.worm, weapon: shot.weapon };
     if wpn.kind == WeaponType::Beam {
         ctx.draws.events.push(fired);
-        let mut beam = BeamCtx { terrain: ctx.terrain, holes: ctx.holes, draws: ctx.draws, parts: ctx.parts };
+        let mut beam = BeamCtx {
+            terrain: ctx.terrain,
+            live: ctx.live,
+            holes: ctx.holes,
+            draws: ctx.draws,
+            parts: ctx.parts,
+        };
         process_shot_beam(shot, wpn, worms, &mut beam, ctx.settings, ctx.now, ctx.bonuses, ctx.referee);
         return;
     }

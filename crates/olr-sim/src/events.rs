@@ -218,6 +218,16 @@ pub enum EventKind {
     /// index) reached its motion's target (issue #89), in the motions'
     /// step before the frame's first physics sub-step. No OLX counterpart.
     LiveArrived { copy: u16, prop: u16 },
+    /// Live copy `copy`'s value `prop` stopped short of its motion's target
+    /// (issue #90): ground rock, another live rock part or the level's edge
+    /// was in the way of a rock part it moves, and the motion ended there.
+    /// No OLX counterpart.
+    LiveBlocked { copy: u16, prop: u16 },
+    /// Worm `worm` takes a crushing chunk from live copy `copy`'s rock
+    /// (issue #90): wedged by it, with nowhere to go. The marker comes right
+    /// before the chunk's [`EventKind::Damage`] (`by` -1, nobody): bots and
+    /// the HUD read it, never `by`. No OLX counterpart.
+    Crushed { worm: i32, copy: u16 },
 }
 
 impl EventKind {

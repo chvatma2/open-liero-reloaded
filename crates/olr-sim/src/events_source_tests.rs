@@ -169,7 +169,7 @@ fn a_bonus_hit_by_a_beam_shakes_5() {
         (0..100 * 50).map(|i| if i % 100 >= 60 { Material::Dirt } else { Material::Background }).collect();
     let mut t = Terrain::from_grid(&MaterialGrid::from_cells(100, 50, cells).unwrap());
     let (holes, mut d, mut parts) = (holes(), Draws::new(GlibcRand::new(1), Mt19937::new(1), 0), Vec::new());
-    let mut ctx = BeamCtx { terrain: &mut t, holes: &holes, draws: &mut d, parts: &mut parts };
+    let mut ctx = BeamCtx { live: None, terrain: &mut t, holes: &holes, draws: &mut d, parts: &mut parts };
     process_shot_beam(
         &shot,
         &m.weapons()[1],

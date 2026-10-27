@@ -15,6 +15,7 @@ use crate::mode::ModeCtx;
 use crate::projectile::{c_i64, c_int, c_u64};
 use crate::referee::Referee;
 use crate::rng::Draws;
+use crate::solid::{SolidParts, Solidity, with_solid};
 use crate::worm::{Dir, Worm, WormState};
 
 /// OLX `SPAWN_HOLESIZE` (`include/Consts.h:36`): the size-4 (largest) hole.
@@ -29,7 +30,7 @@ fn rnd(mt: &mut Mt19937) -> f64 {
 /// `CMap::IsGoodSpawnPoint` (`src/game/CMap.h:458`): no rock (outside the
 /// map counts as rock) in the 6 × 6 square from `(x - 3, y - 3)` to
 /// `(x + 2, y + 2)`, at the position truncated to `long`.
-fn is_good_spawn_point(t: &Terrain, p: Vec2) -> bool {
+fn is_good_spawn_point<S: Solidity>(t: &S, p: Vec2) -> bool {
     let (x, y) = (c_i64(p.x), c_i64(p.y));
     (y.saturating_sub(3)..y.saturating_add(3))
         .all(|yy| (x.saturating_sub(3)..x.saturating_add(3)).all(|xx| t.flags(xx, yy) & PX_ROCK == 0))
@@ -37,7 +38,8 @@ fn is_good_spawn_point(t: &Terrain, p: Vec2) -> bool {
 
 /// `CMap::FindSpot`: up to 1000 random positions, two `rnd()` draws each,
 /// until one has no rock around it; after 1000 failures, the last one.
-pub(crate) fn find_spot(t: &Terrain, mt: &mut Mt19937) -> Vec2 {
+/// Issue #90: through the one terrain query, so a live rock part is rock.
+pub(crate) fn find_spot<S: Solidity>(t: &S, mt: &mut Mt19937) -> Vec2 {
     let (w, h) = (t.width() as f64, t.height() as f64);
     let mut tries = 1000;
     loop {
@@ -96,6 +98,8 @@ impl Worm {
 pub(crate) struct Spawner<'a> {
     pub settings: &'a SimSettings,
     pub terrain: &'a mut Terrain,
+    /// The shown live rock parts (issue #90): no worm spawns in one.
+    pub live: Option<SolidParts<'a>>,
     pub holes: &'a [Stamp],
     pub draws: &'a mut Draws,
     /// `GetPhysicsTime()`.
@@ -163,9 +167,10 @@ fn spawn_worm(w: &mut Worm, keys: &mut Latches, sp: &mut Spawner) -> bool {
     if sp.referee.over.is_some() {
         return false;
     }
-    let mut pos = find_spot(sp.terrain, &mut sp.draws.mt);
+    let mt = &mut sp.draws.mt;
+    let mut pos = with_solid!(&*sp.terrain, sp.live, |t| find_spot(t, mt));
     if pos.x == -1.0 && pos.y == -1.0 {
-        pos = find_spot(sp.terrain, &mut sp.draws.mt);
+        pos = with_solid!(&*sp.terrain, sp.live, |t| find_spot(t, mt));
     }
     w.respawn(pos, sp.now, sp.settings.olx_quirks);
     keys.reset();

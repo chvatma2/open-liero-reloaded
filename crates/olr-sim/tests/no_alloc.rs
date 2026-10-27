@@ -2,7 +2,8 @@
 //! with firing, explosions, dirt, bleeding, deaths and respawns, and with
 //! bonuses spawned, placed, picked up and exploded; nor do its events, also
 //! in a cloned world; nor do a game mode's commands (weapons given mid-match,
-//! a worm spawned mid-match), nor a world with live copies (issue #86).
+//! a worm spawned mid-match), nor a world with live copies (issue #86),
+//! nor one whose live rock parts push, carry and crush worms (issue #90).
 //! (`olr-scenario`'s `tests/no_alloc.rs` fires every
 //! weapon of the imported Classic mod.)
 
@@ -13,8 +14,9 @@ use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::{Material, MaterialGrid};
 use olr_data::mod_def::*;
 use olr_sim::{
-    BonusItem, CommandError, Fnv, GameMode, Keys, KillCredit, Loadout, MatchSetup, ModeCtx, SimMod,
-    SimSettings, Slot, TickEvents, World, WormSetup, olx_kill_credit,
+    BonusItem, CommandError, Fnv, GameMode, Keys, KillCredit, LIVE_SUBPIXELS, LiveCopy, LiveCopySetup,
+    LiveLevel, LivePart, LivePartKind, LiveProp, LiveSolid, LiveState, LiveTarget, Loadout, MatchSetup,
+    ModeCtx, SimMod, SimSettings, Slot, TickEvents, World, WormSetup, olx_kill_credit,
 };
 use olr_terrain::{GreenMask, Stamp, Terrain};
 
@@ -388,4 +390,81 @@ fn a_live_world_ticks_without_allocating() {
         }
     });
     assert_eq!(info.count_total, 0, "a cloned live world's tick allocated");
+}
+
+/// Issue #90: a rock slab across the box going up and down through the
+/// worms (pushing, carrying, wedging and crushing them, a door flashing
+/// over them) ticks, and is cloned and ticks, without allocating.
+#[test]
+fn moving_rock_parts_push_and_crush_without_allocating() {
+    let prop = |target, min, max| LiveProp { name: None, target, min, max, default: 0 };
+    let slab = LiveCopy::new(LiveCopySetup {
+        id: "slab".into(),
+        at: (4, 10),
+        size: (392, 4),
+        props: vec![prop(LiveTarget::Y, 0, 270), prop(LiveTarget::LayerVisible(0), 0, 1)],
+        states: vec![LiveState {
+            name: "On".into(),
+            values: Vec::new(),
+            parts: vec![
+                LivePart {
+                    kind: LivePartKind::Rock,
+                    layer: None,
+                    at: (0, 0),
+                    picture: 0,
+                    glow_strength: 100,
+                },
+                LivePart {
+                    kind: LivePartKind::Rock,
+                    layer: Some(0),
+                    at: (150, -40),
+                    picture: 1,
+                    glow_strength: 100,
+                },
+            ],
+            enter_sound: None,
+            loop_sound: None,
+        }],
+        pictures: vec![
+            LiveSolid::new((392, 4), true, |_, _| true),
+            LiveSolid::new((60, 40), true, |_, _| true),
+        ],
+        start_state: 0,
+        start_values: Vec::new(),
+        health: None,
+        scripts: Vec::new(),
+        sounds: Vec::new(),
+    });
+    let mut w = synthetic::world_live(8, 400, 300, Arc::new(LiveLevel::new(vec![slab], Vec::new(), None, 0)));
+    let keys: Vec<Vec<Keys>> = (0..600u32)
+        .map(|t| {
+            (0..8u32)
+                .map(|i| Keys(if (t + i) % 7 < 3 { Keys::LEFT } else { Keys::RIGHT | Keys::JUMP }))
+                .collect()
+        })
+        .collect();
+    let mut out = TickEvents::new();
+    let mut crushed = 0;
+    let mut run = |w: &mut World, keys: &[Vec<Keys>], out: &mut TickEvents| {
+        let mut n = 0;
+        let info = allocation_counter::measure(|| {
+            for (t, k) in keys.iter().enumerate() {
+                let y = w.live().unwrap().copy(0).unwrap().values()[0];
+                if !w.live().unwrap().copy(0).unwrap().motions()[0].moving() {
+                    let to = if y > 0 { 0 } else { 270 };
+                    w.move_live_value_for_test(0, 0, to * LIVE_SUBPIXELS, 2 * LIVE_SUBPIXELS).unwrap();
+                }
+                w.set_live_value(0, 1, i64::from(t % 50 < 25)).unwrap();
+                w.tick(k, out);
+                n += out.iter().filter(|e| matches!(e.kind, olr_sim::EventKind::Crushed { .. })).count();
+            }
+        });
+        assert_eq!(info.count_total, 0, "a tick with moving rock parts allocated");
+        n
+    };
+    crushed += run(&mut w, &keys[..300], &mut out);
+
+    let mut c = w.clone();
+    crushed += run(&mut c, &keys[300..], &mut out);
+    assert!(crushed > 0, "the slab crushed nobody");
 }

@@ -2,8 +2,10 @@
 
 use crate::beam::BeamCtx;
 use crate::damage::Harm;
+use crate::live::LiveWorld;
 use crate::physics::{Ctx, simulate_worm};
 use crate::proj_sim::{ProjCtx, simulate_projectiles};
+use crate::solid::Solid;
 use crate::weapons::{ShootCtx, laser_sight, player_shoot, worm_shoot};
 use crate::world::{CLOCK_OFFSET_MS, FRAME_MS, World};
 
@@ -13,6 +15,9 @@ impl World {
     /// One LX56 sub-step of `CClient::Simulation` (`src/client/CClient_Game.cpp:97-221`).
     pub(crate) fn physics_step(&mut self, dt: f32) {
         let over = self.referee.over.is_some();
+        // Issue #90: the shown live rock parts, which every solidity read
+        // sees; they stay put during the sub-step.
+        let live = self.live.as_ref().and_then(LiveWorld::solid_parts);
         for i in 0..self.worms.len() {
             // Taken afresh for each worm: OLX's rope sees the worms already moved this step.
             let others = &mut self.others.others;
@@ -22,6 +27,7 @@ impl World {
                 now: self.time,
                 dt,
                 terrain: &mut self.terrain,
+                live,
                 holes: &self.holes,
                 settings: &self.settings,
                 sim_mod: &self.sim_mod,
@@ -61,13 +67,15 @@ impl World {
                 if w.state.shoot {
                     let mut ctx = BeamCtx {
                         terrain: &mut self.terrain,
+                        live,
                         holes: &self.holes,
                         draws: &mut self.draws,
                         parts: &mut self.others.beam_parts,
                     };
                     player_shoot(&mut self.worms, i, &self.sim_mod, &mut ctx);
                 }
-                laser_sight(&self.worms, i, &self.sim_mod, &self.terrain, &mut self.draws);
+                let solid = Solid::new(&self.terrain, live);
+                laser_sight(&self.worms, i, &self.sim_mod, solid, &mut self.draws);
             }
         }
         // `CClient_Game.cpp:206-208`: the client's entity pass (cosmetic,
@@ -80,6 +88,7 @@ impl World {
             sim_mod: &self.sim_mod,
             settings: &self.settings,
             terrain: &mut self.terrain,
+            live,
             worms: &mut self.worms,
             draws: &mut self.draws,
             holes: &self.holes,
@@ -93,7 +102,7 @@ impl World {
         simulate_projectiles(&mut self.projectiles, &mut ctx);
         // `CClient_Game.cpp:217-218`: bonuses after the projectiles.
         if self.settings.bonuses {
-            self.bonuses.simulate_client(&self.terrain, dt);
+            self.bonuses.simulate_client(Solid::new(&self.terrain, live), dt);
         }
     }
 }
