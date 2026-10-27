@@ -189,6 +189,13 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   transfer online, and recorded in replays. Matches without them play and
   hash as before. Online play (protocol 7), replays (format 8) and desync
   bundles from earlier builds are not compatible.
+- Live copies are drawn in play in their state: placed, shown, mirrored
+  and faded by their values, their glowing parts lighting the level with
+  glow groups of their own (two copies of one lamp flicker apart), also
+  through online corrections, loaded states and replays. A level lit only
+  by its Live copies draws lit. `olr-cli render-match --live COPY=STATE`
+  starts a copy in a state. The editor's Live switch no longer says the
+  copy is left out of play.
 
 ### Changed
 

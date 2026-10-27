@@ -96,7 +96,8 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   rectangle by `Facing`, a background part's `Opacity` rounded to an
   alpha as the bake does, `GlowStrength` else the part's own; no
   allocation once warm), shared by `olr-present` and the tests.
-  Tests: `glow_strength_is_mask_times_value` (every copy of the fixture
+  `has_look()` is also true for a level whose live copies glow (lit
+  only by them). Tests: `glow_strength_is_mask_times_value` (every copy of the fixture
   drawn live shows the glow and the colours of the same copies baked
   static), `a_level_lit_only_by_live_copies_draws_lit`.
 - **Hostile levels:** `load_level` refuses an art scale above

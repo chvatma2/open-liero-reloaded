@@ -7172,10 +7172,9 @@ The design is `docs/superpowers/specs/2026-10-26-asset-based-levels-design.md`
 - **The ground leaves Live copies out (#85).** `placed::bake` bakes the
   level without them and sets `level.live` from `live::bake_live`; the
   thumbnail is drawn from a bake with them as static, and a level lit
-  only by Live copies still gets the default look. **Gap:** a Live copy
-  is not drawn in a match until #87, and its rock is not solid until #90
-  (the editor says "Plays from a later version: left out of play for
-  now"); since #86 its state lives in the world.
+  only by Live copies still gets the default look. Since #86 a copy's
+  state lives in the world and since #87 it is drawn; **gap:** its rock
+  is not solid for worms and shots until #90.
 - **Loading (#85).** `olr_pack::LevelPack::live` (the `LiveSource`) and
   `olr_content::LoadedLevel::live` (`LoadedLive { source, sim }`):
   `live_sim()` is the `Arc<olr_sim::LiveLevel>` a match's worlds share,
@@ -7228,6 +7227,50 @@ The design is `docs/superpowers/specs/2026-10-26-asset-based-levels-design.md`
   the protocol again. `olr-present`'s rollback keys class `LiveState` by
   its copy and state, so a re-simulated tick's entry plays its effects
   once (#92).
+- **Drawn into the terrain (#87).** Live copies are composited into the
+  colour map the renderer uploads (`olr_terrain::ColorMap`'s live layer,
+  `set_live_art`, `set_live`), never drawn as sprites: every lit pass
+  (the glow light, occlusion, soak, heat, beams' shadows) and the unlit
+  renderer read their pictures as they read the ground's, so a live
+  lamp is exactly a static one in another state, with no second path to
+  keep in step. A rock part (where its mask is solid) replaces the
+  ground's colour, glows and is solid in the look's solid map (it
+  occludes light); a background part shows where the ground is air (dug
+  ground reveals it), its straight alpha × `Opacity` laid over as the
+  bake's `glass_over`, stack order kept (a background part over a rock
+  part is the topmost there and clears its solid, as the bake does). The
+  ground never sees them: the colour map's ground, `material()`,
+  `rebuild_area`, every edit rule, the beam map and the static beams'
+  derivation stay the level's (rock parts stop worms only from #90).
+  `X`, `Y`, `OffsetX`, `OffsetY`, `Visible`, `LayerVisible` place and
+  show a part (`World::live`'s whole-pixel places), `Facing` mirrors the
+  copy within its rectangle, `Opacity` fades a background part (rounded
+  to an alpha as the bake), and a part glows mask × its `GlowStrength`
+  value, else its authored strength (`olr_format::levels::glow_value`):
+  the same pixels as the static bake of the copies
+  (`glow_strength_is_mask_times_value`). Each tick a copy whose parts
+  changed is recomposed where it was and where it is, and only those
+  rectangles are uploaded; an unchanged tick uploads nothing. A ground
+  edit under a copy recomposes its tiles. `olr-present` syncs after the
+  tick's terrain edits (`on_tick`), in `restart` and `state_loaded`, and
+  online after the restored areas and every tick (the newest world, so a
+  correction draws the corrected state). **Not drawn yet:** the group
+  values `GlowColour`, `LightIntensity`, `LightReach` and
+  `GlowAnimation` (a copy's groups light as authored), and the beam and
+  glass maps of a part (#85 never sets them).
+- **Glow groups of their own (#87).** The group map is one byte: the
+  level's look's groups keep `1..=n`, then copy `c`'s group `g` is `n +
+  offset(c) + g`, copies in order (`offset` the groups of the copies
+  before it). A copy whose groups would pass 255 draws without glow,
+  with a warning in `LoadedLevel::warnings`. `LookFrame::push_live_group`
+  pushes each copy's groups after the level's every frame, without
+  allocating; each one's identity (its flicker's seed) is
+  `identity_of("<copy id>/<group id>")`, so two copies of one asset
+  flicker apart and a copy keeps its flicker whatever copies come
+  before it. A level without live copies builds the frame it always did
+  (`a_level_without_live_copies_builds_todays_frame`). A level lit only
+  by live copies (no look, no glow maps) gets a glow channel
+  (`GlowLayers::empty`) and draws lit (`LoadedLevel::has_look`).
 
 ## Kept OLX quirks
 
