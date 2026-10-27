@@ -7120,9 +7120,9 @@ import.
 
 The design is `docs/superpowers/specs/2026-10-26-asset-based-levels-design.md`
 (calls 8, 11, 13, 14 and 19). Issue #85 gives Live copies their played
-form; #86 puts them in the world, #87 draws them, #88 runs their scripts,
-#93 lights them by their values (#89
-adds motion and the scripts' name checks).
+form; #86 puts them in the world, #87 draws them, #88 runs their scripts
+(#89 adds motion and the scripts' name checks), #93 lights them by their
+values.
 
 - **The played form is play files (#85).** `live.ron` and `live/` sit
   beside `level.ron`, outside `editor/`, so `olr_pack::content_hash`
