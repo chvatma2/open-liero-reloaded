@@ -6443,6 +6443,39 @@ its checks and the decoded model (`olr_edit::asset`).
   is not landed (0 drops the piece), and an image piece mirrored by
   `Facing` lands unmirrored (a landed image is processed again from its
   original).
+- **Editing an asset** (issue #72; `olr_edit::asset`'s operations, shared
+  by the asset tab (#79, #80) and `olr-cli asset`): each operation edits a
+  copy and keeps it only when the folder `encode` would write checks
+  (`check_asset`), so a refusal leaves the asset (and, from the CLI, the
+  folder: `replace_dir`) as it was, and its message names the state,
+  layer, property or sound. A new state with no `--from` copies the
+  start's values and owns nothing, so it looks like the start; its sounds
+  are not copied (a deliberate reading: "the start's values, owning
+  nothing"). Renaming a state moves the start and `health.at_zero` with
+  it; scripts are text and are not rewritten (#89 reports a name a script
+  no longer finds).
+- **`set_start` keeps every state's look** (settled with the maintainer
+  while writing #72 up). For each layer `L` the new start `B` owns, the old
+  start comes to own `L`'s base picture, every other state that followed
+  the base for `L` comes to own a copy of it, then `L`'s base becomes `B`'s
+  picture and `B` owns nothing; values are untouched. A state's own picture
+  without a glow mask shows the base's mask, so one owning `L` without a
+  mask is given the old base's (else it would take `B`'s); `B`'s own mask,
+  when it has one, becomes the base's. A property test
+  (`set_start_keeps_every_states_look`) holds `posed` equal for every
+  state before and after, through the folder too.
+- **The CLI's property syntax** (`asset state value`, `asset expose`,
+  `asset info`; `olr_edit::asset::parse_property` and `property_label`):
+  the asset's own `x`, `y`, `visible`, `facing`, `health`, and a layer's
+  `<layer>.x`, `.y`, `.visible`, `.opacity`, `.glow`, `.glow-colour`,
+  `.light`, `.reach`, `.animation`, `.beam-direction`, `.beam-spread`,
+  `.glass-opacity` and `.glass-tint`, split at the **last** dot because an
+  element id may hold one (`door.left.visible` is layer `door.left`).
+  Values read their type from their form (`parse_value`): a whole number,
+  `true`/`false`, `#rrggbb`, `steady` or an `AnimationSource` in RON
+  (`Flicker(speed: 40, depth: 60)`); the property's type is checked where
+  it is set ("true is not a whole number"), and `none` clears a state's
+  value.
 
 ## Kept OLX quirks
 

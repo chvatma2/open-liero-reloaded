@@ -53,3 +53,19 @@ there (issue #46), so placed in a level they heat as they did in it.
   box, group `beacons` (`Pulse`).
 
       olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 951,45,25,28 --layers backdrop,beacons --name "Warning beacon" --out content/assets/warning-beacon
+
+## Editing an asset from the command line
+
+`olr-cli asset state|expose|unexpose|sound|script|health` (issue #72)
+edit an asset folder in place: the folder is read whole, changed by one
+operation, checked and written anew with its thumbnail, or left as it
+was with the reason (`<dir>: <why>`, status 1). `olr-cli asset info`
+lists what a folder holds. Work on a copy: these built-in assets stay
+stateless (the factory's get states of their own, issues #96-#99). For
+a strip light that can be switched off, with a 29 × 2 PNG of its dark
+tube:
+
+    cp -r content/assets/strip-light my-strip-light
+    olr-cli asset state add my-strip-light Off
+    olr-cli asset state picture my-strip-light Off lamps --art dark-tube.png
+    olr-cli asset state value my-strip-light Off lamps.glow 0
