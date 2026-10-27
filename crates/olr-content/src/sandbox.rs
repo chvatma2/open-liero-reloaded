@@ -103,6 +103,7 @@ pub fn match_setup(
         worms,
         bonus_weapons: Some(m.weapon_rules(&setup.restrictions).bonus_weapons()),
         live: level.live_sim(),
+        director: level.live_director(),
         ..MatchSetup::new(settings, m.sim.clone(), terrain)
     })
 }

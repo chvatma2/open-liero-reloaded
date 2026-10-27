@@ -12,7 +12,7 @@ sounds from the core pack), `load_level`, `load_theme` (holes, green ball,
 tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matching(id, hash)` (plan 13c: the pack id exactly and its content hash, `NO_SKIN_HASH` only for `DEFAULT_SKIN`, else the default skin and a warning), `core()`
 (sprites by name, game sounds, `colours.cfg`) and `new_world(&SandboxSetup)`.
 
-- **Layer 4, uses `std`.** Depends on `olr-sim`, `olr-modes`, `olr-bots`,
+- **Layer 4, uses `std`.** Depends on `olr-sim`, `olr-script` (issue #88), `olr-modes`, `olr-bots`,
   `olr-replay`, `olr-pack`, `sha2`, `hex`, `olr-terrain`, `olr-look`, `olr-data`, `olr-vfs`,
   `anyhow`, `serde` and `ron`.
   `olr-scenario` (same layer) uses it.
@@ -100,6 +100,15 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   only by them). Tests: `glow_strength_is_mask_times_value` (every copy of the fixture
   drawn live shows the glow and the colours of the same copies baked
   static), `a_level_lit_only_by_live_copies_draws_lit`.
+  Issue #88: `LoadedLive::new` also compiles the scripts
+  (`olr_script::director`; `LoadedLive::director`, `None` when no copy and
+  no level script runs one): a script that does not compile refuses the
+  level (`live.ron: live/<k>.rhai: line:column: message`), so every peer
+  refuses the same bytes alike. `LoadedLevel::live_director()` is its
+  clone (an `Arc` inside), passed by `match_setup` (so `build_match`) and
+  `replay_assets_from` (so `world_for_replay`) as
+  `MatchSetup::director`/`Assets::director`. Test:
+  `a_script_that_does_not_compile_refuses_the_level`.
 - **Hostile levels:** `load_level` refuses an art scale above
   `MAX_ART_SCALE` (8) or a colour image above `MAX_COLOR_MAP_BYTES`
   (256 MiB), so a pack cannot make the colour map allocate gigabytes.

@@ -120,11 +120,23 @@ fn a_live_file_that_does_not_check_refuses_the_level() {
     assert!(err.contains("live/0.wav"), "{err}");
 }
 
+/// Issue #88: the scripts are compiled with the level; one that does not
+/// compile refuses it, naming its file.
+#[test]
+fn a_script_that_does_not_compile_refuses_the_level() {
+    let (_tmp, c) = content(|_| ());
+    assert!(c.load_level(ID).unwrap().live_director().is_some(), "the fixture's scripts run");
+    let (_tmp, c) =
+        content(|dir| std::fs::write(dir.join("live/1.rhai"), "fn tick() { let x = 1.5; }").unwrap());
+    let err = format!("{:#}", c.load_level(ID).unwrap_err());
+    assert!(err.contains("live/1.rhai"), "{err}");
+}
+
 #[test]
 fn a_level_without_live_copies_has_none() {
     let (_tmp, content) = content(|_| ());
     let level = content.load_level("test-level").unwrap();
-    assert!(level.live.is_none() && level.live_sim().is_none());
+    assert!(level.live.is_none() && level.live_sim().is_none() && level.live_director().is_none());
 }
 
 /// The editor plays its bake in memory: the same live copies as the

@@ -89,7 +89,7 @@ impl LoadedLevel {
             extras;
         check_art_size(l.material.width(), l.material.height(), l.def.art_scale)?;
         let level_groups = look.as_ref().map_or(0, |l| l.groups.len());
-        let live = live.map(|src| crate::LoadedLive::new(src, level_groups));
+        let live = live.map(|src| crate::LoadedLive::new(src, level_groups)).transpose()?;
         let mut warnings = warnings;
         warnings.extend(live.iter().flat_map(|l| l.warnings.iter().cloned()));
         Ok(LoadedLevel {
@@ -127,6 +127,12 @@ impl LoadedLevel {
     /// every world of a match; `None` without any.
     pub fn live_sim(&self) -> Option<std::sync::Arc<olr_sim::LiveLevel>> {
         self.live.as_ref().map(|l| l.sim.clone())
+    }
+
+    /// Its scripts compiled (issue #88), for [`olr_sim::MatchSetup::director`];
+    /// `None` without any.
+    pub fn live_director(&self) -> Option<Box<dyn olr_sim::Director>> {
+        self.live.as_ref().and_then(|l| l.director.clone())
     }
 
     /// Its live copies' pictures as the colour map draws them (issue #87,

@@ -4,7 +4,9 @@
 //! from it once ([`olr_sim::LiveLevel`], shared by an `Arc`); issue #87:
 //! each copy's glow groups compiled and its pictures as the colour map
 //! draws them ([`olr_terrain::LiveArt`]), the copy's groups numbered after
-//! the level's.
+//! the level's; issue #88: its scripts compiled once
+//! ([`olr_script::director`]), a script that does not compile refusing
+//! the level.
 
 use std::sync::Arc;
 
@@ -33,6 +35,9 @@ pub struct LoadedLive {
     pub art: Arc<LiveArt>,
     /// What loading left out (a copy drawn without glow), to log once.
     pub warnings: Vec<String>,
+    /// Its scripts, compiled (issue #88), shared by every world of a
+    /// match; `None` when no copy and no level script runs one.
+    pub director: Option<Box<dyn olr_sim::Director>>,
 }
 
 impl LoadedLive {
@@ -43,9 +48,14 @@ impl LoadedLive {
     /// copy `c`'s group `g` is `n + offset(c) + g`, copies in order (the
     /// design's call 13). The bake refuses more than 255 together; a copy
     /// past them all the same is drawn without glow, with a warning, never
-    /// a panic.
-    pub fn new(source: LiveSource, level_groups: usize) -> LoadedLive {
+    /// a panic. A script that does not compile refuses it (issue #88:
+    /// every peer refuses the same bytes alike).
+    pub fn new(source: LiveSource, level_groups: usize) -> anyhow::Result<LoadedLive> {
         let sim = Arc::new(live_level(&source));
+        let director = olr_script::director(&sim).map_err(|e| {
+            let at = source.file.scripts.get(usize::from(e.script)).map_or("a script", String::as_str);
+            anyhow::anyhow!("{LIVE_FILE}: {at}: {}", e.issue)
+        })?;
         let mut warnings = Vec::new();
         let mut next = level_groups;
         let mut groups = Vec::with_capacity(source.file.copies.len());
@@ -88,7 +98,7 @@ impl LoadedLive {
             );
             groups.push(if fits { own } else { Vec::new() });
         }
-        LoadedLive { source, sim, groups, art: Arc::new(art), warnings }
+        Ok(LoadedLive { source, sim, groups, art: Arc::new(art), warnings, director })
     }
 }
 

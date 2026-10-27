@@ -100,5 +100,6 @@ pub fn replay_assets_from(m: &LoadedMod, level: &LoadedLevel, theme: &LoadedThem
         holes: theme.stamps(),
         green_mask: theme.green_mask(),
         live: level.live_sim(),
+        director: level.live_director(),
     }
 }
