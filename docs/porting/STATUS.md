@@ -7497,6 +7497,43 @@ solid, #93 lights them by their values.
   live match golden and the five live render goldens were re-blessed.
   `fixtures/matches/` is unchanged. Unmeasured: the tick's cost with
   parts (`docs/deferred-verification.md`).
+- **Bots beside live parts (#91, call 23; no OLX counterpart, OLX's rock
+  never moves).** Only as far as needed not to break; using parts is
+  0.4's. **Obstacles where they are now:** every bot probe (`probe.rs`,
+  `nav/trace.rs`, `nav/checks.rs`, `shoot.rs`, `rope.rs`, `chaos.rs`)
+  reads the world's `Solid` (`olr_bots::Ground`), a pixel still a work
+  unit: a bot does not aim or see through a part, ropes onto one, and a
+  trace across one is blocked. **The navigation cache stays the
+  ground's:** `AreaCache` and its `Grower` read `World::terrain()`, keyed
+  by `rock_hash`, so the shared append-only cache never depends on where
+  a part was or which bot grew it; a path through a part's travel is
+  planned as through air and the probes that follow it see the part.
+  **Reach:** `LiveLevel::reach` (`LiveView::reach_rects`), computed once
+  in `LiveLevel::new`, gives per copy and layer of rock parts that can
+  move or appear (a position, `Facing`, `Visible` or `LayerVisible`
+  whose limits differ, or states showing them differently) the rectangle
+  every place they can take covers (the copy's `X`/`Y` limits, the
+  layer's `OffsetX`/`OffsetY` limits, the mirrored places a pixel wider
+  for their roundings, every state's pictures). A bot never chooses to
+  stop inside a reach grown by a worm's half size (4 px):
+  `find_random_spot` skips such a try, `find_bonus` leaves such a bonus,
+  the shooting spot search skips such points (its last-resort spot is
+  moved out), and the path's target (its last node) is moved to the
+  nearest point out of it, but for a scripted goal (a race's flag is
+  the mode's to place); a path may pass through. **Getting out:** a bot
+  whose worm took a `Crushed` marker last tick (from `think`'s events,
+  never `by: -1`), or that stands in a reach whose part moves towards it
+  this tick (its motion's sign, the worm ahead of the part's current
+  rectangle), races (its `goal`, chaos bots through the same brain) to
+  the nearest point out of that reach (just past a side, in the map,
+  preferring one in no reach where a worm fits) for up to 1 s, or until
+  it is out; a scripted goal set meanwhile waits for it. The checks are
+  rectangle tests: no work unit, no `BotRng` draw; on a level without
+  parts that can move or appear none runs (`Bot::reach_checks`), so the
+  bots' keys and every golden of `fixtures/matches/` are unchanged. The
+  live match golden was re-blessed. The bot grid (`cargo xtask full`)
+  plays the live fixture too (`LIVE_LEVELS`), unrun by the session
+  (`docs/deferred-verification.md`).
 
 ## Kept OLX quirks
 
