@@ -192,6 +192,7 @@ pub struct PackSnapshot {
     glow_masks: GlowMasks,
     surface_maps: PaintedSurfaces,
     placed_look: Option<Option<olr_format::look::LookSource>>,
+    back_tile: RgbaImage,
 }
 
 impl PackSnapshot {
@@ -211,6 +212,7 @@ impl PackSnapshot {
             &self.glow_masks,
             &self.surface_maps,
             self.placed_look.as_ref(),
+            &self.back_tile,
         )
     }
 }
@@ -231,6 +233,7 @@ fn pack_of(
     glow_masks: &GlowMasks,
     surface_maps: &PaintedSurfaces,
     placed_look: Option<&Option<olr_format::look::LookSource>>,
+    back_tile: &RgbaImage,
 ) -> Pack {
     let mut files = BTreeMap::new();
     for i in items {
@@ -300,7 +303,7 @@ fn pack_of(
         })
         .collect();
     let composition = tidied(elements, folders);
-    Pack {
+    let pack = Pack {
         manifest: manifest.clone(),
         source: Source::Level(level),
         composition: grounded.then_some(CompositionSource { composition, files }),
@@ -308,6 +311,23 @@ fn pack_of(
         legacy_composition: false,
         other: other.clone(),
         verbatim: verbatim.clone(),
+    };
+    played(pack, back_tile)
+}
+
+/// Issue #85: `pack` with its Live copies' played form when it places
+/// any (`olr_edit::placed::bake_pack`: the ground without them, their
+/// `live.ron` and `live/`; the canvas draws them in place); as it is when
+/// it places none, or when that bake fails (the Live switch, which checks
+/// the played form's caps, makes that rare).
+fn played(pack: Pack, back_tile: &RgbaImage) -> Pack {
+    if !pack.placed.as_ref().is_some_and(|p| p.file.copies.iter().any(|c| c.live)) {
+        return pack;
+    }
+    let mut baked = pack.clone();
+    match olr_edit::placed::bake_pack(&mut baked, back_tile) {
+        Ok(_) => baked,
+        Err(_) => pack,
     }
 }
 
@@ -739,6 +759,7 @@ impl Document {
             &self.glow_masks,
             &self.surface_maps,
             self.placed_look.as_ref(),
+            &self.back_tile,
         )
     }
 
@@ -759,6 +780,7 @@ impl Document {
             glow_masks: self.glow_masks.clone(),
             surface_maps: self.surface_maps.clone(),
             placed_look: self.placed_look.clone(),
+            back_tile: self.back_tile.clone(),
         }
     }
 

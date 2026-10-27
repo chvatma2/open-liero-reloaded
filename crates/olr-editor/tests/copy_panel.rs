@@ -158,12 +158,18 @@ fn live_is_hidden_disabled_or_offered_as_call_2_says() {
     assert_eq!(facts(&s, &id).live, LiveOffer::Offered);
     set(&mut s, &id, CopyChange::Live(true));
     assert!(copy(&s, &id).live, "{}", message(&s));
+    // Issue #85: Save and Play carry its played form, out of the ground.
+    let doc = s.document().unwrap();
+    let olr_edit::pack::Source::Level(saved) = doc.to_pack().source else { panic!("a level") };
+    let played = saved.live.as_ref().expect("the played form");
+    assert_eq!(played.file.copies.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), [id.as_str()]);
+    assert_eq!(doc.playable().live, saved.live);
     // A dirt copy cannot be made live.
     set(&mut s, &dirt, CopyChange::Live(true));
     assert!(!copy(&s, &dirt).live);
 
     // On screen: none, disabled with the reason under it, a switch saying
-    // it bakes as placed for now.
+    // it is left out of play for now (issue #85).
     run(&mut s, A::Select(Selection::Copy("torch".into())));
     let mut h = harness(s);
     h.run();

@@ -340,8 +340,15 @@ impl Document {
         self.placed_look.as_ref()
     }
 
-    /// The bake as Play plays it: the level with the gathered look.
+    /// The bake as Play plays it: the level with the gathered look; issue
+    /// #85: with Live copies, the saved pack's (their played form, the
+    /// ground without them).
     pub fn playable(&self) -> LevelSource {
+        if self.placed.as_ref().is_some_and(|p| p.file.copies.iter().any(|c| c.live))
+            && let Source::Level(l) = self.to_pack().source
+        {
+            return l;
+        }
         let mut l = self.level.clone();
         if let Some(look) = &self.placed_look {
             l.look = look.clone();

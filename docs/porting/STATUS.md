@@ -7060,8 +7060,10 @@ import.
   disabled, the reason as hover text and a line under it, when it holds
   dirt ("it holds dirt: only rock and background can be live"), a raster
   or a distant layer, or the copy is distant; otherwise a switch, which
-  while on says "Moves in play from a later version: bakes as placed for
-  now" (#87 makes it move). A copy Live already can always be switched
+  while on says "Plays from a later version: left out of play for now"
+  (issue #85: the ground leaves it out, its played form waits for #86
+  and #87; until #85 it said "Moves in play from a later version: bakes
+  as placed for now"). A copy Live already can always be switched
   off. **Distant** (with **Depth**, 1 to 99, on at 50) is offered only for
   an asset of Background images and plain drawn layers; Distant and Live
   each disable the other, with the reason.
