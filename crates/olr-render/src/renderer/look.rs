@@ -5,7 +5,7 @@
 
 use olr_data::level::Material;
 use olr_look::{LookFrame, ViewMode};
-use olr_terrain::{ColorMap, GlassMap, Rect};
+use olr_terrain::{ColorMap, Rect};
 
 use super::{Renderer, WORLD_FORMAT, entry, pipeline};
 use crate::frame::{WorldFrame, look_texture_sizes};
@@ -368,12 +368,13 @@ pub(super) fn write_bytes(
 fn write_glass(
     queue: &super::uploads::Queue,
     texture: &wgpu::Texture,
-    glass: Option<&GlassMap>,
+    glass: Option<&[u8]>,
     (w, h): (u32, u32),
 ) {
     const NONE: [u8; 4] = [255, 255, 255, 0];
-    let (texels, w, h): (&[u8], u32, u32) = match glass.filter(|g| g.fits((w, h))) {
-        Some(g) => (&g.texels, w, h),
+    let fits = |g: &&[u8]| g.len() as u64 == u64::from(w) * u64::from(h) * 4;
+    let (texels, w, h): (&[u8], u32, u32) = match glass.filter(fits) {
+        Some(g) => (g, w, h),
         None => (&NONE, 1, 1),
     };
     let (tw, th) = (texture.width().min(w), texture.height().min(h));
@@ -390,6 +391,33 @@ fn write_glass(
         texels,
         wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * w), rows_per_image: Some(th) },
         wgpu::Extent3d { width: tw, height: th, depth_or_array_layers: 1 },
+    );
+}
+
+/// [`write_bytes`] for four bytes a texel (`Rgba8Unorm`): art rectangle
+/// `r` of a `width`-wide image.
+fn write_rgba(queue: &super::uploads::Queue, texture: &wgpu::Texture, (data, width): (&[u8], u32), r: Rect) {
+    let (tw, th) = (texture.width(), texture.height());
+    let (w, h) = (r.w.min(tw.saturating_sub(r.x)), r.h.min(th.saturating_sub(r.y)));
+    let end =
+        (u64::from(r.y) + u64::from(h).saturating_sub(1)) * u64::from(width) + u64::from(r.x) + u64::from(w);
+    if w == 0 || h == 0 || r.x.saturating_add(w) > width || end * 4 > data.len() as u64 {
+        return;
+    }
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d { x: r.x, y: r.y, z: 0 },
+            aspect: wgpu::TextureAspect::All,
+        },
+        data,
+        wgpu::TexelCopyBufferLayout {
+            offset: (u64::from(r.y) * u64::from(width) + u64::from(r.x)) * 4,
+            bytes_per_row: Some(width * 4),
+            rows_per_image: Some(h),
+        },
+        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
     );
 }
 
@@ -1049,7 +1077,8 @@ impl LookState {
             return;
         }
         let art = (map.width(), map.height());
-        let glass = map.glass().filter(|g| g.fits(art));
+        // Issue #93: the shown glass, live copies' over the level's.
+        let glass = map.shown_glass().filter(|g| g.len() as u64 == u64::from(art.0) * u64::from(art.1) * 4);
         let size = if glass.is_some() { t.glass_art } else { (1, 1) };
         if (t.glass.width(), t.glass.height()) != size {
             t.glass = r8(device, "olr-render glass", size, wgpu::TextureFormat::Rgba8Unorm);
@@ -1076,6 +1105,14 @@ impl LookState {
         }
         // The beam map shows the backdrop's beams where a pixel is dug.
         t.glow_beams.write(queue, map, wr);
+        // Issue #93: live glass changes where its copies are drawn.
+        if t.glass_on
+            && map.has_live_glass()
+            && (t.glass.width(), t.glass.height()) == t.glass_art
+            && let Some(glass) = map.shown_glass()
+        {
+            write_rgba(queue, &t.glass, (glass, map.width()), r);
+        }
         let cells = map.material().cells();
         let clear = map.clear().filter(|c| c.len() == cells.len());
         // Issue #87: a live copy's rock part is solid for the light.

@@ -8,7 +8,10 @@
 //! The sources are derived ([`olr_look::glow_beams::derive`]) when a level
 //! is uploaded, its maps are set anew or the editor uploads glow or art over
 //! it (`ColorMap::beams_generation`);
-//! each frame packs them with their groups' cast into a uniform.
+//! each frame packs them with their groups' cast into a uniform, then the
+//! live copies' (issue #93: `LookFrame::live_beams`, placed each frame)
+//! within the same [`MAX_GLOW_BEAMS`]. The beam map holds the live copies'
+//! texels where they are drawn (`ColorMap::shown_beams`).
 
 use olr_data::level::Material;
 use olr_look::LookFrame;
@@ -238,8 +241,10 @@ impl GlowBeams {
         self.generation = Some(map.beams_generation());
         self.sources = sources(map);
         let level = (map.material().width(), map.material().height());
-        // A beam map counts only with beams kept (none past the cap: no cones).
-        let has_beams = map.glow_beams().is_some_and(|m| m.fits(level)) && !self.sources.is_empty();
+        // A beam map counts only with beams kept (none past the cap: no
+        // cones), or (issue #93) live copies' beams.
+        let has_beams = map.glow_beams().is_some_and(|m| m.fits(level)) && !self.sources.is_empty()
+            || map.has_live_beams();
         let haze = map.haze().filter(|h| h.len() as u64 == u64::from(level.0) * u64::from(level.1));
         let size = |on: bool| if on { world } else { (1, 1) };
         let sized = |t: &wgpu::Texture, s: (u32, u32)| (t.width(), t.height()) == (s.0.max(1), s.1.max(1));
@@ -273,12 +278,18 @@ impl GlowBeams {
 
     /// Writes world rectangle `r` of the beam map as `map` shows it: the
     /// backdrop's texel where the pixel is background, the composite's
-    /// elsewhere (digging reveals the backdrop's beams). Nothing without a
-    /// beam map.
+    /// elsewhere (digging reveals the backdrop's beams); with live copies
+    /// (issue #93) the shown map, their parts' texels over that. Nothing
+    /// without a beam map.
     pub(super) fn write(&mut self, queue: &super::uploads::Queue, map: &ColorMap, r: Rect) {
         let level = (map.material().width(), map.material().height());
-        let Some(beams) = map.glow_beams().filter(|b| b.fits(level)) else { return };
         if !self.mapped {
+            return;
+        }
+        let cells_n = level.0 as usize * level.1 as usize;
+        let shown = map.shown_beams().filter(|b| b.len() == 2 * cells_n);
+        let ground = map.glow_beams().filter(|b| b.fits(level));
+        if shown.is_none() && ground.is_none() {
             return;
         }
         let (x0, y0) = (r.x.min(self.map.width()), r.y.min(self.map.height()));
@@ -292,7 +303,12 @@ impl GlowBeams {
         for y in y0..y1 {
             for x in x0..x1 {
                 let i = y as usize * level.0 as usize + x as usize;
-                let layer = if cells[i] == Material::Background as u8 { &beams.back } else { &beams.front };
+                let layer = match (shown, ground) {
+                    (Some(s), _) => s,
+                    (None, Some(b)) if cells[i] == Material::Background as u8 => &b.back,
+                    (None, Some(b)) => &b.front,
+                    (None, None) => return,
+                };
                 self.scratch.extend_from_slice(&layer[2 * i..2 * i + 2]);
             }
         }
@@ -306,15 +322,21 @@ impl GlowBeams {
 }
 
 /// Packs the frame's beams into `out` ([`BEAM_FLOATS`] each): each of
-/// `sources` whose group `look` has, with a reach in world pixels, that
-/// casts, its reach at most [`walk_reach`]. Its light is [`BEAM_SCALE`] × the group's cast × its colour (its
+/// `sources` (the level's), then of `look.live_beams` (issue #93: the live
+/// copies', copy and part order), whose group `look` has, with a reach in
+/// world pixels, that casts, its reach at most [`walk_reach`], at most
+/// [`MAX_GLOW_BEAMS`] in all: past it the live ones drop, never the
+/// level's (there are never more than the cap of those). Its light is [`BEAM_SCALE`] × the group's cast × its colour (its
 /// art's, normalised, for an own-colour or filtered group; white for a
 /// tint, which the cast carries) × its mean glow. `regions` are the flicker
 /// regions (a `Flicker` group's beam flickers as its patch's first pixel's
 /// region does). Returns the count.
 fn pack(sources: &[GlowBeamSource], look: &LookFrame, regions: &[u16], out: &mut Vec<f32>) -> u32 {
     out.clear();
-    for s in sources {
+    for s in sources.iter().chain(&look.live_beams) {
+        if out.len() >= MAX_GLOW_BEAMS * BEAM_FLOATS {
+            break;
+        }
         let Some(g) = usize::from(s.group).checked_sub(1).and_then(|i| look.groups.get(i)) else {
             continue;
         };
@@ -437,6 +459,41 @@ mod tests {
         sources[0].back = false;
         pack(&sources, &look(10.0, 60.0, true), &[], &mut out);
         assert_eq!(out[7], 1.0);
+    }
+
+    /// Issue #93: the live copies' beams pack after the level's, at most
+    /// MAX_GLOW_BEAMS in all: past it the live ones drop, never the
+    /// level's; each is cut by the walk as the level's, a NaN one packs
+    /// none and a level without live beams packs as before.
+    #[test]
+    fn live_beams_pack_after_the_levels_and_drop_first() {
+        let level = sources(&map(8));
+        assert_eq!(level.len(), 32);
+        let mut out = Vec::new();
+        let mut look = look(10.0, 60.0, true);
+        let alone = pack(&level, &look, &[], &mut out);
+        let before = out.clone();
+        let live = |x: f32| GlowBeamSource { at: [x, 50.0], back: false, ..level[0].clone() };
+        look.live_beams.push(live(1.0));
+        assert_eq!(pack(&level, &look, &[], &mut out), alone + 1);
+        assert_eq!(out[..before.len()], before[..], "the level's first, as before");
+        assert_eq!((out[before.len()], out[before.len() + 7]), (1.0, 1.0), "then the live one");
+        // 40 live beams: 32 of them fit after the level's 32.
+        look.live_beams = (0..40).map(|i| live(i as f32)).collect();
+        assert_eq!(pack(&level, &look, &[], &mut out), MAX_GLOW_BEAMS as u32);
+        assert_eq!(out[..before.len()], before[..], "the level's all kept");
+        assert_eq!(out[(MAX_GLOW_BEAMS - 1) * BEAM_FLOATS], 31.0, "the 33rd live beam dropped");
+        // The level's own 64: no live one fits.
+        let full = sources(&map(4));
+        assert_eq!(pack(&full, &look, &[], &mut out), MAX_GLOW_BEAMS as u32);
+        assert!(out.chunks(BEAM_FLOATS).all(|b| b[1] != 50.0), "every packed beam the level's");
+        // Cut by the walk; a NaN live beam packs none.
+        look.live_beams = vec![GlowBeamSource { spread: 80f32.to_radians(), ..live(0.0) }];
+        look.groups[0].reach = 500.0;
+        pack(&[], &look, &[], &mut out);
+        assert_eq!(out[6], walk_reach(level[0].half, out[5]));
+        look.live_beams[0].dir[0] = f32::NAN;
+        assert_eq!(pack(&[], &look, &[], &mut out), 0);
     }
 
     /// Final review M2: a wide beam's reach is cut so the composite's

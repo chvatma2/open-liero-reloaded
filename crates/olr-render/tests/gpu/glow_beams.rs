@@ -582,3 +582,112 @@ fn a_thin_beam_in_a_coarse_cell_casts_nothing_behind() {
     let f = draw(false);
     assert!(f.light(15, 32) > 1.5 * amb, "undirected behind: {} against {amb}", f.light(15, 32));
 }
+
+/// Issue #93: an open `W` × `H` level (grey background, a glow channel,
+/// no beams of its own) with a live lamp: a 1 × 5 rock column of white
+/// art glowing full in group 1, beaming at 0° (spread [`SPREAD`]), drawn
+/// at the patch's place turned to `direction` (its value), and the look
+/// with its beam placed so.
+fn live_lamp(direction: Option<u16>) -> (ColorMap, olr_look::LookFrame) {
+    use olr_look::glow_beams::{BeamLayer, PatchPlace, live_patches};
+    use olr_terrain::{LiveArt, LiveFrame, LivePicture, LivePlaced};
+    let mut map = level(|_, _| None, false);
+    assert!(map.set_glow(Some(olr_terrain::GlowLayers::empty((W, H), (W, H)))));
+    let pic = LivePicture {
+        size: (1, 5),
+        art: [255; 4].repeat(5),
+        rock: Some(vec![1; 5]),
+        glow: Some(vec![255; 5]),
+        groups: Some(vec![1; 5]),
+        beam: Some([1, SPREAD].repeat(5)),
+        glass: None,
+    };
+    let layer = BeamLayer {
+        world: pic.size,
+        art_scale: 1,
+        groups: pic.groups.as_deref().unwrap(),
+        glow: pic.glow.as_deref().unwrap(),
+        art: &pic.art,
+        beams: pic.beam.as_deref().unwrap(),
+    };
+    let patches = live_patches(&layer, false);
+    map.set_live_art(Some(std::sync::Arc::new(LiveArt { copies: vec![vec![pic.clone()]] })));
+    let at = (PATCH_X as i32, PATCH_ROWS.start as i32);
+    let mut frame = LiveFrame::default();
+    frame.push(LivePlaced {
+        picture: 0,
+        rock: true,
+        at,
+        alpha: 255,
+        glow: 100,
+        beam_direction: direction,
+        ..LivePlaced::default()
+    });
+    frame.end_copy();
+    map.set_live(&frame);
+    let mut look = beam_look(0);
+    let place = PatchPlace {
+        at,
+        flip: false,
+        direction: direction.map(i64::from),
+        spread: None,
+        strength: 100,
+        group: 1,
+        world: (W, H),
+    };
+    look.push_live_beam(patches[0].place(1, &place).unwrap());
+    (map, look)
+}
+
+/// Issue #93: a live lamp's beam is worked out each frame from its
+/// value: at 0° it lights ahead (right) and not behind, turned to 180°
+/// the lit side moves behind it.
+#[test]
+fn a_live_beam_turns_with_its_value() {
+    let Some(gpu) = offscreen() else { return };
+    let (map, look) = live_lamp(None);
+    let mut r = renderer(&gpu, &map);
+    let f = frame(&gpu, &mut r, &look);
+    let amb = ambient(&f);
+    let (ahead, behind) = (f.light(41, 32), f.light(2, 32));
+    assert!(ahead > 3.0 * amb && behind < 1.1 * amb, "at 0°: ahead {ahead}, behind {behind}, {amb}");
+    let (mut map, look) = live_lamp(Some(180));
+    r.update_terrain(&mut map);
+    let f = frame(&gpu, &mut r, &look);
+    let (ahead, behind) = (f.light(41, 32), f.light(2, 32));
+    assert!(behind > 3.0 * amb && ahead < 1.1 * amb, "at 180°: ahead {ahead}, behind {behind}, {amb}");
+}
+
+/// Issue #93: the cascades' beam map holds the live lamp's texels where
+/// it is, as drawn this frame: without the beams' own light, its glow
+/// light still keeps to its cone (ahead at 0°), and once the lamp is
+/// turned and its rectangle re-uploaded, to the turned one.
+#[test]
+fn the_beam_map_follows_a_turned_live_beam() {
+    let Some(gpu) = offscreen() else { return };
+    let (map, look) = live_lamp(None);
+    let mut r = renderer(&gpu, &map);
+    r.set_glow_beam_light(false);
+    let f = frame(&gpu, &mut r, &look);
+    let amb = ambient(&f);
+    let (ahead, behind) = (f.light(30, 32), f.light(12, 32));
+    assert!(ahead > 1.5 * amb && behind < 1.1 * amb, "at 0°: ahead {ahead}, behind {behind}, {amb}");
+    // The same map turned: only the lamp's rectangle is uploaded.
+    let mut turned = map;
+    let mut frame_ = olr_terrain::LiveFrame::default();
+    frame_.push(olr_terrain::LivePlaced {
+        picture: 0,
+        rock: true,
+        at: (PATCH_X as i32, PATCH_ROWS.start as i32),
+        alpha: 255,
+        glow: 100,
+        beam_direction: Some(180),
+        ..olr_terrain::LivePlaced::default()
+    });
+    frame_.end_copy();
+    turned.set_live(&frame_);
+    r.update_terrain(&mut turned);
+    let f = frame(&gpu, &mut r, &look);
+    let (ahead, behind) = (f.light(30, 32), f.light(12, 32));
+    assert!(behind > 1.5 * amb && ahead < 1.1 * amb, "at 180°: ahead {ahead}, behind {behind}, {amb}");
+}

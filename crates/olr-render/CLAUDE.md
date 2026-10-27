@@ -257,10 +257,25 @@ on screen or offscreen.
   so it stops the glow light and takes soak as the ground's rock does;
   live copies reach every lit pass because they are composited into the
   map's colour, glow and groups (`olr-terrain`'s live layer), uploaded
-  per dirty rectangle as the ground's; the beam map and the static beams
-  read the ground only (`tests/gpu/live.rs`:
+  per dirty rectangle as the ground's; the static beams' derivation reads
+  the ground only (`tests/gpu/live.rs`:
   `a_live_lamp_lights_the_level_by_its_own_group`,
-  `a_live_rock_part_occludes_the_glow_light`). The `LookFrame` is packed each
+  `a_live_rock_part_occludes_the_glow_light`). Issue #93 (live light):
+  `pack` packs the level's beams first, then `LookFrame::live_beams`
+  (placed each frame by `olr-present`), at most `MAX_GLOW_BEAMS` in all:
+  past it the live ones drop, never the level's; each cut by `walk_reach`,
+  a non-finite one packing none (`live_beams_pack_after_the_levels_and_drop_first`).
+  The beam map is kept when the level's beams are or the live art has any
+  (`ColorMap::has_live_beams`) and written from `ColorMap::shown_beams`
+  (the live parts' texels as drawn this tick over the ground's) with
+  every dirty rectangle, so a part moving, turning or changing spread
+  uploads its rectangles only. The glass texture is uploaded from
+  `ColorMap::shown_glass` (whole on a new `glass_generation`, as before)
+  and, with live glass (`has_live_glass`), its dirty rectangles too
+  (`write_rgba`); a level without live glass uploads it whole as before.
+  GPU tests: `glow_beams.rs`'s `a_live_beam_turns_with_its_value`,
+  `the_beam_map_follows_a_turned_live_beam`; `glass.rs`'s
+  `live_glass_takes_its_opacity_and_tint`. The `LookFrame` is packed each
   frame into one uniform (`LookGlobals`, `look/common.wgsl`, every field a
   vec4; 255 groups, `groups[v - 1]` for group value v, 0 none, each a
   `Group` of three vec4s: `light` (the cast, `cast` being a WGSL keyword)

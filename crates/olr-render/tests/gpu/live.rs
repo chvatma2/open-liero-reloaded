@@ -18,11 +18,12 @@ fn lamp_picture(group: u8) -> LivePicture {
         rock: Some(vec![1; 16]),
         glow: Some(vec![255; 16]),
         groups: Some(vec![group; 16]),
+        ..LivePicture::default()
     }
 }
 
 fn placed(at: (i32, i32)) -> LivePlaced {
-    LivePlaced { picture: 0, rock: true, at, flip: false, alpha: 255, glow: 100 }
+    LivePlaced { picture: 0, rock: true, at, flip: false, alpha: 255, glow: 100, ..LivePlaced::default() }
 }
 
 /// The lamp's group: white at `intensity` percent, reach 60.
@@ -80,8 +81,7 @@ fn a_live_rock_part_occludes_the_glow_light() {
         size: (2, 36),
         art: [90, 90, 90, 255].repeat(72),
         rock: Some(vec![1; 72]),
-        glow: None,
-        groups: None,
+        ..LivePicture::default()
     };
     let mut map = glowing_room(100, 40, |_, y| y >= 36, |x, y| y >= 36 && x < 40);
     map.set_live_art(Some(Arc::new(LiveArt { copies: vec![vec![wall]] })));

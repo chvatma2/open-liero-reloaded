@@ -418,3 +418,52 @@ fn a_glass_map_set_later_is_uploaded_and_none_costs_nothing() {
     assert_eq!(r.glass_texture_size(), Some((1, 1)));
     assert_eq!(frame(&gpu, &mut r, &full_bright(), (50.0, 20.0)), plain);
 }
+
+/// Issue #93: a live pane (a background part of glass: [`PANE`] at alpha
+/// 89, its glass map filtering nothing) in the window's open strip shows
+/// the layer through it as the level's glass does; its copy's
+/// `GlassOpacity` and `GlassTint` then set its opacity and filter, the
+/// glass texture re-uploaded where it is.
+#[test]
+fn live_glass_takes_its_opacity_and_tint() {
+    use olr_terrain::{LiveArt, LiveFrame, LivePicture, LivePlaced};
+    let Some(gpu) = offscreen() else { return };
+    let mut map = pane(Rgba { a: 0, ..TILE });
+    let pic = LivePicture {
+        size: (20, 10),
+        art: [PANE.r, PANE.g, PANE.b, PANE.a].repeat(200),
+        glass: Some([255, 255, 255, 0].repeat(200)),
+        ..LivePicture::default()
+    };
+    map.set_live_art(Some(std::sync::Arc::new(LiveArt { copies: vec![vec![pic]] })));
+    let place = |opacity: Option<u8>, tint: Option<u8>| {
+        let mut f = LiveFrame::default();
+        f.push(LivePlaced {
+            picture: 0,
+            rock: false,
+            at: (40, 10),
+            alpha: 255,
+            glow: 100,
+            glass_opacity: opacity,
+            glass_tint: tint,
+            ..LivePlaced::default()
+        });
+        f.end_copy();
+        f
+    };
+    map.set_live(&place(None, None));
+    let blue = Rgba::rgb(30, 60, 140);
+    let mut r = renderer(&gpu, &map, sky(blue));
+    let img = frame(&gpu, &mut r, &full_bright(), (50.0, 20.0));
+    let want = over(rgb(PANE), 89.0 / 255.0, rgb(blue));
+    assert!(near(at(&img, 50, 15), want, 1.5), "as baked: {:?} vs {want:?}", at(&img, 50, 15));
+    // Opacity 60 %, tint 100: the sky filtered by the pane's colour.
+    map.set_live(&place(Some(60), Some(100)));
+    r.update_terrain(&mut map);
+    let img = frame(&gpu, &mut r, &full_bright(), (50.0, 20.0));
+    let filtered = [0, 1, 2].map(|i| rgb(blue)[i] * rgb(PANE)[i] / 255.0);
+    let want = over(rgb(PANE), 153.0 / 255.0, filtered);
+    assert!(near(at(&img, 50, 15), want, 1.5), "set: {:?} vs {want:?}", at(&img, 50, 15));
+    // Outside the pane the air shows the sky as before.
+    assert!(near(at(&img, 70, 15), rgb(blue), 1.5));
+}
