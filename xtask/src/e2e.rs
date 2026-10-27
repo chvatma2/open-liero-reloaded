@@ -297,7 +297,8 @@ fn play(
 
 /// The editor's run (plan 14c Task 7): `EDITOR_SCRIPT` in a data
 /// directory of its own (`<out>/data`), then the pack it saved: a drawn
-/// layer in its composition, one spawn, and `olr-cli pack check` clean.
+/// layer in its ground asset, placed alone (issue #74), one spawn, and
+/// `olr-cli pack check` clean.
 fn editor(x: &Xvfb, content: &Path, settings: &str, out: &Path) -> Result<Played, String> {
     let script =
         std::fs::read_to_string(root().join(EDITOR_SCRIPT)).map_err(|e| format!("{EDITOR_SCRIPT}: {e}"))?;
@@ -312,8 +313,11 @@ fn editor(x: &Xvfb, content: &Path, settings: &str, out: &Path) -> Result<Played
     }
     let pack = out.join("data").join(EDITOR_PACK);
     let read = |f: &str| std::fs::read_to_string(pack.join(f)).ok();
-    let problems =
-        editor_pack_problems(read("editor/composition.ron").as_deref(), read("level.ron").as_deref());
+    let problems = editor_pack_problems(
+        read("editor/placed.ron").as_deref(),
+        read("editor/asset.ron").as_deref(),
+        read("level.ron").as_deref(),
+    );
     if !problems.is_empty() {
         return Err(format!("{}: {}", pack.display(), problems.join("; ")));
     }
@@ -354,13 +358,21 @@ pub fn canvas_problem(img: &olr_data::image::RgbaImage) -> Option<String> {
         .then(|| format!("the canvas is black at its centre ({dark} of {all} pixels)"))
 }
 
-/// What is wrong with the editor run's saved pack, by its composition and
-/// `level.ron` (`None`: the file is missing).
-pub fn editor_pack_problems(composition: Option<&str>, level: Option<&str>) -> Vec<String> {
+/// What is wrong with the editor run's saved pack, by its placement, its
+/// ground asset and `level.ron` (`None`: the file is missing). Issue #74:
+/// the editor saves its layers as the ground asset, placed alone.
+pub fn editor_pack_problems(placed: Option<&str>, ground: Option<&str>, level: Option<&str>) -> Vec<String> {
     let mut out = Vec::new();
-    match composition {
-        None => out.push("no editor/composition.ron".to_string()),
-        Some(c) if !c.contains("Drawn(") => out.push("the composition names no drawn layer".into()),
+    // Each copy names its asset; the assets' list names keys.
+    let copies = |p: &str| p.split_once("copies:").map_or(0, |(_, c)| c.matches("asset: ").count());
+    match placed.map(copies) {
+        None => out.push("no editor/placed.ron".to_string()),
+        Some(1) => {}
+        Some(n) => out.push(format!("editor/placed.ron places {n} copies, not 1")),
+    }
+    match ground {
+        None => out.push("no editor/asset.ron".to_string()),
+        Some(c) if !c.contains("Drawn(") => out.push("the ground names no drawn layer".into()),
         Some(_) => {}
     }
     match level {
@@ -725,17 +737,25 @@ mod tests {
     /// Plan 14c Task 7: the editor run's pack is checked, each problem named.
     #[test]
     fn editor_pack_checks_name_what_is_missing() {
+        let alone =
+            "(assets: [(key: \"ground\", origin: Own)], copies: [(id: \"ground\", asset: \"ground\")])";
         let drawn =
             "(elements: [(id: \"base\", kind: Raster), (id: \"layer\", kind: Drawn(material: Dirt))])";
         let one = "(name: \"E2E Level\", objects: [Spawn(at: (1, 2))])";
-        assert!(editor_pack_problems(Some(drawn), Some(one)).is_empty());
-        assert_eq!(editor_pack_problems(None, None), ["no editor/composition.ron", "no level.ron"]);
+        assert!(editor_pack_problems(Some(alone), Some(drawn), Some(one)).is_empty());
+        assert_eq!(
+            editor_pack_problems(None, None, None),
+            ["no editor/placed.ron", "no editor/asset.ron", "no level.ron"]
+        );
+        let twice = "(assets: [(key: \"ground\", origin: Own)], copies: [(id: \"a\", asset: \"ground\"), \
+                     (id: \"b\", asset: \"ground\")])";
         let raster = "(elements: [(id: \"base\", kind: Raster)])";
         let two = "(objects: [Spawn(at: (1, 2)), Spawn(at: (3, 4))])";
         assert_eq!(
-            editor_pack_problems(Some(raster), Some(two)),
+            editor_pack_problems(Some(twice), Some(raster), Some(two)),
             [
-                "the composition names no drawn layer",
+                "editor/placed.ron places 2 copies, not 1",
+                "the ground names no drawn layer",
                 "level.ron is not named \"E2E Level\"",
                 "level.ron holds 2 spawns, not 1"
             ]
