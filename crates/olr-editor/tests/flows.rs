@@ -1780,3 +1780,53 @@ fn paint_haze() {
     run(&mut s, A::Undo);
     assert_eq!(haze(&s).unwrap()[i], 128);
 }
+
+/// Issue #77: Edit asset in the Assets tab opens the asset tab; Draw, a
+/// stroke and Save write the user's copy; Level shows the level again,
+/// unchanged.
+#[test]
+fn paint_an_asset_through_the_panels() {
+    let Some((tmp, mut h)) = opened() else { return };
+    let assets = crate::common::set_library(&crate::common::built_in_assets(), &tmp.path().join("yours"));
+    act(&mut h, A::AssetsChanged(assets));
+    let level = h.state().state.document().unwrap().to_asset();
+    // The Asset switch waits for an asset.
+    assert!(h.get_by_role_and_label(Role::Button, labels::ASSET_TAB).accesskit_node().is_disabled());
+    h.get_by_label(labels::ASSETS).click();
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Ceiling lamp").click();
+    h.run();
+    h.get_by_label(labels::EDIT_LIBRARY_ASSET).click();
+    h.run();
+    let s = &h.state().state;
+    assert_eq!(s.doc_tab(), olr_editor::DocTab::Asset);
+    assert!(!h.get_by_role_and_label(Role::Button, labels::ASSET_TAB).accesskit_node().is_disabled());
+    assert!(s.active_document().unwrap().is_asset());
+    h.get_by_label("Lamps").click();
+    h.run();
+    h.get_by_label(labels::DRAW).click();
+    h.run();
+    assert_eq!(h.state().state.tool(), Tool::Brush);
+    let before = h.state().state.active_document().unwrap().layer_art("lamps").unwrap().clone();
+    let (from, to) = (canvas_point(&h, (-10.0, 0.0)), canvas_point(&h, (10.0, 0.0)));
+    hover(&mut h, from);
+    press(&mut h, from, true);
+    hover(&mut h, to);
+    press(&mut h, to, false);
+    let s = &h.state().state;
+    assert_ne!(s.active_document().unwrap().layer_art("lamps").unwrap(), &before, "the stroke painted");
+    assert!(s.active_dirty() && !s.dirty());
+    file(&mut h, labels::SAVE);
+    assert!(
+        h.state().commands.iter().any(|c| matches!(c, C::SaveAsset { replace: None, .. })),
+        "a built-in asset saves as the user's"
+    );
+    assert!(tmp.path().join("yours/ceiling-lamp/asset.ron").is_file());
+    assert!(!h.state().state.active_dirty());
+    h.get_by_label(labels::LEVEL_TAB).click();
+    h.run();
+    let s = &h.state().state;
+    assert_eq!(s.doc_tab(), olr_editor::DocTab::Level);
+    assert!(!s.active_document().unwrap().is_asset() && !s.dirty());
+    assert_eq!(s.active_document().unwrap().to_asset(), level, "the level unchanged");
+}

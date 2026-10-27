@@ -2,6 +2,7 @@
 //! per file). A new test file is a module here.
 
 mod asset;
+mod asset_tab;
 mod browser;
 mod common;
 mod distant;

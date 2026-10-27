@@ -203,6 +203,14 @@ pub fn run(
                         .map_err(|e| e.to_string());
                     queue.push_back(EditorAction::AssetRead { at: *at, asset });
                 }
+                EditorCommand::ReadAssetToEdit(key) => {
+                    let lib = LIBRARY.with(|l| l.borrow().clone()).expect("a library");
+                    let dir = if key.builtin { lib.0 } else { lib.1 };
+                    let asset = olr_edit::asset::load_dir(&dir.join(&key.id))
+                        .map(Box::new)
+                        .map_err(|e| e.to_string());
+                    queue.push_back(EditorAction::AssetToEdit { key: key.clone(), asset });
+                }
                 EditorCommand::SaveAsset { asset, replace } => change_assets(&mut queue, |dir| {
                     olr_edit::asset::add_to_library(dir, asset, replace.as_deref()).map(Some)
                 }),
