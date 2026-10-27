@@ -78,6 +78,14 @@ impl ScriptDraft {
     }
 }
 
+/// A picker's width: egui's, at most the room left (its arrow and padding
+/// aside); its selected text is truncated to it.
+fn picker_width(ui: &Ui) -> f32 {
+    let s = ui.spacing();
+    let room = ui.available_width() - s.icon_width - 2.0 * s.button_padding.x - s.item_spacing.x;
+    s.combo_width.min(room).max(s.interact_size.x)
+}
+
 /// The tabs, in a wrapped row.
 pub(super) fn tabs(ui: &mut Ui, data: &mut EditorData) {
     ui.horizontal_wrapped(|ui| {
@@ -346,7 +354,7 @@ fn row(
         None => o.range,
     };
     ui.push_id(&key, |ui| {
-        ui.horizontal_wrapped(|ui| {
+        let value = |ui: &mut Ui, data: &mut EditorData, out: &mut Vec<EditorAction>| {
             let name = property_name(p);
             let mark = if shown.own { format!("● {name}") } else { name.to_string() };
             let v = value_field(
@@ -367,7 +375,13 @@ fn row(
                     out.push(EditorAction::SetValue { property: p.clone(), value: None });
                 }
             }
-        });
+        };
+        // An animation's editor takes lines of its own.
+        if o.kind == ValueKind::Animation {
+            value(ui, data, out);
+        } else {
+            ui.horizontal_wrapped(|ui| value(ui, data, out));
+        }
         let mut on = exposed.is_some();
         let r = ui.add_enabled(through.is_none(), egui::Checkbox::new(&mut on, labels::EXPOSE));
         relabel(&r, egui::WidgetType::Checkbox, Some(on), &labels::expose(&row));
@@ -478,6 +492,8 @@ fn destructible(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &m
         ui.horizontal_wrapped(|ui| {
             let l = ui.label(labels::AT_ZERO);
             egui::ComboBox::from_id_salt("olr-editor-at-zero")
+                .width(picker_width(ui))
+                .truncate()
                 .selected_text(&h.at_zero)
                 .show_ui(ui, |ui| {
                     for st in doc.states() {
@@ -545,6 +561,8 @@ pub(super) fn sounds(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorActio
         let mut chosen = None;
         let l = ui.label(shown);
         let r = egui::ComboBox::from_id_salt(name)
+            .width(picker_width(ui))
+            .truncate()
             .selected_text(now.as_deref().unwrap_or(labels::NO_SOUND))
             .show_ui(ui, |ui| {
                 if ui.selectable_label(now.is_none(), labels::NO_SOUND).clicked() && now.is_some() {
@@ -656,11 +674,24 @@ pub(super) fn script_editor(
                 ui.visuals().weak_text_color()
             };
             ui.add(egui::Label::new(egui::RichText::new(gutter).monospace().color(colour)).selectable(false));
+            // As tall as the room (a longer script scrolls).
+            let row = ui.text_style_height(&egui::TextStyle::Monospace);
+            let rows = ((ui.available_height() - 2.0 * ui.spacing().button_padding.y) / row).floor().max(1.0);
+            // Lines are not wrapped: the gutter's numbers stay beside them
+            // (a long line scrolls the editor across).
+            let mut layouter = |ui: &Ui, text: &dyn egui::TextBuffer, _wrap: f32| {
+                let font = egui::TextStyle::Monospace.resolve(ui.style());
+                let colour = ui.visuals().widgets.inactive.text_color();
+                let job =
+                    egui::text::LayoutJob::simple(text.as_str().to_owned(), font, colour, f32::INFINITY);
+                ui.fonts_mut(|f| f.layout_job(job))
+            };
             let output = egui::TextEdit::multiline(&mut d.text)
                 .code_editor()
+                .layouter(&mut layouter)
                 .id(script_id())
                 .desired_width(f32::INFINITY)
-                .desired_rows(20)
+                .desired_rows(rows as usize)
                 .show(ui);
             let r = output.response.response;
             relabel(&r, egui::WidgetType::TextEdit, None, labels::SCRIPT_EDITOR);
