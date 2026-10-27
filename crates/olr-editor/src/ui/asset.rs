@@ -13,6 +13,7 @@
 
 use egui::Ui;
 
+use super::parts::{self, Column};
 use super::{
     EditorData, canvas, elements, labels, level, previews, properties, rail, states, status, toolbar,
 };
@@ -54,6 +55,7 @@ pub(super) fn show(
 ) {
     let [toolbar, list, fields, canvas] = out;
     see_focus(ui.ctx(), data);
+    parts::sync_script(ui, state, data, fields);
     let follow = data.follow > 0;
     data.follow = data.follow.saturating_sub(1);
     if follow {
@@ -85,12 +87,21 @@ pub(super) fn show(
                 // Issue #79: the states panel first, above the layers.
                 states::show(ui, state, data, fields);
                 ui.separator();
-                ui.strong(labels::LAYERS);
-                elements::tree(ui, state, list);
+                // Issue #80: the column's tabs.
+                parts::tabs(ui, data);
                 ui.separator();
-                match state.selection() {
-                    Selection::None => level::asset(ui, state, data, fields),
-                    _ => properties::show(ui, state, data, fields),
+                match data.column {
+                    Column::Layers => {
+                        elements::tree(ui, state, list);
+                        ui.separator();
+                        match state.selection() {
+                            Selection::None => level::asset(ui, state, data, fields),
+                            _ => properties::show(ui, state, data, fields),
+                        }
+                    }
+                    Column::Properties => parts::properties(ui, state, data, fields),
+                    Column::Sounds => parts::sounds(ui, state, fields),
+                    Column::Script => parts::script_column(ui, state, data, fields),
                 }
                 ui.separator();
                 previews::show(ui, state, data);
@@ -98,10 +109,15 @@ pub(super) fn show(
             });
         });
     }
-    // No fill: the host draws the bake under the canvas (plan 14c).
-    egui::CentralPanel::default()
-        .frame(egui::Frame::NONE)
-        .show(ui, |ui| canvas::show(ui, state, data, canvas));
+    if data.column == Column::Script {
+        // Issue #80: the script editor in the middle, over the bake.
+        egui::CentralPanel::default().show(ui, |ui| parts::script_editor(ui, state, data, fields));
+    } else {
+        // No fill: the host draws the bake under the canvas (plan 14c).
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ui, |ui| canvas::show(ui, state, data, canvas));
+    }
     see_focus(ui.ctx(), data);
 }
 
@@ -118,8 +134,13 @@ fn session(
     toolbar::button_height(ui);
     ui.horizontal_wrapped(|ui| {
         if narrow {
-            for (side, label) in [(Side::Tools, labels::TOOLS_TAB), (Side::Layers, labels::LAYERS_TAB)] {
-                if ui.add(egui::Button::selectable(data.side == side, label)).clicked() {
+            for (side, label, shown) in [
+                (Side::Tools, labels::TOOLS_TAB, labels::TOOLS_TAB),
+                (Side::Layers, labels::LAYERS_TAB, "Layers"),
+            ] {
+                let r = ui.add(egui::Button::selectable(data.side == side, shown));
+                super::relabel(&r, egui::WidgetType::Button, Some(data.side == side), label);
+                if r.clicked() {
                     data.side = side;
                 }
             }

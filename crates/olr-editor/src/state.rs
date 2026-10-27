@@ -9,11 +9,13 @@ use std::sync::Arc;
 
 use olr_data::image::Rgba;
 use olr_data::level::Material;
+use olr_edit::asset::ExposedChange;
 use olr_edit::compose::Rect;
 use olr_edit::element::Property;
 use olr_edit::level::StampMask;
 use olr_edit::pack::Pack;
 use olr_edit::textures::Texture;
+use olr_format::assets::{HealthSource, PropertySource, ValueSource};
 use olr_format::levels::{ElementMaterial, LevelSource};
 
 use crate::asset_tab::{BUILT_IN_NOTE, NewAsset};
@@ -121,6 +123,15 @@ pub enum Dialog {
     /// Removing the asset's state `index` (named `name`) and its own
     /// pictures (issue #79): Remove (`Confirm`), Cancel.
     RemoveState { index: usize, name: String },
+    /// Unexposing `name` (issue #80): copies' values and scripts using it
+    /// will be errors. Unexpose (`Confirm`), Cancel.
+    Unexpose { name: String },
+    /// Exposing a glow colour whose group takes each pixel's colour (issue
+    /// #80): its default colour first (`Expose` with it), Cancel. `label`
+    /// names the property.
+    ExposeColour { property: PropertySource, label: String },
+    /// Removing the asset's script (issue #80): Remove (`Confirm`), Cancel.
+    RemoveScript,
 }
 
 /// The surface materials' tints in the Materials view and its legend
@@ -568,6 +579,56 @@ pub enum EditorAction {
     RenameState(String),
     /// Follow start: the shown state drops its own picture of layer `id`.
     FollowStart(String),
+    // Properties, health, sounds and script (issue #80).
+    /// Sets (`Some`) or clears the shown state's value of a property.
+    SetValue {
+        property: PropertySource,
+        value: Option<ValueSource>,
+    },
+    /// Exposes a property (`default` none: the start's value; a glow
+    /// colour of an `Own` group asks it first, `Dialog::ExposeColour`).
+    Expose {
+        property: PropertySource,
+        default: Option<ValueSource>,
+    },
+    /// Unexposes `name` (asks first, `Dialog::Unexpose`).
+    Unexpose(String),
+    /// Renames exposed `name` to `new`.
+    RenameExposed {
+        name: String,
+        new: String,
+    },
+    /// Changes exposed `name`'s default, min or max.
+    SetExposed {
+        name: String,
+        change: ExposedChange,
+    },
+    /// The Destructible switch.
+    Destructible(bool),
+    /// The health's points and its state at 0.
+    SetHealth(HealthSource),
+    /// ▶: plays the asset's sound `name` (`EditorCommand::PlaySound`).
+    PlaySound(String),
+    /// Removes the asset's sound `name`.
+    RemoveSound(String),
+    /// The sound `ReadSound` asked for: its file's name and bytes.
+    SoundRead {
+        name: String,
+        bytes: Vec<u8>,
+    },
+    /// The shown state's loop and enter sounds (`None` leaves one,
+    /// `Some(None)` clears it).
+    StateSounds {
+        loop_sound: Option<Option<String>>,
+        enter_sound: Option<Option<String>>,
+    },
+    /// New script.
+    NewScript,
+    /// Remove script (asks first, `Dialog::RemoveScript`).
+    RemoveScript,
+    /// The script editor's text committed (on a pause or when it loses the
+    /// keyboard).
+    SetScript(String),
     // The layout (issue #8).
     /// The right panel's tab, by hand.
     Tab(PanelTab),
@@ -636,6 +697,12 @@ pub enum EditorCommand {
     /// Read asset `key` whole (`olr_edit::asset::load_dir`) to edit it in
     /// the asset tab (issue #77); answer `AssetToEdit`.
     ReadAssetToEdit(AssetKey),
+    /// Play these sound bytes (issue #80: ▶ beside an asset's sound; the
+    /// game's `HostOut::PlaySound`).
+    PlaySound(Vec<u8>),
+    /// Read this sound file (at most `MAX_ASSET_SOUND_BYTES`); answer
+    /// `SoundRead` or `ImportFailed`.
+    ReadSound(PathBuf),
     /// The document was saved, or is being closed or left: drop its
     /// recovery copy (R7).
     RecoveryDone,
@@ -1131,6 +1198,8 @@ impl EditorState {
                 | EditorAction::AssetToEdit { .. }
                 | EditorAction::NameAsset(_)
                 | EditorAction::MakeAsset(_)
+                | EditorAction::Expose { .. }
+                | EditorAction::SoundRead { .. }
                 | EditorAction::Previewed { .. }
                 | EditorAction::Pointer { .. }
                 | EditorAction::Canvas(_)
@@ -1200,6 +1269,7 @@ impl EditorState {
                 | EditorAction::Tab(_)
                 | EditorAction::ShowMore(_)
                 | EditorAction::ShowFineTuning(_)
+                | EditorAction::PlaySound(_)
         );
         // A selection made, even of what was selected: a click in the list,
         // or on the canvas with Select or Spawn.
@@ -1427,6 +1497,61 @@ impl EditorState {
                 self.edits(|d| d.rename_state(i, &name))
             }
             EditorAction::FollowStart(id) => self.edits(|d| d.follow_start(&id)),
+            EditorAction::SetValue { property, value } => self.edits(|d| d.set_value(property, value)),
+            EditorAction::Expose { property, default } => {
+                self.dialog = None;
+                let Some(doc) = self.doc.as_ref() else { return Vec::new() };
+                if default.is_none() && doc.expose_needs_default(&property) {
+                    let label = olr_edit::asset::property_label(&property);
+                    self.dialog = Some(Dialog::ExposeColour { property, label });
+                    return Vec::new();
+                }
+                self.edits(|d| d.expose(property, default))
+            }
+            EditorAction::Unexpose(name) => {
+                if self
+                    .doc
+                    .as_ref()
+                    .is_some_and(|d| d.parts_snap().is_some_and(|p| p.exposed.iter().any(|x| x.name == name)))
+                {
+                    self.dialog = Some(Dialog::Unexpose { name });
+                }
+                Vec::new()
+            }
+            EditorAction::RenameExposed { name, new } => self.edits(|d| d.rename_exposed(&name, &new)),
+            EditorAction::SetExposed { name, change } => self.edits(|d| d.set_exposed(&name, change)),
+            EditorAction::Destructible(on) => self.edits(|d| d.set_destructible(on)),
+            EditorAction::SetHealth(h) => self.edits(|d| d.set_health(h)),
+            EditorAction::PlaySound(name) => match self.doc.as_ref().and_then(|d| d.sound(&name)) {
+                Some(bytes) => vec![EditorCommand::PlaySound(bytes.to_vec())],
+                None => Vec::new(),
+            },
+            EditorAction::RemoveSound(name) => self.edits(|d| d.remove_sound(&name)),
+            EditorAction::SoundRead { name, bytes } => {
+                // The asset tab's own step (bracketed by its shown state).
+                if self.shown != DocTab::Asset {
+                    self.status.message = Some(format!("{name}: open the asset tab to add it"));
+                    return Vec::new();
+                }
+                let name = crate::parts_ops::sound_name(&name);
+                self.edits(|d| d.add_sound(&name, bytes))
+            }
+            EditorAction::StateSounds { loop_sound, enter_sound } => {
+                self.edits(|d| d.set_state_sounds(loop_sound, enter_sound))
+            }
+            EditorAction::NewScript => {
+                if self.doc.as_ref().and_then(Document::parts_snap).is_some_and(|p| p.script.is_some()) {
+                    return Vec::new();
+                }
+                self.edits(|d| d.set_script(Some(crate::parts_ops::NEW_SCRIPT.into())))
+            }
+            EditorAction::RemoveScript => {
+                if self.doc.as_ref().and_then(Document::parts_snap).is_some_and(|p| p.script.is_some()) {
+                    self.dialog = Some(Dialog::RemoveScript);
+                }
+                Vec::new()
+            }
+            EditorAction::SetScript(text) => self.edits(|d| d.set_script(Some(text))),
             EditorAction::RemoveAsset(id) => {
                 let key = AssetKey { builtin: false, id: id.clone() };
                 if let Some(a) = self.asset(&key) {
@@ -1828,7 +1953,7 @@ impl EditorState {
         let Some(e) = b.entry(name) else { return Vec::new() };
         let (dir, path) = (b.dir().to_path_buf(), b.dir().join(name));
         let take = match b.purpose() {
-            Purpose::ImportImage | Purpose::ImportTexture => !e.is_dir,
+            Purpose::ImportImage | Purpose::ImportTexture | Purpose::ImportSound => !e.is_dir,
             Purpose::OpenPack => e.is_pack,
             Purpose::ImportAsset => e.is_asset,
         };
@@ -1843,6 +1968,7 @@ impl EditorState {
             Purpose::ImportImage => cmds.insert(0, EditorCommand::ReadImage(path)),
             Purpose::ImportTexture => cmds.insert(0, EditorCommand::AddTexture(path)),
             Purpose::ImportAsset => cmds.insert(0, EditorCommand::ImportAsset(path)),
+            Purpose::ImportSound => cmds.insert(0, EditorCommand::ReadSound(path)),
             Purpose::OpenPack => cmds.extend(self.leave(Pending::Open(path))),
         }
         cmds
@@ -2730,6 +2856,8 @@ impl EditorState {
             }
             (Dialog::RemoveAsset { id, .. }, Choice::Confirm) => vec![EditorCommand::RemoveAsset(id)],
             (Dialog::RemoveState { index, .. }, Choice::Confirm) => self.edits(|d| d.remove_state(index)),
+            (Dialog::Unexpose { name }, Choice::Confirm) => self.edits(|d| d.unexpose(&name)),
+            (Dialog::RemoveScript, Choice::Confirm) => self.edits(|d| d.set_script(None)),
             (Dialog::AssetName { .. } | Dialog::AssetExists { .. }, Choice::Cancel) => {
                 self.pending_asset = None;
                 self.pending_tab = None;

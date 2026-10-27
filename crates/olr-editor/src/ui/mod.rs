@@ -14,6 +14,7 @@ mod elements;
 mod icons;
 mod level;
 mod look;
+mod parts;
 mod previews;
 mod properties;
 mod rail;
@@ -194,7 +195,9 @@ pub mod labels {
     // between its side panels, the layers' heading, the previews and the
     // unsaved mark.
     pub const TOOLS_TAB: &str = "Tools";
-    pub const LAYERS_TAB: &str = "Layers";
+    /// The narrow switch's Layers (shown "Layers"; issue #80 names the
+    /// right column's Layers tab `LAYERS`).
+    pub const LAYERS_TAB: &str = "Layers panel";
     pub const LAYERS: &str = "Layers";
     pub const PREVIEW_LIGHT: &str = "Light";
     pub const PREVIEW_DARK: &str = "Dark";
@@ -235,6 +238,90 @@ pub mod labels {
     pub const STATE_NAME: &str = "State name";
     /// A layer's properties: the shown state drops its own picture.
     pub const FOLLOW_START: &str = "Follow start";
+
+    // Properties, sounds and script (issue #80): the right column's tabs
+    // (with `LAYERS`).
+    pub const PROPERTIES: &str = "Properties";
+    pub const SOUNDS: &str = "Sounds";
+    pub const SCRIPT: &str = "Script";
+    /// The Properties tab's first row: the asset's own properties.
+    pub const WHOLE_ASSET: &str = "Whole asset";
+    /// A dirt layer's row.
+    pub const NOT_OFFERED_DIRT: &str = "not offered: dirt";
+    /// A property row's Clear (shown; each named `clear_value(row)`).
+    pub const CLEAR_VALUE: &str = "Clear";
+    /// Under a group property of a layer sharing its glow group.
+    pub const ALSO_CHANGES: &str = "Also changes";
+    pub const DESTRUCTIBLE: &str = "Destructible";
+    pub const HEALTH: &str = "Health";
+    pub const AT_ZERO: &str = "At 0";
+    pub const EXPOSE: &str = "Expose";
+    pub const UNEXPOSE: &str = "Unexpose";
+    /// The expose dialog's colour (an `Own` group's glow colour).
+    pub const DEFAULT_COLOUR: &str = "Default colour";
+    pub const IMPORT_SOUND: &str = "Import sound…";
+    /// The shown state's sound pickers (shown "Loop while in <state>",
+    /// "Play on entering <state>").
+    pub const LOOP_SOUND: &str = "Loop while in state";
+    pub const ENTER_SOUND: &str = "Play on entering state";
+    /// A sound picker's "no sound".
+    pub const NO_SOUND: &str = "None";
+    pub const NEW_SCRIPT: &str = "New script";
+    pub const REMOVE_SCRIPT: &str = "Remove script";
+    /// The middle's script editor while Script is chosen.
+    pub const SCRIPT_EDITOR: &str = "Script editor";
+    /// The Script tab's note until scripts run (#88).
+    pub const SCRIPT_NOT_RUN: &str = "Scripts run from a later version: checked for syntax only";
+    pub const NO_SCRIPT_ERRORS: &str = "No syntax errors";
+
+    /// A property row, by its owner (`WHOLE_ASSET` or the layer's name)
+    /// and the property's name: the value field's name.
+    pub fn property(owner: &str, property: &str) -> String {
+        format!("{owner}: {property}")
+    }
+
+    /// A property row's Expose switch.
+    pub fn expose(row: &str) -> String {
+        format!("{EXPOSE} {row}")
+    }
+
+    /// A property row's Clear.
+    pub fn clear_value(row: &str) -> String {
+        format!("{CLEAR_VALUE} {row}")
+    }
+
+    /// An exposed row's Name, Default, Min and Max fields.
+    pub fn exposed_name(row: &str) -> String {
+        format!("{row}: exposed name")
+    }
+
+    pub fn exposed_default(row: &str) -> String {
+        format!("{row}: default")
+    }
+
+    pub fn exposed_min(row: &str) -> String {
+        format!("{row}: min")
+    }
+
+    pub fn exposed_max(row: &str) -> String {
+        format!("{row}: max")
+    }
+
+    /// ▶ beside an asset's sound.
+    pub fn play(name: &str) -> String {
+        format!("Play {name}")
+    }
+
+    /// Remove beside an asset's sound.
+    pub fn remove_sound(name: &str) -> String {
+        format!("Remove sound {name}")
+    }
+
+    /// One of the script's errors in the Script tab (`line:column:
+    /// message`; a click puts the cursor there).
+    pub fn script_error(issue: &olr_script::ScriptIssue) -> String {
+        issue.to_string()
+    }
 
     /// A state's picture in the states panel, by its name (★ on the start).
     pub fn state(name: &str, start: bool) -> String {
@@ -312,11 +399,17 @@ pub struct EditorData {
     asset_name: Option<String>,
     /// The New asset dialog's fields, while it is open (issue #77).
     new_asset: Option<crate::asset_tab::NewAsset>,
+    /// The expose dialog's default colour, while it is open (issue #80).
+    expose_colour: Option<String>,
     /// Issue #78: the panels fit their width (the asset tab's), their rows
     /// wrapping or a label above its field where they do not.
     fit: bool,
     /// The asset tab's side panel a narrow window shows.
     side: asset::Side,
+    /// The asset tab's right column's tab (issue #80) and the script
+    /// editor's draft.
+    column: parts::Column,
+    script: parts::ScriptDraft,
     /// The focus last seen, and the passes left to follow it (the asset
     /// tab's side panels scroll to it).
     seen_focus: Option<egui::Id>,
@@ -383,8 +476,8 @@ pub fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData) -> Vec<Edit
     if data.dir.as_ref() != Some(&owner) {
         let canvas = (data.canvas_rect, data.canvas_size);
         let thumbs = (std::mem::take(&mut data.asset_thumbs), data.asset_generation);
-        let side = data.side;
-        *data = EditorData { dir: Some(owner), side, ..EditorData::default() };
+        let (side, column) = (data.side, data.column);
+        *data = EditorData { dir: Some(owner), side, column, ..EditorData::default() };
         (data.canvas_rect, data.canvas_size) = canvas;
         (data.asset_thumbs, data.asset_generation) = thumbs;
     }

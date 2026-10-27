@@ -393,7 +393,7 @@ impl Document {
 
     /// `asset.ron`'s metadata as the document now is: what the state and
     /// exposure rules read (no pixels).
-    fn asset_file(&self, parts: &AssetParts) -> AssetFile {
+    pub(crate) fn asset_file(&self, parts: &AssetParts) -> AssetFile {
         let look = self.level.look.as_ref();
         AssetFile {
             art_scale: self.level.art_scale,

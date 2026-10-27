@@ -14,6 +14,7 @@ olr-vfs.workspace = true
 olr-format.workspace = true
 olr-pack.workspace = true
 olr-edit.workspace = true
+olr-script.workspace = true
 olr-look.workspace = true
 egui.workspace = true
 serde = { workspace = true, features = ["std"] }

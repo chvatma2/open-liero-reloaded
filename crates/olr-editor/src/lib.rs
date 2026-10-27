@@ -14,6 +14,7 @@ pub mod folder_ops;
 pub mod history;
 pub mod look_ops;
 pub mod ops;
+pub mod parts_ops;
 mod pointer;
 pub mod state;
 pub mod state_ops;

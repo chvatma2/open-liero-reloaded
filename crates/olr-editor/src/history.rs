@@ -131,6 +131,38 @@ pub enum Edit {
         before: Box<StatesSnap>,
         after: Box<StatesSnap>,
     },
+    /// The asset's exposed entries, sounds, script and health (issue #80),
+    /// before and after (sounds shared, counted once by address).
+    Parts {
+        before: Box<PartsSnap>,
+        after: Box<PartsSnap>,
+    },
+}
+
+/// What the asset tab keeps of an asset besides its layers, look and
+/// states (issue #80): its exposed entries, sounds, script and health.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PartsSnap {
+    pub exposed: Vec<olr_format::assets::ExposedSource>,
+    pub sounds: BTreeMap<String, Arc<Vec<u8>>>,
+    pub script: Option<String>,
+    pub health: Option<olr_format::assets::HealthSource>,
+}
+
+impl PartsSnap {
+    /// Its sounds, by address, with their bytes.
+    fn sounds(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        self.sounds.values().map(|b| (Arc::as_ptr(b) as usize, b.len()))
+    }
+
+    /// The bytes it holds besides its sounds, roughly.
+    fn bytes(&self) -> usize {
+        std::mem::size_of::<PartsSnap>()
+            + self.exposed.len() * std::mem::size_of::<olr_format::assets::ExposedSource>()
+            + self.exposed.iter().map(|x| x.name.len()).sum::<usize>()
+            + self.sounds.keys().map(String::len).sum::<usize>()
+            + self.script.as_ref().map_or(0, String::len)
+    }
 }
 
 /// An asset's states as the asset tab holds them (issue #79): in the
@@ -290,6 +322,7 @@ impl Edit {
             }
             Edit::Show { before, after } => before == after,
             Edit::States { before, after } => before == after,
+            Edit::Parts { before, after } => before == after,
             Edit::Look { before, after } => before == after,
             Edit::Haze { before, after, .. } => before == after,
             Edit::GlowMask { before, after, .. } | Edit::SurfaceMap { before, after, .. } => before == after,
@@ -326,6 +359,8 @@ impl Edit {
             Edit::Show { .. } => 0,
             // Own pictures count once each, by address (`grids`).
             Edit::States { before, after } => before.bytes() + after.bytes(),
+            // Sounds count once each, by address (`grids`).
+            Edit::Parts { before, after } => before.bytes() + after.bytes(),
         }
     }
 
@@ -342,6 +377,7 @@ impl Edit {
                 .chain(before.states.iter().chain(&after.states).flat_map(StatesSnap::pictures))
                 .collect(),
             Edit::States { before, after } => before.pictures().chain(after.pictures()).collect(),
+            Edit::Parts { before, after } => before.sounds().chain(after.sounds()).collect(),
             Edit::Layer { before, after, .. } => grids([&**before, &**after].into_iter()).collect(),
             Edit::GlowMask { before, after, .. } | Edit::SurfaceMap { before, after, .. } => {
                 before.iter().chain(after).map(mask).collect()

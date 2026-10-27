@@ -20,12 +20,12 @@ use crate::state::{EditorAction, EditorState};
 use crate::tools::Tool;
 
 /// The editor's `#rrggbb`.
-fn hex(c: Colour) -> String {
+pub(super) fn hex(c: Colour) -> String {
     format!("#{:02x}{:02x}{:02x}", c.0.r, c.0.g, c.0.b)
 }
 
 /// `#rrggbb` or `rrggbb` as an opaque colour.
-fn parse_hex(s: &str) -> Option<Colour> {
+pub(super) fn parse_hex(s: &str) -> Option<Colour> {
     let s = s.trim().trim_start_matches('#');
     if s.len() != 6 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
@@ -36,7 +36,13 @@ fn parse_hex(s: &str) -> Option<Colour> {
 
 /// A colour field: `#rrggbb` text, committed once; an unreadable entry is
 /// dropped.
-fn colour(ui: &mut Ui, data: &mut EditorData, key: &str, label: &str, now: Colour) -> Option<Colour> {
+pub(super) fn colour(
+    ui: &mut Ui,
+    data: &mut EditorData,
+    key: &str,
+    label: &str,
+    now: Colour,
+) -> Option<Colour> {
     text(ui, data, key, label, &hex(now), false).and_then(|t| parse_hex(&t)).filter(|c| *c != now)
 }
 
@@ -87,7 +93,7 @@ fn default_of(kind: usize) -> AnimationSource {
 
 /// The animation editor: a kind picker and the kind's fields; `Keys` a
 /// list with add and remove. Returns the changed animation.
-fn animation(
+pub(super) fn animation(
     ui: &mut Ui,
     data: &mut EditorData,
     key: &str,

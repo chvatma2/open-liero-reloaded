@@ -22,7 +22,7 @@ use olr_format::levels::{
 
 use crate::catalog::Catalog;
 use crate::document::{DocError, Document, Item, tidied};
-use crate::history::{Edit, LevelMeta, Patch, Snapshot, Whole};
+use crate::history::{Edit, LevelMeta, Patch, Snapshot, StatesSnap, Whole};
 
 /// Why painting on a picture is refused.
 const PICTURE: &str = "erase on a picture; merge it into a layer to paint it";
@@ -1603,8 +1603,19 @@ impl Document {
                 }
             }
             Edit::States { before, after } => {
-                self.set_states(if forward { after } else { before });
-                NOTHING
+                let (from, to) = if forward { (before, after) } else { (after, before) };
+                self.set_states(to);
+                // Issue #80: the canvas poses the shown state's values.
+                fn values(s: &StatesSnap) -> Option<&Vec<olr_format::assets::StateValue>> {
+                    s.states.get(s.shown).map(|st| &st.values)
+                }
+                if values(from) != values(to) { self.all() } else { NOTHING }
+            }
+            Edit::Parts { before, after } => {
+                let (from, to) = if forward { (before, after) } else { (after, before) };
+                self.set_parts(to);
+                // The canvas poses the exposed defaults.
+                if from.exposed != to.exposed || from.health != to.health { self.all() } else { NOTHING }
             }
             Edit::Pixels { id, rect, before, after } => {
                 let p = if forward { after } else { before };

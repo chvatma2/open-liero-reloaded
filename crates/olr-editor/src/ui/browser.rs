@@ -70,6 +70,7 @@ pub(super) fn show(ctx: &Context, state: &EditorState, data: &mut EditorData, ou
         Purpose::ImportTexture => "Import a texture (PNG or JPEG, at most 512 × 512)",
         Purpose::OpenPack => "Open a level pack",
         Purpose::ImportAsset => "Import an asset (a folder holding asset.ron)",
+        Purpose::ImportSound => "Import a sound (WAV or Ogg)",
     };
     let modal = egui::Modal::new(egui::Id::new("olr-editor-browser")).show(ctx, |ui| {
         ui.set_width(620.0);

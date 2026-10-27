@@ -266,6 +266,12 @@ impl Document {
         let Some(p) = self.asset.as_deref_mut() else { return };
         let picture = match edit {
             Edit::Show { .. } | Edit::States { .. } | Edit::Objects { .. } => return,
+            // Issue #80: sounds and the script change no state's look.
+            Edit::Parts { before, after }
+                if before.exposed == after.exposed && before.health == after.health =>
+            {
+                return;
+            }
             Edit::Meta { before, after } if before.theme == after.theme => return,
             Edit::Pixels { id, .. } | Edit::Mask { id, .. } => Some((id.clone(), false)),
             Edit::GlowMask { id, .. } => Some((id.clone(), true)),

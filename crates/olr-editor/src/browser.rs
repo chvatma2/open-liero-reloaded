@@ -21,6 +21,8 @@ pub enum Purpose {
     /// An asset folder (holding `asset.ron`) to add to the user's assets
     /// (issue #9).
     ImportAsset,
+    /// A WAV or Ogg sound to add to the asset tab's asset (issue #80).
+    ImportSound,
 }
 
 impl Purpose {
@@ -48,6 +50,8 @@ pub const MAX_ENTRIES: usize = 10_000;
 
 /// The file extensions an import offers (case aside).
 const IMAGE_EXTENSIONS: [&str; 3] = ["png", "jpg", "jpeg"];
+/// The file extensions a sound's import offers (case aside, issue #80).
+const SOUND_EXTENSIONS: [&str; 2] = ["wav", "ogg"];
 
 /// The browser's state: its purpose, its directory, the entries of the
 /// last listing that succeeded (folders first, then by name, case aside)
@@ -121,18 +125,23 @@ impl Browser {
     }
 
     /// The entries shown: folders, and for an image's purpose the `.png`, `.jpg`
-    /// and `.jpeg` files (case aside); hidden (`.`) entries left out.
+    /// and `.jpeg` files, for a sound's the `.wav` and `.ogg` files (case
+    /// aside); hidden (`.`) entries left out.
     pub fn shown(&self) -> Vec<&DirEntry> {
+        let files: &[&str] = match self.purpose {
+            p if p.images() => &IMAGE_EXTENSIONS,
+            Purpose::ImportSound => &SOUND_EXTENSIONS,
+            _ => &[],
+        };
         self.entries
             .iter()
             .filter(|e| !e.name.starts_with('.'))
             .filter(|e| {
                 e.is_dir
-                    || self.purpose.images()
-                        && Path::new(&e.name)
-                            .extension()
-                            .and_then(|x| x.to_str())
-                            .is_some_and(|x| IMAGE_EXTENSIONS.iter().any(|i| x.eq_ignore_ascii_case(i)))
+                    || Path::new(&e.name)
+                        .extension()
+                        .and_then(|x| x.to_str())
+                        .is_some_and(|x| files.iter().any(|i| x.eq_ignore_ascii_case(i)))
             })
             .collect()
     }
