@@ -34,8 +34,9 @@ mod fingerprint_impl;
 /// gained theirs. 7: the state transfer's live copies (`olr_sim::LiveWire`,
 /// issue #86); later changes to them bump it again. 8: the live part's
 /// script state (`olr_sim::ScriptWire`, issue #88). 9: the live part's
-/// motions (`olr_sim::LiveMotion`, issue #89).
-pub const PROTOCOL_VERSION: u16 = 9;
+/// motions (`olr_sim::LiveMotion`, issue #89). 10: the live part's crush
+/// counts (issue #90).
+pub const PROTOCOL_VERSION: u16 = 10;
 /// At most this many slots in a match.
 pub const MAX_SLOTS: usize = 32;
 /// Largest accepted inputs datagram.
