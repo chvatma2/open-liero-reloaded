@@ -710,6 +710,8 @@ repair timing.
 
 Test: `cargo nextest run -p olr-netcode` (`tests/world_sim.rs` plays MW 1.0
 on Castle Strike from `OLR_CONTENT_DIR`, skipped with a notice without it,
-and issue #86's `state_transfer_of_a_live_world` on
-`fixtures/live/levels/live-test` laid over it; olr-content is a
-dev-dependency only).
+and issue #86's `state_transfer_of_a_live_world` and issue #90's
+`a_worm_rides_the_lift_alike_on_two_peers` (host and one client on
+`bad`, worm 0 starting on the lift pressing nothing; the verdict, and the
+host's worm carried 40 px or more) on `fixtures/live/levels/live-test`
+laid over it; olr-content is a dev-dependency only).

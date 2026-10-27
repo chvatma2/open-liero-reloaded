@@ -551,7 +551,7 @@ The headless command-line tool. Its commands:
   work units; then plays it again (determinism) and replays its recording
   from the content (round trip). `--coverage` prints weapons fired, actions
   triggered, events (`coverage::EVENT_KINDS`, issue #89's `LiveArrived`
-  among them), bonuses, rope attachments and kills by the killer's
+  and #90's `LiveBlocked` and `Crushed` among them), bonuses, rope attachments and kills by the killer's
   selected weapon. A failure (a panic in a bot or the tick, an invariant, a
   budget, a divergence) writes `<stem>.olrp` and `<stem>.ron` (the spec, so
   the seed, and the tick) to `target/failures/` (spec §7.3) and exits 1.

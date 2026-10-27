@@ -115,7 +115,10 @@ checks (`ScriptNames`, `check_level`), `move_to`, `stop`, `moving`,
   (`amount` truncated), issue #89's `arrived(name)` (this copy's value
   `name` reached its motion's target: `EventKind::LiveArrived`, emitted
   in the motions' step before the physics, so it reaches `arrived` in the
-  same tick).
+  same tick) and issue #90's `blocked(name)` (this copy's value `name`
+  was stopped by rock, another part or the level's edge, at the last
+  place reached: `EventKind::LiveBlocked`, in the same step, so the same
+  tick).
 - **The API object** (`api.rs`, `Live`): each run (one handler or timer
   call) gets a fresh one bound as `this` (`CallFnOptions::bind_this_ptr`),
   holding the run's reads (copies' states and values, worms, the clocks:
@@ -193,7 +196,9 @@ checks (`ScriptNames`, `check_level`), `move_to`, `stop`, `moving`,
 Tests: issue #89's `tests/motion.rs`
 (`move_to_reaches_its_target_at_its_speed_and_calls_arrived`,
 `min_and_max_follow_a_stretched_copy`,
-`a_set_stops_a_motion_and_a_state_change_does_not`) and `tests/names.rs`
+`a_set_stops_a_motion_and_a_state_change_does_not`, issue #90's
+`rock_stops_a_motion_and_calls_blocked`; `tests/common/mod.rs`' `copy`
+makes scenery parts, `rock_copy` rock ones) and `tests/names.rs`
 (`check_level_finds_unknown_copies_states_names_and_bad_handlers`, with
 lines); `tests/check.rs` (`a_good_script_has_no_issues`,
 `syntax_errors_name_line_and_column`,

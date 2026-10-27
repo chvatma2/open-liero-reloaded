@@ -514,6 +514,9 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   not check); `check_live_budget(file, s)` the limits from `live.ron`
   alone (`MAX_LIVE_COPIES` 64, `MAX_PARTS` 32, `MAX_PICTURES` 128,
   `MAX_LIVE_PROPS` 96, `MAX_ANIMATIONS` 256, `MAX_LIVE_SOUNDS` 64,
+  issue #90's `MAX_LIVE_SOLID_PARTS` 64 rock parts shown at once (each
+  copy's most in one state, summed; `olr_sim`'s, a const assert in
+  `olr-content`),
   `MAX_SCRIPTS` 129, `MAX_LIVE_FILES` 2048 (half `MAX_ARCHIVE_FILES`,
   `olr-pack`'s test), `MAX_LIVE_BYTES` 64 MiB decoded, `MAX_LIVE_VALUE`
   2^24), run before any picture is read. `glow_value(strength, mask)` is

@@ -214,8 +214,9 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   scaled on entry), a part's place rounded down. Entering a state sets
   every value its complete look names and emits `EventKind::LiveState {
   copy, state }` (gameplay class); `World::build` enters each copy's
-  start, then applies its `start_values`, after the worms (setup events,
-  with the first tick's). A set value is clamped into its limits
+  start, then applies its `start_values`, before the worms spawn (#90),
+  its `LiveState` events emitted after the worms' (setup events, with
+  the first tick's). A set value is clamped into its limits
   (`Health` also `0..=points`; never `i64::clamp`, which panics on a bad
   range). Setup calls `set_live_state(copy, state)` and
   `set_live_value(copy, prop, value)` (indices, the world's units;
@@ -227,9 +228,10 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   `Facing`, a layer's `Opacity` and `GlowStrength` so), `visible_parts`
   and `rock_parts` at whole-pixel places (copy place + `X`/`Y` + part
   place + its layer's offsets; `Visible` and `LayerVisible` 0 hide).
-  Nothing reads the parts in play yet (#90, #91, #94). `LiveWorld` is
-  where #88 (script state, below) and #89 (motion) extend: each adds to
-  the struct, `LiveWorld::hash` and `LiveWire` (exhaustive destructurings).
+  Since #90 the rock parts are solid (below). `LiveWorld` is
+  where #88 (script state, below), #89 (motion) and #90 (crush counts)
+  extend: each adds to the struct, `LiveWorld::hash` and `LiveWire`
+  (exhaustive destructurings).
   **Motions** (issue #89): `LiveMotion { target, speed }` per value, a
   `Buf` beside the values (`moving()`: `speed != 0`); `move_value(copy,
   prop, target, speed)` (a position only, else `LiveError::NotPosition`;
@@ -252,6 +254,52 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   Tests: `tests/live.rs` (`tests/common/live.rs`'s console, press and
   crate; `a_value_is_read_by_its_target`), `tests/state.rs`' live refusals and proptest, `tests/no_alloc.rs`'s
   `a_live_world_ticks_without_allocating`.
+- **Solid live parts** (issue #90; STATUS.md "Live assets"): `solid.rs`'s
+  `Solid { terrain, live: Option<SolidParts> }` (`World::solid()`) is the
+  one terrain query: `flags`/`material` read `PX_ROCK`/`Rock` where a
+  shown rock part's mask covers the pixel (`Facing` mirrored), else the
+  ground's. Every solidity read takes it (`check_on_ground`,
+  `move_and_check_collision`, `terrain_collision`, the beam trace,
+  `laser_sight`, the rope, bonus fall, `is_good_spawn_point`/`find_spot`),
+  generic over the `Solidity` trait and dispatched once per call by
+  `with_solid!` (`Terrain` alone without live parts: the oracle's code
+  path); dirt reads and edits stay on the ground. `SolidIndex` (in
+  `LiveWorld::solids`, at most `MAX_LIVE_SOLID_PARTS` 64 parts, a union
+  rectangle and a 32-px tile grid of `u64` part bits; `PartialEq` always
+  true) is not state: `refresh_solids` rebuilds it after every value or
+  state change, `save` takes it out around the clone and restore and
+  `load_state` rebuild it. `setup::validate` refuses more than 64 rock
+  parts shown at once (`most_rock_parts`). **The live step**
+  (`live_step.rs`, `World::live_step` in `frame` where #89 stepped
+  motions; none while frozen): `LiveWorld::step_motions(events, &mut impl
+  PartMover)` walks a value moving rock parts a whole pixel at a time
+  (`crossing`; `MAX_PART_STEP` 8), asking the world's `Mover` per step:
+  `Blocked` (ground rock, another part or the edge: the motion ends,
+  `LiveBlocked { copy, prop }`), `Wait` (a pushed worm wedged: the part
+  stays, the motion goes on) or `Taken` (worms pushed, standing worms
+  carried, ropes hooked to the ground in the part moved). Then
+  `push_out` (a part over a worm: up, left, right, down within
+  `PUSH_OUT_PX` 8, else wedged), then `crush`: `LiveWorld::crush` counts
+  per worm slot (`World::crush_count`), a chunk of `CRUSH_CHUNK` on the
+  first wedged tick and every `CRUSH_EVERY`, each after `Crushed { worm,
+  copy }`, through `injure_worm` with owner -1. The worm's body there is
+  its collision pixels but `y + 5` (`live_step.rs`' docs). Crush counts
+  are hashed only when one is not 0, transferred in `LiveWire::crush`
+  (another length refused). The copies start (`LiveWorld::start`) before
+  the worms spawn and announce their `LiveState`s after
+  (`announce_start`): a fixed spawn whose 6 × 6 square meets a part falls
+  back to `FindSpot` (`Solid::spawn_clear_of_parts`).
+  `World::move_live_value_for_test` (doc-hidden) starts a motion without
+  a director. Tests: `solid_tests.rs` (the query equals the ground
+  without parts, a proptest; the index through its tiles),
+  `live_step_tests.rs` (standing, carrying, pushing, stopping at ground
+  rock and another part, a wedged worm holding the part, chunks with
+  their marker, a death credited to nobody, a fixed spawn falling back,
+  the count through a restore and a transfer, a part appearing over a
+  worm, a rope following, projectiles and beams stopped, an explosion
+  carving only the ground, no spawn inside a part, the step through a
+  restore and a transfer, more than 64 parts refused) and
+  `tests/no_alloc.rs`' `moving_rock_parts_push_and_crush_without_allocating`.
 - **Scripts' state** (`script.rs`, issue #88; `olr-script` runs them):
   `Director` (`Debug + Send + Sync`, `box_clone`, `timer_functions(script)`,
   `run(&self, &mut LiveCtx)`) is **stateless**; `MatchSetup::director:

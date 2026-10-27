@@ -56,6 +56,12 @@ port of the bare `CGameMode` (`src/server/CGameMode.cpp`) at commit
   scoreboard has a capacity of `MAX_WORMS`, kept by the manual `Clone`.
   `checksum` hashes every field, the settings included.
 
+- **A crush death** (issue #90, a live rock part wedging a worm) is
+  dealt by nobody (owner -1): `olx_kill_credit` gives no kill and no
+  suicide, `kill` counts the death in `died` and says no kill text;
+  `a_crush_death_counts_a_death_and_no_suicide` (a door shown over a worm
+  in the arena).
+
 Test: `cargo nextest run -p olr-modes` (unit tests on hand-made worms, and
 `tests/deathmatch.rs` and `tests/chaos.rs` in a small arena with killing
 beams and a bomb).

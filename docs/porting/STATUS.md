@@ -7123,8 +7123,8 @@ import.
 The design is `docs/superpowers/specs/2026-10-26-asset-based-levels-design.md`
 (calls 8, 11, 13, 14 and 19). Issue #85 gives Live copies their played
 form; #86 puts them in the world, #87 draws them, #88 runs their scripts
-(#89 adds motion and the scripts' name checks), #93 lights them by their
-values.
+(#89 adds motion and the scripts' name checks), #90 makes their rock
+solid, #93 lights them by their values.
 
 - **The played form is play files (#85).** `live.ron` and `live/` sit
   beside `level.ron`, outside `editor/`, so `olr_pack::content_hash`
@@ -7177,8 +7177,8 @@ values.
   level without them and sets `level.live` from `live::bake_live`; the
   thumbnail is drawn from a bake with them as static, and a level lit
   only by Live copies still gets the default look. Since #86 a copy's
-  state lives in the world and since #87 it is drawn; **gap:** its rock
-  is not solid for worms and shots until #90.
+  state lives in the world and since #87 it is drawn; since #90 its rock
+  is solid (below).
 - **Loading (#85).** `olr_pack::LevelPack::live` (the `LiveSource`) and
   `olr_content::LoadedLevel::live` (`LoadedLive { source, sim }`):
   `live_sim()` is the `Arc<olr_sim::LiveLevel>` a match's worlds share,
@@ -7205,7 +7205,8 @@ values.
   them between ticks, which a recorded game never does. `World::live()`
   reads each copy's id, rectangle, state, values by name and visible
   (rock) parts at their whole-pixel places. Since #89 scripts move
-  values; nothing collides with a part yet (#90, #91, #94).
+  values; since #90 rock parts are solid (below; #91 and #94 add the
+  rest).
 - **Positions in 1/256 pixel (#86).** The world keeps `X`, `Y`, `OffsetX`
   and `OffsetY` in 1/256 world pixel (`LIVE_SUBPIXELS`; the played form's
   numbers, limits included, are whole pixels, scaled when they enter the
@@ -7228,7 +7229,7 @@ values.
   field), `olr-replay`'s `FORMAT_VERSION` 8 (`SetupCall::LiveState`,
   `LiveValue`), `olr-cli`'s desync `BUNDLE_VERSION` 6; older ones are
   refused. #88 (8: script state) and #89 (9: motions) extend `LiveWorld`
-  and `LiveWire`; #90 bumps the protocol again. `olr-present`'s rollback keys class `LiveState` by
+  and `LiveWire`; #90 (10: crush counts) bumps it again. `olr-present`'s rollback keys class `LiveState` by
   its copy and state, so a re-simulated tick's entry plays its effects
   once (#92).
 - **Drawn into the terrain (#87).** Live copies are composited into the
@@ -7245,7 +7246,8 @@ values.
   part is the topmost there and clears its solid, as the bake does). The
   ground never sees them: the colour map's ground, `material()`,
   `rebuild_area`, every edit rule, the beam map and the static beams'
-  derivation stay the level's (rock parts stop worms only from #90).
+  derivation stay the level's (rock parts are solid only through
+  #90's query, never in the ground).
   `X`, `Y`, `OffsetX`, `OffsetY`, `Visible`, `LayerVisible` place and
   show a part (`World::live`'s whole-pixel places), `Facing` mirrors the
   copy within its rectangle, `Opacity` fades a background part (rounded
@@ -7378,8 +7380,8 @@ values.
   tick). Ticks, not the game speed: a motion is a frame count. The world
   steps every motion once a tick at the start of the frame's physics,
   after the keys are latched and before the first sub-step, so a tick
-  without a sub-step moves values too (#90's solid parts will move before
-  worms and shots collide with them); on arrival it emits
+  without a sub-step moves values too (#90's solid parts move there,
+  before worms and shots collide with them); on arrival it emits
   `EventKind::LiveArrived`, which reaches `arrived(name)` in the same
   tick's script phase. A `set` of the value stops its motion, a state
   change does not (the motion goes on through it); a frozen world moves nothing. Motions are
@@ -7421,6 +7423,80 @@ values.
   added. Presentation only: the simulation, its checksum and the match
   goldens are unchanged. Unmeasured: a lit frame with most of 64 beams
   live (`docs/deferred-verification.md`).
+
+- **One terrain query (#90).** `olr_sim::Solid` (`solid.rs`) is the
+  ground plus the shown live rock parts: where a visible rock part's
+  mask covers a pixel (`Facing` mirroring it within the copy) its
+  `flags` are `PX_ROCK` and its `material` `Rock`, elsewhere the
+  ground's answer. Every solidity read goes through it:
+  `check_on_ground`, both loops of `move_and_check_collision`, the
+  projectiles' `terrain_collision`, the beam trace, `laser_sight`, the
+  rope hook, a bonus's fall and `is_good_spawn_point` (so `FindSpot`, the
+  respawns and the bonus spawns). **Dirt stays the ground's:** digging,
+  explosions, carving and dirt counts read and edit the ground only, so a
+  blast at a part carves the ground behind it and the part stays. The
+  ground-only or live version is chosen once per call (`with_solid!`),
+  never per pixel: a world without live copies runs the code it ran
+  before (the oracle and `fixtures/matches/` unchanged). The parts' index
+  (`SolidIndex`: at most `MAX_LIVE_SOLID_PARTS` 64 parts, their union
+  rectangle and a 32-px tile grid of part bits) is rebuilt when a value
+  or state changes; it is not state (not hashed, not transferred), taken
+  out of a rollback snapshot and rebuilt after a restore or a state load,
+  so no map-sized buffer is cloned per snapshot. The played form refuses
+  a level whose copies may show more than 64 rock parts at once (the sum
+  over copies of each one's most in a state; `check_live_budget`, the
+  world's setup too).
+- **The live step (#90).** Where #89 moved values, a value moving rock
+  parts (a copy's `X`/`Y`, a layer's `OffsetX`/`OffsetY`) steps them a
+  whole pixel at a time (at most `MAX_PART_STEP` 8 a tick, the motion's
+  speed), its parts together. Each step: **rock stops it** (ground rock,
+  another shown rock part or the level's edge entering its new
+  footprint): the motion ends at the last place reached with
+  `EventKind::LiveBlocked { copy, prop }`, which reaches the script's
+  `blocked(name)` in the same tick's phase. **It pushes worms** its new
+  footprint meets one pixel its way; a worm with nowhere to go is
+  **wedged** and the part waits there (the motion goes on next tick).
+  **It carries** the worms standing on it (a `check_on_ground` pixel on
+  its old footprint) where the place is free, and **a rope hooked to the
+  ground** in its old footprint moves with it (`Worm` stays 992 bytes).
+  A part that appears over a worm (a state, `Visible`, `LayerVisible`, a
+  `set`) **pushes it out** to the nearest free place within
+  `PUSH_OUT_PX` 8: straight up, then left, right and down, the shortest
+  first; with none it is wedged. Bonuses and projectiles are not pushed
+  or carried. A value with no rock part moves as in #89. A frozen world
+  moves nothing. The step runs before the first sub-step, as #89's
+  motions.
+- **A worm's body (#90, a deviation from the issue's text).** Pushing,
+  carrying, pushing out and a free place use the pixels
+  `move_and_check_collision` reads but its lowest: the row `x - 3..=x +
+  3` at `y` and the column `y - 4..=y + 4`. The column's `y + 5` sits
+  inside the ground while a worm stands, so with it no standing worm
+  would have a free place and every part touching one would wedge it.
+- **Crushing (#90).** A worm wedged in a tick has its count go up (a free
+  tick sets it to 0): `CRUSH_CHUNK` 5 damage on its first wedged tick,
+  then every `CRUSH_EVERY` 10 ticks, each after an
+  `EventKind::Crushed { worm, copy }` (the marker presentation shows),
+  dealt by `injure_worm` with owner -1, its blood as any hit's. The
+  death is credited to nobody (no kill, no suicide; the board counts a
+  death, olr-modes' `a_crush_death_counts_a_death_and_no_suicide`). The
+  counts are per worm slot in `LiveWorld`: hashed only when one is not
+  0 (a live world nobody was crushed in hashes as before), cloned and
+  transferred, a count list of another length refused;
+  `olr_proto::PROTOCOL_VERSION` 10. The constants are the issue's
+  (`live.rs`); a change to them moves the live goldens.
+- **Spawning beside parts (#90).** `FindSpot` reads the query, so nothing
+  spawns in a part; a worm's fixed spawn whose 6 × 6 square meets a part
+  falls back to `FindSpot`. For that the copies start (values set, index
+  built) before the worms spawn; their `LiveState` events are still
+  emitted after the worms' (`LiveWorld::announce_start`), so the event
+  order and the goldens without live copies hold.
+- **The fixture (#90).** `fixtures/live/make-live-test.sh` adds a lift (a
+  rock platform its script moves left and right, resting a second at each
+  end or where it is blocked), a door (a rock bar its script shows and
+  hides every 2.5 s) and a press with room for a worm under its head; the
+  live match golden and the five live render goldens were re-blessed.
+  `fixtures/matches/` is unchanged. Unmeasured: the tick's cost with
+  parts (`docs/deferred-verification.md`).
 
 ## Kept OLX quirks
 
