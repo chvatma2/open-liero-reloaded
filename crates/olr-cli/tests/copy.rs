@@ -313,13 +313,13 @@ fn cli_saves_and_places_an_asset() {
     checks_clean(p);
 }
 
-/// Issue #89: `level check-scripts` on the live fixture (its six scripts
+/// Issue #89: `level check-scripts` on the live fixture (its eight scripts
 /// clean), then on a copy whose copy script names a state it lacks (the
 /// line named, a failure); `level copy script` refuses to save that.
 #[test]
 fn cli_check_scripts_passes_on_the_fixture_and_names_a_broken_line() {
     let out = ok(&["level", "check-scripts", "fixtures/live/levels/live-test"]);
-    assert!(out.ends_with("live-test: 6 scripts, no problems\n"), "{out}");
+    assert!(out.ends_with("live-test: 8 scripts, no problems\n"), "{out}");
     let t = tempfile::tempdir().unwrap();
     let dir = t.path().join("live");
     copy_dir(&repo().join("fixtures/live/levels/live-test"), &dir);

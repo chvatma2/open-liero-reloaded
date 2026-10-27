@@ -1,0 +1,23 @@
+(
+    name: "Lift",
+    size: (24, 3),
+    elements: [
+        (
+            id: "lift",
+            name: "Lift",
+            kind: Drawn(
+                material: Rock,
+                size: (24, 3),
+            ),
+        ),
+    ],
+    exposed: [
+        (
+            name: "lift_x",
+            property: X,
+            default: Int(0),
+            min: -30,
+            max: 30,
+        ),
+    ],
+)

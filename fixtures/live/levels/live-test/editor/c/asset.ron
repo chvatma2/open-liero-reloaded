@@ -1,13 +1,13 @@
 (
     name: "Press",
-    size: (10, 16),
+    size: (14, 6),
     elements: [
         (
             id: "frame",
             name: "Frame",
             kind: Drawn(
                 material: Rock,
-                size: (10, 16),
+                size: (14, 6),
             ),
         ),
         (
@@ -16,7 +16,7 @@
             kind: Drawn(
                 material: Rock,
                 at: (2, 2),
-                size: (6, 4),
+                size: (10, 4),
             ),
         ),
     ],

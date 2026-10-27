@@ -266,7 +266,7 @@
             id: "press",
             asset: "Press",
             at: (190, 152),
-            size: (10, 16),
+            size: (14, 6),
             props: [
                 (
                     name: "head_y",
@@ -278,11 +278,11 @@
             ],
             pictures: [
                 (
-                    size: (10, 16),
+                    size: (14, 6),
                     rock: true,
                 ),
                 (
-                    size: (6, 4),
+                    size: (10, 4),
                     rock: true,
                 ),
             ],
@@ -512,6 +512,77 @@
                 ),
             ],
         ),
+        (
+            id: "lift",
+            asset: "Lift",
+            at: (60, 120),
+            size: (24, 3),
+            props: [
+                (
+                    name: "lift_x",
+                    drives: X,
+                    min: -30,
+                    max: 30,
+                    default: 0,
+                ),
+            ],
+            pictures: [
+                (
+                    size: (24, 3),
+                    rock: true,
+                ),
+            ],
+            states: [
+                (
+                    name: "Normal",
+                    parts: [
+                        (
+                            kind: Rock,
+                            picture: 0,
+                        ),
+                    ],
+                ),
+            ],
+            scripts: [
+                5,
+            ],
+        ),
+        (
+            id: "door",
+            asset: "Door",
+            at: (290, 138),
+            size: (4, 30),
+            props: [
+                (
+                    name: "door_on",
+                    drives: LayerVisible(0),
+                    min: 0,
+                    max: 1,
+                    default: 1,
+                ),
+            ],
+            pictures: [
+                (
+                    size: (4, 30),
+                    rock: true,
+                ),
+            ],
+            states: [
+                (
+                    name: "Normal",
+                    parts: [
+                        (
+                            layer: 0,
+                            kind: Rock,
+                            picture: 0,
+                        ),
+                    ],
+                ),
+            ],
+            scripts: [
+                6,
+            ],
+        ),
     ],
     scripts: [
         "live/0.rhai",
@@ -520,8 +591,10 @@
         "live/3.rhai",
         "live/4.rhai",
         "live/5.rhai",
+        "live/6.rhai",
+        "live/7.rhai",
     ],
-    level_script: 5,
+    level_script: 7,
     sounds: [
         "live/0.wav",
     ],

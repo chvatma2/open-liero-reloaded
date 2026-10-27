@@ -28,6 +28,14 @@
             key: "f",
             origin: Own,
         ),
+        (
+            key: "g",
+            origin: Own,
+        ),
+        (
+            key: "h",
+            origin: Own,
+        ),
     ],
     copies: [
         (
@@ -94,6 +102,18 @@
             id: "spot",
             asset: "f",
             at: (150, 40),
+            live: true,
+        ),
+        (
+            id: "lift",
+            asset: "g",
+            at: (60, 120),
+            live: true,
+        ),
+        (
+            id: "door",
+            asset: "h",
+            at: (290, 138),
             live: true,
         ),
     ],

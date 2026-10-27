@@ -25,7 +25,7 @@ fn the_fixture_reads_with_its_live_copies() {
     let level = read_level(&fixture()).unwrap();
     let live = level.live.expect("live.ron");
     let ids: Vec<&str> = live.file.copies.iter().map(|c| c.id.as_str()).collect();
-    assert_eq!(ids, ["lamp", "console-a", "console-b", "press", "crate", "gate", "spot"]);
+    assert_eq!(ids, ["lamp", "console-a", "console-b", "press", "crate", "gate", "spot", "lift", "door"]);
     assert_eq!(live.sounds.len(), 1);
 }
 

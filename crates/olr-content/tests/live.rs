@@ -47,8 +47,17 @@ fn a_live_level_loads_its_copies() {
     let level = content.load_level(ID).unwrap();
     let live = level.live_sim().expect("live copies");
     let ids: Vec<&str> = live.copies.iter().map(|c| c.id.as_str()).collect();
-    assert_eq!(ids, ["lamp", "console-a", "console-b", "press", "crate", "gate", "spot"]);
+    assert_eq!(ids, ["lamp", "console-a", "console-b", "press", "crate", "gate", "spot", "lift", "door"]);
     let copy = |id: &str| live.copy_by_id(id).unwrap();
+    // Issue #90: the lift's place and the door's bar, rock parts both.
+    let (lift, door) = (copy("lift"), copy("door"));
+    let x = &lift.props[usize::from(lift.prop("lift_x").unwrap())];
+    assert_eq!((x.target, x.min, x.max), (LiveTarget::X, -30, 30));
+    let on = &door.props[usize::from(door.prop("door_on").unwrap())];
+    assert!(matches!(on.target, LiveTarget::LayerVisible(_)));
+    for c in [lift, door] {
+        assert!(c.states[0].parts.iter().all(|p| p.kind == LivePartKind::Rock));
+    }
     // The lamp: three states, starting dim, a click entering Off.
     let lamp = copy("lamp");
     let names: Vec<&str> = lamp.states.iter().map(|s| s.name.as_str()).collect();
@@ -109,7 +118,7 @@ fn a_live_level_loads_its_copies() {
     // Presentation's share: the pictures and the sound's bytes.
     let source = &level.live.as_ref().unwrap().source;
     assert!(source.sounds[usize::from(click)].starts_with(b"RIFF"));
-    assert_eq!(source.pictures.len(), 7);
+    assert_eq!(source.pictures.len(), 9);
     // The spot (issue #93): its lens a background part beaming, its
     // direction and spread exposed, its beams derived.
     let spot = copy("spot");

@@ -1,0 +1,21 @@
+(
+    name: "Door",
+    size: (4, 30),
+    elements: [
+        (
+            id: "door",
+            name: "Door",
+            kind: Drawn(
+                material: Rock,
+                size: (4, 30),
+            ),
+        ),
+    ],
+    exposed: [
+        (
+            name: "door_on",
+            property: LayerVisible("door"),
+            default: Bool(true),
+        ),
+    ],
+)
