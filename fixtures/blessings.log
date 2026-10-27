@@ -289,3 +289,11 @@
 2026-10-27 bless-render: #89: live-states and live-light drawn after one tick, before the fixture's scripts change them
   fixtures/render/live-light.png
   fixtures/render/live-states.png
+2026-10-27 bless-regression: #90: solid live parts; the live fixture's lift, door and wider press
+  fixtures/matches-live/classic-live-test-4dm.ron
+2026-10-27 bless-render: #90: the live fixture's lift, door and wider press
+  fixtures/render/live-beam-turned.png
+  fixtures/render/live-beam.png
+  fixtures/render/live-light.png
+  fixtures/render/live-start.png
+  fixtures/render/live-states.png
