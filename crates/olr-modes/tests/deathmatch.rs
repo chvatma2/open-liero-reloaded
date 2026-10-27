@@ -394,3 +394,61 @@ fn a_projectile_of_a_worm_that_left_credits_nobody() {
     assert_eq!(r.w.worms()[0].damage, 0.0, "the damage score of a worm that left");
     assert_eq!(r.w.worms()[1].last_damager, -1);
 }
+
+/// Issue #90: a worm wedged by a live rock part dies credited to nobody:
+/// the board counts its death and no suicide, and nobody gets a kill or a
+/// kill text.
+#[test]
+fn a_crush_death_counts_a_death_and_no_suicide() {
+    use olr_sim::{
+        LiveCopy, LiveCopySetup, LiveLevel, LivePart, LivePartKind, LiveProp, LiveSolid, LiveState,
+        LiveTarget,
+    };
+    use std::sync::Arc;
+    // A 40 × 50 door, hidden at first, over worm 1 (x 200) down to the
+    // floor: shown, it wedges the worm (no free place within 8 px).
+    let door = LiveCopy::new(LiveCopySetup {
+        id: "door".into(),
+        at: (180, 100),
+        size: (40, 50),
+        props: vec![LiveProp { name: None, target: LiveTarget::LayerVisible(0), min: 0, max: 1, default: 0 }],
+        states: vec![LiveState {
+            name: "On".into(),
+            values: Vec::new(),
+            parts: vec![LivePart {
+                kind: LivePartKind::Rock,
+                layer: Some(0),
+                at: (0, 0),
+                picture: 0,
+                glow_strength: 100,
+            }],
+            enter_sound: None,
+            loop_sound: None,
+        }],
+        pictures: vec![LiveSolid::new((40, 50), true, |_, _| true)],
+        start_state: 0,
+        start_values: Vec::new(),
+        health: None,
+        scripts: Vec::new(),
+        sounds: Vec::new(),
+    });
+    let xs = [(50, LASER), (200, LASER), (300, LASER)];
+    let mut s = setup(&xs);
+    s.live = Some(Arc::new(LiveLevel::new(vec![door], Vec::new(), None, 0)));
+    let mode = Deathmatch::prepare(dm(), &mut s).unwrap();
+    let mut r = Run::new(World::new(s, Box::new(mode)).unwrap());
+    r.idle(150);
+    assert!(r.kills().is_empty());
+    r.w.set_live_value(0, 0, 1).unwrap();
+    r.idle_until(400, |w| !w.worms()[1].alive);
+    let kills: Vec<(i32, i32)> = r.kills().iter().map(|k| (k.1, k.2)).collect();
+    assert_eq!(kills, [(1, -1)], "crushed, credited to nobody");
+    let s = r.w.scores().iter().find(|s| s.worm == 1).copied().expect("a row");
+    assert_eq!((s.kills, s.deaths, s.suicides), (0, 1, 0));
+    assert!(r.w.scores().iter().all(|s| s.kills == 0));
+    assert!(
+        r.messages().iter().all(|m| m.text != KILLED && m.text != SUICIDE && m.text != FIRST_BLOOD),
+        "no kill text: {:?}",
+        r.messages()
+    );
+}
