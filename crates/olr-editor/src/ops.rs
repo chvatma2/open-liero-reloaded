@@ -654,6 +654,7 @@ impl Document {
         if self.items[index].element.is_distant() {
             return Err(DocError::Bad("a distant layer does not split".into()));
         }
+        self.refuse_owned(index)?;
         let (size, s) = (self.level.size, self.level.art_scale);
         let item = self.items[index].clone();
         let mut others: Vec<Element> =
@@ -728,6 +729,8 @@ impl Document {
         if le.element.is_distant() || ue.element.is_distant() {
             return Err(DocError::Bad("a distant layer does not merge".into()));
         }
+        self.refuse_owned(upper)?;
+        self.refuse_owned(lower)?;
         // The layers as the bake sees them: a hidden folder hides them
         // (issue #60).
         let seen = |i: usize, e: &Element| Element { visible: self.shown_at(i), ..e.clone() };
@@ -1018,10 +1021,29 @@ impl Document {
 
     /// Makes `id` ready for `stroke` (plan 14d R5-R7): a plain layer painted
     /// another material, or erased with back art, becomes mixed; a picture
-    /// erased or restored without a mask gets a full one. The conversion is
-    /// applied and returned for the stroke's step; `None` when none is
-    /// needed. Painting a picture is refused.
-    pub fn begin_stroke(&mut self, id: &str, stroke: Stroke) -> Result<Option<Edit>, DocError> {
+    /// erased or restored without a mask gets a full one. The conversions
+    /// are applied and returned for the stroke's step, in order; none when
+    /// none is needed. Painting a picture is refused.
+    ///
+    /// Issue #79: in an asset's state other than the start, a stroke on a
+    /// picture is refused, and a drawn layer the state does not paint
+    /// itself is made its own first.
+    pub fn begin_stroke(&mut self, id: &str, stroke: Stroke) -> Result<Vec<Edit>, DocError> {
+        let i = self.unlocked(id)?;
+        let owned = self.own_for_stroke(i)?;
+        match self.convert_for_stroke(id, stroke) {
+            Ok(e) => Ok(owned.into_iter().chain(e).collect()),
+            Err(e) => {
+                if let Some(o) = &owned {
+                    self.apply(o, false);
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// `begin_stroke`'s conversion (plan 14d).
+    fn convert_for_stroke(&mut self, id: &str, stroke: Stroke) -> Result<Option<Edit>, DocError> {
         let i = self.unlocked(id)?;
         let s = self.level.art_scale;
         let item = self.items[i].clone();
@@ -1149,7 +1171,7 @@ impl Document {
             return Ok(Vec::new());
         };
         let m = material.unwrap_or(own.into());
-        let mut edits: Vec<Edit> = self.begin_stroke(id, Stroke::Paint(m))?.into_iter().collect();
+        let mut edits: Vec<Edit> = self.begin_stroke(id, Stroke::Paint(m))?;
         let before = self.stroke_before(id);
         let (size, s) = (self.level.size, self.level.art_scale);
         let (at, _) = self.layer_box(i);
@@ -1184,7 +1206,7 @@ impl Document {
         let img = self.cache.original(&source, &bytes)?;
         let seed = original_pixel(box_at, bsize, (img.width(), img.height()), at)
             .ok_or_else(|| DocError::Bad(format!("({}, {}) is outside the picture", at.0, at.1)))?;
-        let mut edits: Vec<Edit> = self.begin_stroke(id, Stroke::Erase)?.into_iter().collect();
+        let mut edits: Vec<Edit> = self.begin_stroke(id, Stroke::Erase)?;
         let before = self.stroke_before(id);
         if let Decoded::Image { mask: Some(mask), .. } = &mut self.items[i].decoded {
             mask_colour(Arc::make_mut(mask), &img, seed, tolerance);
@@ -1332,6 +1354,7 @@ impl Document {
             items: self.items.clone(),
             masks: self.glow_masks.clone(),
             surfaces: self.surface_maps.clone(),
+            states: self.states_snap(),
         }
     }
 
@@ -1400,8 +1423,42 @@ impl Document {
                 }
             }
         }
+        // Issue #79: the states' own pictures (and their glow masks) are
+        // re-laid as their layers are.
+        let states = self.states_snap().map(|mut snap| {
+            for st in &mut snap.states {
+                for (id, pic) in st.own.iter_mut() {
+                    let (Some(was), Some(now)) = (
+                        self.items.iter().find(|i| i.element.id == *id),
+                        items.iter().find(|i| i.element.id == *id),
+                    ) else {
+                        continue;
+                    };
+                    let mut e = was.element.clone();
+                    let mut d = pic.decoded.clone();
+                    if resize_decoded(&mut e, &mut d, old, s, size, offset, material, &paint).is_err() {
+                        continue;
+                    }
+                    let glow_mask = pic.glow_mask.as_ref().map(|m| {
+                        match (
+                            olr_format::levels::element_box(&was.element.kind, old),
+                            olr_format::levels::element_box(&now.element.kind, size),
+                        ) {
+                            (Some((at, b)), Some(new)) => {
+                                let moved =
+                                    ((at.0.saturating_add(offset.0), at.1.saturating_add(offset.1)), b);
+                                Arc::new(crate::look_ops::relay_mask(m, moved, new, s))
+                            }
+                            _ => m.clone(),
+                        }
+                    });
+                    *pic = Arc::new(olr_edit::asset::OwnPicture { decoded: d, glow_mask });
+                }
+            }
+            snap
+        });
         let before = Box::new(self.whole());
-        let after = Box::new(Whole { level, items, masks, surfaces });
+        let after = Box::new(Whole { level, items, masks, surfaces, states });
         Ok(self.change(Edit::Whole { before, after }))
     }
 
@@ -1468,7 +1525,9 @@ impl Document {
         }
         let before = Box::new(self.whole());
         let surfaces = self.surface_maps.clone();
-        Ok(self.change(Edit::Whole { before, after: Box::new(Whole { level, items, masks, surfaces }) }))
+        let states = self.states_snap();
+        Ok(self
+            .change(Edit::Whole { before, after: Box::new(Whole { level, items, masks, surfaces, states }) }))
     }
 
     /// An image element's original bytes.
@@ -1534,7 +1593,19 @@ impl Document {
     /// Applies (`forward`) or reverts `edit`; returns the rectangle it rebaked.
     pub fn apply(&mut self, edit: &Edit, forward: bool) -> Rect {
         self.bake_generation += 1;
+        self.touch(edit);
         let dirty = match edit {
+            Edit::Show { before, after } => {
+                if self.show_state(if forward { *after } else { *before }) {
+                    self.all()
+                } else {
+                    NOTHING
+                }
+            }
+            Edit::States { before, after } => {
+                self.set_states(if forward { after } else { before });
+                NOTHING
+            }
             Edit::Pixels { id, rect, before, after } => {
                 let p = if forward { after } else { before };
                 let s = self.level.art_scale;
@@ -1689,6 +1760,9 @@ impl Document {
                 self.items = w.items.clone();
                 self.glow_masks = w.masks.clone();
                 self.surface_maps = w.surfaces.clone();
+                if let Some(states) = &w.states {
+                    self.set_states(states);
+                }
                 self.keep_from_level();
                 self.all()
             }
@@ -1748,6 +1822,10 @@ impl Document {
         };
         if dirty.w > 0 && dirty.h > 0 {
             self.rebake(dirty);
+        } else if self.asset.is_some() {
+            // A look edit of the same groups bakes nothing; the canvas's
+            // look follows it (issue #79).
+            self.refresh_canvas_look(None);
         }
         dirty
     }

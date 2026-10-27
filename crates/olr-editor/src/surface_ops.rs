@@ -157,6 +157,7 @@ impl Document {
     /// without back art.
     pub fn surface_stroke_before(&self, id: &str, back: bool) -> Result<SurfaceStrokeStart, DocError> {
         let index = self.unlocked(id)?;
+        self.refuse_surface_in_state()?;
         let e = &self.items[index].element;
         if e.is_distant() {
             return Err(DocError::Bad(

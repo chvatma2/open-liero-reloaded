@@ -458,21 +458,25 @@ fn edits_that_break_exposure_or_states_are_refused_with_the_reason() {
         "lamps is used by exposed lamp_opacity: unexpose it first",
     );
 
-    // A layer a state owns a picture of keeps its geometry (issue #79).
+    // Issue #79 carries a state's own picture along: a move and a resize
+    // land; merge and split are refused; a removal still meets the
+    // exposure's refusal.
     let key = save_yours(&tmp, &mut s, &broken_lamp());
     run(&mut s, A::EditAsset(key));
     assert!(s.dialog().is_none(), "nothing unsaved: no question");
     assert_eq!(s.active_document().unwrap().asset_parts().unwrap().states.len(), 2);
-    let own = "state Broken has its own picture of lamps: edit it in the states panel (issue #79)";
     run(&mut s, A::Select(Selection::Element("lamps".into())));
-    refused(&mut s, A::Remove, own);
-    refused(&mut s, A::Set("lamps".into(), Property::At((3, 2))), own);
-    refused(
+    refused(&mut s, A::Remove, "lamps is used by exposed lamp_glow: unexpose it first");
+    refused(&mut s, A::Split("lamps".into()), "Broken paints");
+    run(&mut s, A::Set("lamps".into(), Property::At((3, 2))));
+    assert!(s.can_undo(), "{}", message(&s));
+    run(&mut s, A::Undo);
+    run(
         &mut s,
         A::Resize { size: (20, 8), offset: (0, 0), material: Material::Background, colour: Rgba::BLACK },
-        own,
     );
-    refused(&mut s, A::Split("lamps".into()), own);
+    assert_eq!(s.active_document().unwrap().level().size, (20, 8), "{}", message(&s));
+    run(&mut s, A::Undo);
     // Painting it is no geometry.
     stroke(&mut s, "lamps", PaintChoice::Colour(RED), (5, 4));
     assert!(s.can_undo(), "{}", message(&s));

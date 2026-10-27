@@ -42,7 +42,7 @@ pub(crate) enum Drag {
         last: (i32, i32),
         rect: Option<Rect>,
         stroke: Stroke,
-        begun: Option<Box<Edit>>,
+        begun: Vec<Edit>,
         /// The paint, resolved once as the stroke began (plan 14e minors).
         paint: Arc<Paint>,
     },
@@ -252,6 +252,10 @@ impl EditorState {
             Some(_) if found.is_some_and(|i| doc.locked_at(i)) => format!("element {id:?} is locked"),
             Some(item) if matches!(item.decoded, Decoded::Drawn { .. }) => return Some(id),
             Some(item) if matches!(item.decoded, Decoded::Image { .. }) && picture => return Some(id),
+            // Issue #79: in a state, a picture is every state's.
+            Some(item) if matches!(item.decoded, Decoded::Image { .. }) && doc.in_state() => {
+                crate::state_ops::IMAGE_IN_STATE.into()
+            }
             Some(item) if matches!(item.decoded, Decoded::Image { .. }) => {
                 "erase on a picture; merge it into a layer to paint it".into()
             }
@@ -278,7 +282,7 @@ impl EditorState {
     /// Begins a stroke of `stroke` into `id` (`Document::begin_stroke`):
     /// its conversion and the copy it starts from, or `None` (the status
     /// says why).
-    fn begin(&mut self, id: &str, stroke: Stroke) -> Option<(Option<Edit>, StrokeBefore)> {
+    fn begin(&mut self, id: &str, stroke: Stroke) -> Option<(Vec<Edit>, StrokeBefore)> {
         let doc = self.doc.as_mut()?;
         let begun = match doc.begin_stroke(id, stroke) {
             Ok(e) => e,
@@ -288,9 +292,7 @@ impl EditorState {
             }
         };
         let Some(before) = doc.stroke_before(id) else {
-            if let Some(e) = &begun {
-                doc.apply(e, false);
-            }
+            doc.roll_back(&begun);
             return None;
         };
         Some((begun, before))
@@ -545,15 +547,7 @@ impl EditorState {
                 };
                 let rect = self.lay(&id, &[self.dab(world)], stroke, &paint);
                 let before = Arc::new(before);
-                self.drag = Some(Drag::Stroke {
-                    id,
-                    before,
-                    last: world,
-                    rect,
-                    stroke,
-                    begun: begun.map(Box::new),
-                    paint,
-                });
+                self.drag = Some(Drag::Stroke { id, before, last: world, rect, stroke, begun, paint });
                 rect.map(|r| vec![EditorCommand::Upload(r)]).unwrap_or_default()
             }
             Tool::Wand => {
@@ -1113,12 +1107,10 @@ impl EditorState {
                 // A stroke of no change leaves no step, nor its conversion
                 // (batch C review 1).
                 let Some(edit) = edit.filter(|e| !e.is_noop()) else {
-                    if let Some(b) = &begun {
-                        doc.apply(b, false);
-                    }
+                    doc.roll_back(&begun);
                     return Vec::new();
                 };
-                self.history.push(begun.map(|b| *b).into_iter().chain([edit]).collect());
+                self.history.push(begun.into_iter().chain([edit]).collect());
                 self.committed(NOTHING)
             }
             Drag::Shape { id, tool, start, now } => {
@@ -1142,8 +1134,8 @@ impl EditorState {
                     self.status.message = Some(e.to_string());
                 }
                 let Some(edit) = edit.filter(|e| !e.is_noop()) else {
-                    if let (Some(b), Some(doc)) = (&begun, self.doc.as_mut()) {
-                        doc.apply(b, false);
+                    if let Some(doc) = self.doc.as_mut() {
+                        doc.roll_back(&begun);
                     }
                     return Vec::new();
                 };

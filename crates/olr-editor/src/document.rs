@@ -9,8 +9,8 @@ use std::sync::Arc;
 use olr_data::image::RgbaImage;
 use olr_data::manifest::PackManifest;
 use olr_edit::compose::{
-    Decoded, GlowMasks, ImageCache, PaintedSurfaces, Rect, bake_distant, bake_elements_with, decode_element,
-    decode_glow_masks, decode_surface_maps, encode_decoded, has_distant,
+    Decoded, GlowMasks, ImageCache, PaintedSurfaces, Rect, bake_distant, bake_elements_with_opacity,
+    decode_element, decode_glow_masks, decode_surface_maps, encode_decoded, has_distant,
 };
 use olr_edit::folders;
 use olr_edit::level::refresh_thumb;
@@ -134,6 +134,9 @@ pub struct Document {
     /// exposed properties, sounds, script and health (`open_asset`); `None`
     /// for a level's.
     pub(crate) asset: Option<Box<crate::asset_tab::AssetParts>>,
+    /// Issue #79: the look the canvas is lit by when the shown state's
+    /// values change its glow groups (`canvas_look`).
+    pub(crate) canvas_look: Option<olr_format::look::LookSource>,
 }
 
 /// What a plain level brought that its layers cannot bake.
@@ -415,6 +418,7 @@ impl Document {
             bake_generation: 0,
             holes: 0,
             asset: None,
+            canvas_look: None,
         };
         doc.rebake(doc.all());
         doc.rebaked = (&doc.level.material, &doc.level.front, &doc.level.back)
@@ -474,7 +478,27 @@ impl Document {
     /// distant layers makes them again.
     pub fn rebake(&mut self, rect: Rect) {
         self.bake_generation += 1;
-        let baked = self.baked_elements();
+        let mut baked = self.baked_elements();
+        // Issue #79: an asset's shown state, its values applied where
+        // things are.
+        let pose = self.canvas_pose();
+        if let Some(p) = &pose {
+            let shown: Vec<bool> = match &baked {
+                Some(es) => es.iter().map(|e| e.visible).collect(),
+                None => vec![true; self.items.len()],
+            };
+            baked = Some(
+                p.elements
+                    .iter()
+                    .zip(shown)
+                    .map(|(e, v)| Element { visible: e.visible && v, ..e.clone() })
+                    .collect(),
+            );
+        }
+        if self.asset.is_some() {
+            self.refresh_canvas_look(pose.as_ref());
+        }
+        let opacity = pose.map(|p| p.opacity).unwrap_or_default();
         let items: Vec<(&Element, &Decoded)> = match &baked {
             Some(es) => es.iter().zip(&self.items).map(|(e, i)| (e, &i.decoded)).collect(),
             None => self.items.iter().map(|i| (&i.element, &i.decoded)).collect(),
@@ -485,9 +509,10 @@ impl Document {
         let rect = if see_through != self.see_through { all } else { rect };
         let whole = rect.x == 0 && rect.y == 0 && rect.w >= size.0 && rect.h >= size.1;
         let holes_before = if whole { 0 } else { holes(&self.level.back, rect, s) };
-        bake_elements_with(
+        bake_elements_with_opacity(
             &mut self.level,
             &items,
+            &opacity,
             &self.glow_masks,
             &self.surface_maps,
             &self.back_tile,

@@ -118,6 +118,9 @@ pub enum Dialog {
     /// New asset… (issue #77): its name, size and art scale, the fields
     /// starting at these: Create (`MakeAsset`), Cancel.
     NewAsset(NewAsset),
+    /// Removing the asset's state `index` (named `name`) and its own
+    /// pictures (issue #79): Remove (`Confirm`), Cancel.
+    RemoveState { index: usize, name: String },
 }
 
 /// The surface materials' tints in the Materials view and its legend
@@ -549,6 +552,22 @@ pub enum EditorAction {
     NewAssetDialog,
     /// The New asset dialog's Create.
     MakeAsset(NewAsset),
+    // The states panel (issue #79).
+    /// Shows the asset's state `index` on the canvas and in the previews
+    /// (not a step).
+    SelectState(usize),
+    /// Add state: a copy of the start, "State N", shown (one step).
+    AddState,
+    /// Duplicate: a copy of the shown state (one step).
+    DuplicateState,
+    /// Make starting state: the shown state becomes the start (one step).
+    MakeStart,
+    /// Remove: asks to remove the shown state (`Dialog::RemoveState`).
+    RemoveState,
+    /// The shown state's Name field committed.
+    RenameState(String),
+    /// Follow start: the shown state drops its own picture of layer `id`.
+    FollowStart(String),
     // The layout (issue #8).
     /// The right panel's tab, by hand.
     Tab(PanelTab),
@@ -633,7 +652,7 @@ pub const DEFAULT_FILL_TOLERANCE: u8 = 0;
 /// What `update` notes before an asset tab's action (issue #77): the
 /// history's step count, the unsaved mark, the change count, the selection
 /// and the focus.
-type GuardMark = (u64, bool, u64, Selection, Option<String>);
+type GuardMark = (u64, bool, u64, Selection, Option<String>, Option<usize>);
 
 /// Bots a Play match takes at most.
 pub const MAX_BOTS: u8 = 8;
@@ -746,6 +765,9 @@ pub struct EditorState {
     /// Counts the times the canvas's document was replaced: a tab switch,
     /// an asset opened (the host uploads the canvas whole).
     pub(crate) shown_generation: u64,
+    /// Counts the states added (issue #79): the states panel's Name field
+    /// takes the keyboard when it moved.
+    pub(crate) state_named: u64,
 }
 
 impl EditorState {
@@ -842,6 +864,7 @@ impl EditorState {
             tab_save: None,
             pending_tab: None,
             shown_generation: 0,
+            state_named: 0,
         }
     }
 
@@ -966,6 +989,12 @@ impl EditorState {
     /// an asset opened): the host then uploads it whole.
     pub fn shown_generation(&self) -> u64 {
         self.shown_generation
+    }
+
+    /// Counts the states added (issue #79): the states panel's Name field
+    /// takes the keyboard when it moves.
+    pub fn state_named(&self) -> u64 {
+        self.state_named
     }
 
     /// Whether the shown tab offers `tool`: the Spawn tool and the Haze
@@ -1183,14 +1212,17 @@ impl EditorState {
         };
         let before = self.selection.clone();
         // Issue #77: the asset tab's edits are checked once made.
-        let guard = (self.shown == DocTab::Asset)
-            .then(|| (self.history.pushes(), self.dirty, self.changes, before.clone(), self.focus.clone()));
+        let guard = (self.shown == DocTab::Asset).then(|| {
+            let shown = self.doc.as_ref().and_then(Document::shown_state);
+            (self.history.pushes(), self.dirty, self.changes, before.clone(), self.focus.clone(), shown)
+        });
         let mut cmds = if view_only { Vec::new() } else { self.release() };
         cmds.extend(self.act(action));
         if let Some(g) = guard
             && self.shown == DocTab::Asset
             && self.history.pushes() > g.0
         {
+            self.carry_states(g.5);
             self.guard(g, &mut cmds);
         }
         // The tab follows the selection (issue #8): a spawn shows Spawns,
@@ -1353,6 +1385,48 @@ impl EditorState {
                 self.dialog = None;
                 self.leave(Pending::NewAsset(n))
             }
+            EditorAction::SelectState(i) => {
+                let Some(doc) = self.doc.as_mut() else { return Vec::new() };
+                match doc.select_state(i) {
+                    Ok(r) if r.w > 0 => vec![EditorCommand::Upload(r)],
+                    Ok(_) => Vec::new(),
+                    Err(e) => {
+                        self.status.message = Some(e.to_string());
+                        Vec::new()
+                    }
+                }
+            }
+            EditorAction::AddState | EditorAction::DuplicateState => {
+                let from = match action {
+                    EditorAction::DuplicateState => self.doc.as_ref().and_then(Document::shown_state),
+                    _ => None,
+                };
+                let cmds = self.edits(|d| d.add_state(from));
+                if !cmds.is_empty() {
+                    self.state_named += 1;
+                }
+                cmds
+            }
+            EditorAction::MakeStart => {
+                let Some(i) = self.doc.as_ref().and_then(Document::shown_state) else { return Vec::new() };
+                self.edits(|d| d.make_start(i))
+            }
+            EditorAction::RemoveState => {
+                let Some(doc) = self.doc.as_ref() else { return Vec::new() };
+                let Some(i) = doc.shown_state() else { return Vec::new() };
+                if let Some(why) = doc.remove_refusal(i) {
+                    self.status.message = Some(why);
+                    return Vec::new();
+                }
+                let name = doc.states().get(i).map(|s| s.name.clone()).unwrap_or_default();
+                self.dialog = Some(Dialog::RemoveState { index: i, name });
+                Vec::new()
+            }
+            EditorAction::RenameState(name) => {
+                let Some(i) = self.doc.as_ref().and_then(Document::shown_state) else { return Vec::new() };
+                self.edits(|d| d.rename_state(i, &name))
+            }
+            EditorAction::FollowStart(id) => self.edits(|d| d.follow_start(&id)),
             EditorAction::RemoveAsset(id) => {
                 let key = AssetKey { builtin: false, id: id.clone() };
                 if let Some(a) = self.asset(&key) {
@@ -2035,9 +2109,7 @@ impl EditorState {
             self.status.message = Some(e.to_string());
         }
         let Some(edit) = edit else {
-            if let Some(b) = &begun {
-                doc.apply(b, false);
-            }
+            doc.roll_back(&begun);
             return Vec::new();
         };
         let dirty = erased.ok().flatten().unwrap_or(r);
@@ -2549,13 +2621,39 @@ impl EditorState {
         then.map(|t| self.carry_out(t)).unwrap_or_default()
     }
 
+    /// Issue #79: the asset tab's step just made carries the states' own
+    /// pictures along (`Document::carry_states`: a removed layer's
+    /// forgotten, the status line saying so), and shows the state it was
+    /// made in first and the one shown after last (`Edit::Show`), so that
+    /// undo and redo apply it to the items as they were. `shown` is the
+    /// state shown before it.
+    fn carry_states(&mut self, shown: Option<usize>) {
+        let Some(doc) = self.doc.as_mut() else { return };
+        let (Some(k0), Some(k1)) = (shown, doc.shown_state()) else { return };
+        let Some(step) = self.history.last() else { return };
+        // A stroke's edits were made, not applied: the states it changed
+        // the look of are told here.
+        for e in step {
+            doc.touch(e);
+        }
+        let carried = doc.carry_states(step);
+        self.history.amend_last(|step| {
+            step.insert(0, Edit::Show { before: k0, after: k0 });
+            step.extend(carried.edit);
+            step.push(Edit::Show { before: k1, after: k1 });
+        });
+        if !carried.forgotten.is_empty() {
+            self.status.message = Some(format!("removed with it: {}", carried.forgotten.join(", ")));
+        }
+    }
+
     /// Issue #77: refuses the asset tab's step(s) just made when they leave
     /// the asset's states or exposure invalid (`Document::asset_refusal`):
     /// the steps reverted and forgotten, the unsaved mark, selection and
     /// focus as they were, the status line saying why.
     fn guard(
         &mut self,
-        (pushes, dirty, changes, selection, focus): GuardMark,
+        (pushes, dirty, changes, selection, focus, _): GuardMark,
         cmds: &mut Vec<EditorCommand>,
     ) {
         let Some(doc) = self.doc.as_mut() else { return };
@@ -2631,6 +2729,7 @@ impl EditorState {
                 self.send_asset(None)
             }
             (Dialog::RemoveAsset { id, .. }, Choice::Confirm) => vec![EditorCommand::RemoveAsset(id)],
+            (Dialog::RemoveState { index, .. }, Choice::Confirm) => self.edits(|d| d.remove_state(index)),
             (Dialog::AssetName { .. } | Dialog::AssetExists { .. }, Choice::Cancel) => {
                 self.pending_asset = None;
                 self.pending_tab = None;

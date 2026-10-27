@@ -115,6 +115,54 @@ pub enum Edit {
         before: Option<Arc<Vec<u8>>>,
         after: Option<Arc<Vec<u8>>>,
     },
+    /// The asset tab's shown state (issue #79), by index, before and after:
+    /// applied, the state shown then (`Document::show_state`; no change of
+    /// the asset). Every asset tab step begins and ends with one, so that
+    /// its other edits apply to the items as they were made (the items
+    /// hold the shown state's pictures).
+    Show {
+        before: usize,
+        after: usize,
+    },
+    /// The asset's states (issue #79), the whole list with the start and
+    /// the shown state before and after (own pictures shared, counted once
+    /// by address).
+    States {
+        before: Box<StatesSnap>,
+        after: Box<StatesSnap>,
+    },
+}
+
+/// An asset's states as the asset tab holds them (issue #79): in the
+/// shown state's form (`AssetParts`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct StatesSnap {
+    pub states: Vec<crate::asset_tab::StateEntry>,
+    pub start: usize,
+    pub shown: usize,
+}
+
+impl StatesSnap {
+    /// Its own pictures, by address, with their bytes.
+    fn pictures(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        self.states.iter().flat_map(|s| s.own.values()).map(|p| {
+            let bytes = p.decoded.bytes() + p.glow_mask.as_ref().map_or(0, |m| m.len());
+            (Arc::as_ptr(p) as usize, bytes)
+        })
+    }
+
+    /// The bytes it holds besides its pictures, roughly.
+    fn bytes(&self) -> usize {
+        self.states
+            .iter()
+            .map(|s| {
+                std::mem::size_of::<crate::asset_tab::StateEntry>()
+                    + s.name.len()
+                    + s.own.keys().map(String::len).sum::<usize>()
+                    + s.values.len() * std::mem::size_of::<olr_format::assets::StateValue>()
+            })
+            .sum()
+    }
 }
 
 /// A drawn layer's pixels over a rectangle of its box: its art, and its
@@ -174,6 +222,9 @@ pub struct Whole {
     pub masks: olr_edit::compose::GlowMasks,
     /// The painted surface maps (issue #37), by file.
     pub surfaces: olr_edit::compose::PaintedSurfaces,
+    /// The asset tab's states (issue #79: a resize re-lays their own
+    /// pictures); `None` leaves them.
+    pub states: Option<StatesSnap>,
 }
 
 /// Bytes a folder holds.
@@ -189,7 +240,11 @@ fn image(i: &RgbaImage) -> usize {
 impl Whole {
     fn bytes(&self) -> usize {
         let l = &self.level;
-        l.material.len() + image(&l.front) + image(&l.back) + self.items.iter().map(item).sum::<usize>()
+        l.material.len()
+            + image(&l.front)
+            + image(&l.back)
+            + self.items.iter().map(item).sum::<usize>()
+            + self.states.as_ref().map_or(0, StatesSnap::bytes)
     }
 }
 
@@ -231,7 +286,10 @@ impl Edit {
                     && before.items == after.items
                     && before.masks == after.masks
                     && before.surfaces == after.surfaces
+                    && before.states == after.states
             }
+            Edit::Show { before, after } => before == after,
+            Edit::States { before, after } => before == after,
             Edit::Look { before, after } => before == after,
             Edit::Haze { before, after, .. } => before == after,
             Edit::GlowMask { before, after, .. } | Edit::SurfaceMap { before, after, .. } => before == after,
@@ -265,6 +323,9 @@ impl Edit {
             Edit::Haze { before, after, .. } => before.len() + after.len(),
             // Masks count once each, by address, as grids do (`grids`).
             Edit::GlowMask { .. } | Edit::SurfaceMap { .. } => 0,
+            Edit::Show { .. } => 0,
+            // Own pictures count once each, by address (`grids`).
+            Edit::States { before, after } => before.bytes() + after.bytes(),
         }
     }
 
@@ -278,7 +339,9 @@ impl Edit {
             Edit::Whole { before, after } => grids(before.items.iter().chain(&after.items))
                 .chain(before.masks.values().chain(after.masks.values()).map(mask))
                 .chain(before.surfaces.values().chain(after.surfaces.values()).map(mask))
+                .chain(before.states.iter().chain(&after.states).flat_map(StatesSnap::pictures))
                 .collect(),
+            Edit::States { before, after } => before.pictures().chain(after.pictures()).collect(),
             Edit::Layer { before, after, .. } => grids([&**before, &**after].into_iter()).collect(),
             Edit::GlowMask { before, after, .. } | Edit::SurfaceMap { before, after, .. } => {
                 before.iter().chain(after).map(mask).collect()
@@ -374,6 +437,23 @@ impl History {
         let step = self.redo.pop()?;
         self.undo.push_back(step);
         self.undo.back().map(Vec::as_slice)
+    }
+
+    /// The last step recorded (issue #79: the asset tab reads what it
+    /// removed).
+    pub(crate) fn last(&self) -> Option<&[Edit]> {
+        self.undo.back().map(Vec::as_slice)
+    }
+
+    /// Changes the last step recorded (issue #79: the asset tab adds the
+    /// edits that carry the states' pictures along, and its shown state
+    /// around them), counted again.
+    pub(crate) fn amend_last(&mut self, f: impl FnOnce(&mut Vec<Edit>)) {
+        let Some(mut step) = self.undo.pop_back() else { return };
+        self.count(&step, false);
+        f(&mut step);
+        self.count(&step, true);
+        self.undo.push_back(step);
     }
 
     /// How many steps were recorded (`push`), less those retracted.

@@ -3,9 +3,10 @@
 //! the open level's theme (its tiles, for the tile paints and the craters),
 //! with no spawns and the asset's look (`olr_edit::asset::preview_look`
 //! with its glow groups and materials); `to_asset` makes the asset again.
-//! The states, exposed properties, sounds, script and health are kept as
-//! opened (issues #79 and #80 edit them); `refusal` says why an edit would
-//! leave them invalid, so that the editor refuses it.
+//! The exposed properties, sounds, script and health are kept as opened
+//! (issue #80 edits them), the states edited by `state_ops` (issue #79);
+//! `refusal` says why an edit would leave them invalid, so that the
+//! editor refuses it.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -14,10 +15,11 @@ use std::sync::Arc;
 use olr_data::image::RgbaImage;
 use olr_data::level::Material;
 use olr_data::manifest::{PACK_FORMAT_VERSION, PackKind, PackManifest};
-use olr_edit::asset::{Asset, Piece, State, carried_look, preview_look, property_label};
+use olr_edit::asset::{Asset, OwnPicture, Piece, State, carried_look, preview_look, property_label};
 use olr_edit::compose::{Decoded, ImageCache};
 use olr_format::assets::{
-    AssetFile, ExposedSource, HealthSource, MAX_ASSET_NAME, check_states, property_type,
+    AssetFile, ExposedSource, HealthSource, MAX_ASSET_NAME, StateSource, StateValue, check_states,
+    property_type,
 };
 use olr_format::levels::{
     Element, ElementKind, ElementMaterial, LevelSource, MAX_ART_SCALE, MAX_SIDE, element_box,
@@ -38,42 +40,74 @@ pub const BUILT_IN_NOTE: &str = "Built-in: saving makes your own copy";
 pub const FIRST_LAYER: &str = "Layer 1";
 
 /// What the asset tab keeps of an asset besides its layers and look: its
-/// states (their own pictures among them), the starting one, its exposed
-/// properties, sounds, script and health, as opened; and the layers states
-/// own pictures of, as they were opened (their geometry is not edited
-/// until issue #79 carries the pictures along).
+/// states (their own pictures among them), the starting one and the one
+/// shown (issue #79), its exposed properties, sounds, script and health.
+///
+/// Issue #79: while a state other than the start is shown, the document's
+/// items (and glow masks) hold that state's own pictures, and its entry
+/// in `states` holds the starting state's pictures of those layers in
+/// their place (`Document::swap_shown` exchanges them; `to_asset` puts
+/// them back), so painting, the bake and the history work on the items
+/// as ever.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AssetParts {
-    pub states: Vec<State>,
+    pub states: Vec<StateEntry>,
     pub start: usize,
+    /// The state the canvas and previews show (not a step; the start by
+    /// default).
+    pub shown: usize,
     pub exposed: Vec<ExposedSource>,
     pub sounds: BTreeMap<String, Arc<Vec<u8>>>,
     pub script: Option<String>,
     pub health: Option<HealthSource>,
-    /// The asset's size as opened.
-    pub(crate) size: (u32, u32),
-    /// The layers states own pictures of, by id: as opened.
-    pub(crate) owned: BTreeMap<String, Owned>,
+    /// Each state's version (the states panel's pictures are made again
+    /// when it moved), parallel to `states`, and the next one.
+    pub(crate) versions: Vec<u64>,
+    pub(crate) clock: u64,
 }
 
-/// A layer some state paints itself, as opened: the first state owning it,
-/// its box, and its picture's art size and whether it has cells and back
-/// art (what every state's picture of it matches).
+/// One of the asset's states as the asset tab keeps it (issue #79):
+/// `olr_edit::asset::State` with its own pictures shared (`Arc`: the
+/// history holds them by address, counted once).
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Owned {
-    pub(crate) state: String,
-    pub(crate) boxed: Option<((i32, i32), (u32, u32))>,
-    pub(crate) shape: Option<((u32, u32), bool, bool)>,
+pub struct StateEntry {
+    pub name: String,
+    pub own: BTreeMap<String, Arc<OwnPicture>>,
+    pub values: Vec<StateValue>,
+    pub loop_sound: Option<String>,
+    pub enter_sound: Option<String>,
 }
 
-/// A drawn layer's picture's shape: its art's size, whether it has cells
-/// and back art.
-fn shape(d: &Decoded) -> Option<((u32, u32), bool, bool)> {
-    match d {
-        Decoded::Drawn { art, cells, back } => {
-            Some(((art.width(), art.height()), cells.is_some(), back.is_some()))
+impl StateEntry {
+    pub fn of(s: &State) -> StateEntry {
+        StateEntry {
+            name: s.name.clone(),
+            own: s.own.iter().map(|(k, v)| (k.clone(), Arc::new(v.clone()))).collect(),
+            values: s.values.clone(),
+            loop_sound: s.loop_sound.clone(),
+            enter_sound: s.enter_sound.clone(),
         }
-        _ => None,
+    }
+
+    pub fn to_state(&self) -> State {
+        State {
+            name: self.name.clone(),
+            own: self.own.iter().map(|(k, v)| (k.clone(), (**v).clone())).collect(),
+            values: self.values.clone(),
+            loop_sound: self.loop_sound.clone(),
+            enter_sound: self.enter_sound.clone(),
+        }
+    }
+
+    /// As `asset.ron` holds it.
+    pub fn source(&self) -> StateSource {
+        StateSource {
+            name: self.name.clone(),
+            own: self.own.keys().cloned().collect(),
+            values: self.values.clone(),
+            loop_sound: self.loop_sound.clone(),
+            enter_sound: self.enter_sound.clone(),
+        }
     }
 }
 
@@ -217,26 +251,18 @@ impl Document {
             .iter()
             .map(|p| Item { element: p.element.clone(), decoded: p.decoded.clone() })
             .collect();
-        let mut owned = BTreeMap::new();
-        for st in &asset.states {
-            for id in st.own.keys() {
-                let item = items.iter().find(|i| i.element.id == *id);
-                owned.entry(id.clone()).or_insert_with(|| Owned {
-                    state: st.name.clone(),
-                    boxed: item.and_then(|i| element_box(&i.element.kind, asset.size)),
-                    shape: item.and_then(|i| shape(&i.decoded)),
-                });
-            }
-        }
+        let states: Vec<StateEntry> = asset.states.iter().map(StateEntry::of).collect();
+        let n = states.len() as u64;
         let parts = AssetParts {
-            states: asset.states.clone(),
+            states,
             start: asset.start,
+            shown: asset.start,
             exposed: asset.exposed.clone(),
             sounds: asset.sounds.clone(),
             script: asset.script.clone(),
             health: asset.health.clone(),
-            size: asset.size,
-            owned,
+            versions: (0..n).collect(),
+            clock: n,
         };
         let manifest = PackManifest {
             format_version: PACK_FORMAT_VERSION,
@@ -275,6 +301,7 @@ impl Document {
             bake_generation: 0,
             holes: 0,
             asset: Some(Box::new(parts)),
+            canvas_look: None,
         };
         doc.rebake(doc.all());
         Ok(doc)
@@ -337,7 +364,24 @@ impl Document {
         let mut asset = Asset::new(&self.level.name, self.level.art_scale, size, pieces, groups, materials);
         asset.folders = self.folders();
         if let Some(p) = &self.asset {
-            asset.states = p.states.clone();
+            asset.states = p.states.iter().map(StateEntry::to_state).collect();
+            // The shown state's own pictures are the items' (issue #79):
+            // the start's go back in their place.
+            if p.shown != p.start
+                && let Some(st) = p.states.get(p.shown)
+            {
+                for (id, base) in &st.own {
+                    let Some(piece) = asset.pieces.iter_mut().find(|q| q.element.id == *id) else { continue };
+                    let own = OwnPicture {
+                        decoded: std::mem::replace(&mut piece.decoded, base.decoded.clone()),
+                        glow_mask: match &base.glow_mask {
+                            Some(m) => piece.glow_mask.replace(m.clone()),
+                            None => None,
+                        },
+                    };
+                    asset.states[p.shown].own.insert(id.clone(), own);
+                }
+            }
             asset.start = p.start;
             asset.exposed = p.exposed.clone();
             asset.sounds = p.sounds.clone();
@@ -356,7 +400,7 @@ impl Document {
             folders: self.folders(),
             glow_groups: look.map_or_else(Vec::new, |l| l.glow_groups.clone()),
             materials: look.map_or_else(Vec::new, |l| l.materials.clone()),
-            states: parts.states.iter().map(State::source).collect(),
+            states: parts.states.iter().map(StateEntry::source).collect(),
             start: parts.states.get(parts.start).map(|s| s.name.clone()),
             exposed: parts.exposed.clone(),
             sounds: parts.sounds.keys().cloned().collect(),
@@ -369,10 +413,52 @@ impl Document {
         }
     }
 
+    /// The first state's own picture that no longer fits its layer (issue
+    /// #79: the edits carry them along, so this is a guard): a layer gone
+    /// or not drawn, art not of its box at the art scale, cells without a
+    /// mixed layer or back art without the layer's, a glow mask without
+    /// the layer's or of another size.
+    fn misfit_picture(&self, parts: &AssetParts) -> Option<String> {
+        let s = self.level.art_scale;
+        for st in &parts.states {
+            for (id, pic) in &st.own {
+                let why = |what: &str| Some(format!("state {}'s picture of {id} {what}", st.name));
+                let Some(i) = self.index_of(id) else { return why("has no layer") };
+                let e = &self.items[i].element;
+                let ElementKind::Drawn { mixed, back, .. } = e.kind else {
+                    return why("is not of a drawn layer");
+                };
+                let Some((_, b)) = element_box(&e.kind, self.level.size) else { return why("has no box") };
+                let Decoded::Drawn { art, cells, back: back_art } = &pic.decoded else {
+                    return why("is not drawn pixels");
+                };
+                let art_size = (b.0 * s, b.1 * s);
+                if (art.width(), art.height()) != art_size
+                    || back_art.as_ref().is_some_and(|a| (a.width(), a.height()) != art_size)
+                {
+                    return why("is not of its box");
+                }
+                if mixed != cells.is_some() || cells.as_ref().is_some_and(|c| c.len() != (b.0 * b.1) as usize)
+                {
+                    return why("does not match its cells");
+                }
+                if back != back_art.is_some() {
+                    return why("does not match its back art");
+                }
+                if let Some(m) = &pic.glow_mask {
+                    let masked = e.glow.as_ref().is_some_and(|g| g.mask) && self.glow_masks.contains_key(id);
+                    if !masked || m.len() != (art_size.0 * art_size.1) as usize {
+                        return why("has a glow mask its layer lacks");
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Why the asset tab's document, as it now is, cannot stand (issue #77):
     /// a distant layer, a raster or a spawn (an asset carries none); a
-    /// layer a state owns a picture of removed, moved, resized or re-made,
-    /// or the asset resized while a state owns one (issue #79 lifts it); an
+    /// state's own picture that no longer fits its layer (issue #79); an
     /// exposed property or a state's value whose layer no longer offers it;
     /// else any other rule of #71's states and exposure
     /// (`olr_format::assets::check_states`). `None` for a level's document
@@ -391,27 +477,8 @@ impl Document {
         if !parts.constrains() {
             return None;
         }
-        let own = |o: &Owned, layer: &str| {
-            format!(
-                "state {} has its own picture of {layer}: edit it in the states panel (issue #79)",
-                o.state
-            )
-        };
-        if let Some((id, o)) = parts.owned.iter().next()
-            && self.level.size != parts.size
-        {
-            return Some(own(o, id));
-        }
-        for (id, o) in &parts.owned {
-            let now = self.items.iter().find(|i| i.element.id == *id);
-            let same = now.is_some_and(|i| {
-                matches!(i.element.kind, ElementKind::Drawn { .. })
-                    && element_box(&i.element.kind, self.level.size) == o.boxed
-                    && shape(&i.decoded) == o.shape
-            });
-            if !same {
-                return Some(own(o, id));
-            }
+        if let Some(why) = self.misfit_picture(parts) {
+            return Some(why);
         }
         let file = self.asset_file(parts);
         // Every exposed entry of the first layer failing, named.

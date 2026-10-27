@@ -280,7 +280,7 @@ fn masking_an_image_erases_it_from_the_bake() {
     let start = files(&doc);
     // `tiny` has no mask yet: the stroke's first edit gives it one.
     let conversion = doc.begin_stroke("tiny", Stroke::Erase).unwrap();
-    assert!(conversion.is_some());
+    assert_eq!(conversion.len(), 1);
     let before = doc.stroke_before("tiny").unwrap();
     let shape = olr_edit::level::Shape::Circle { cx: 70, cy: 52, r: 10 };
     let rect = doc.erase("tiny", &shape, false).unwrap().unwrap();
@@ -292,7 +292,7 @@ fn masking_an_image_erases_it_from_the_bake() {
     let r = doc.erase("tiny", &shape, true).unwrap().unwrap();
     let restored = doc.stroke_edit("tiny", r, &again).unwrap();
     undo(&mut doc, &[restored]);
-    undo(&mut doc, &[conversion.unwrap(), edit]);
+    undo(&mut doc, &[conversion[0].clone(), edit]);
     assert!(files(&doc) == start, "undone, the image is as it was");
 }
 
@@ -361,7 +361,7 @@ fn erasing_a_plain_background_layer_converts_nothing() {
     doc.set("background", Property::Material(ElementMaterial::Background)).unwrap();
     let e = &doc.items()[doc.index_of("background").unwrap()].element;
     assert!(matches!(e.kind, ElementKind::Drawn { mixed: false, back: true, .. }), "{:?}", e.kind);
-    assert!(doc.begin_stroke("background", Stroke::Erase).unwrap().is_none());
+    assert!(doc.begin_stroke("background", Stroke::Erase).unwrap().is_empty());
 }
 
 fn kind_of<'a>(doc: &'a Document, id: &str) -> &'a olr_format::levels::ElementKind {

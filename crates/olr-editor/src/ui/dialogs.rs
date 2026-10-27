@@ -60,6 +60,17 @@ pub(super) fn show(
                     }
                 });
             }
+            Dialog::RemoveState { name, .. } => {
+                ui.label(format!("Remove {name} and its own pictures?"));
+                ui.horizontal(|ui| {
+                    if ui.button(labels::REMOVE).clicked() {
+                        choose(out, Choice::Confirm);
+                    }
+                    if ui.button(labels::CANCEL).clicked() {
+                        choose(out, Choice::Cancel);
+                    }
+                });
+            }
             Dialog::RemoveGroup { id } => {
                 ui.label(format!("Remove glow group {id:?}? Its elements stop glowing."));
                 ui.horizontal(|ui| {

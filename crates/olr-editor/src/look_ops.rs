@@ -299,6 +299,7 @@ impl Document {
         if element_box(&e.kind, self.level.size).is_none() {
             return Err(DocError::WrongKind { id: id.into(), want: "an image or drawn element" });
         }
+        self.refuse_glow_in_state(index)?;
         Ok(GlowStrokeStart {
             mask: self.glow_masks.get(id).cloned(),
             glow: e.glow.clone(),
@@ -474,8 +475,21 @@ impl Document {
     /// The step a glow stroke into `id` made, from what it started from
     /// (`glow_stroke_before`): a new group in the look, the element's glow,
     /// then the mask. Empty when the mask did not change (anything the
-    /// stroke made for it is taken back).
+    /// stroke made for it is taken back). Issue #79: in an asset's state
+    /// other than the start, the state's own picture of the layer with its
+    /// own mask comes first (`own_for_glow`).
     pub fn glow_stroke_edits(&mut self, id: &str, before: GlowStrokeStart) -> Vec<Edit> {
+        let mut edits = self.glow_stroke_edits_of(id, &before);
+        if !edits.is_empty()
+            && let Some(own) = self.own_for_glow(id, &before)
+        {
+            edits.insert(0, own);
+        }
+        edits
+    }
+
+    fn glow_stroke_edits_of(&mut self, id: &str, before: &GlowStrokeStart) -> Vec<Edit> {
+        let before = before.clone();
         let Some(index) = self.index_of(id) else { return Vec::new() };
         let after_mask = self.glow_masks.get(id).cloned();
         if after_mask == before.mask {

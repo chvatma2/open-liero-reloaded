@@ -494,3 +494,98 @@ fn a_forged_layer_swap_is_refused() {
     doc.apply(&pixels, false);
     assert!(files(&doc) == a);
 }
+
+/// Issue #79: one random state operation, or a stroke or layer edit in the
+/// shown state, through the asset tab (each step bracketed by the state it
+/// was made in).
+fn operate_states(s: &mut olr_editor::EditorState, (kind, a, b): (u8, i32, i32)) {
+    use crate::common::run;
+    use olr_editor::tools::{PointerKind, Tool};
+    use olr_editor::{Choice, EditorAction as A, Selection};
+    let n = s.active_document().unwrap().states().len();
+    let layers: Vec<String> =
+        s.active_document().unwrap().items().iter().map(|i| i.element.id.clone()).collect();
+    let layer = layers.get(a.unsigned_abs() as usize % layers.len().max(1)).cloned().unwrap_or_default();
+    let at = (a.rem_euclid(13), b.rem_euclid(6));
+    let stroke = |s: &mut olr_editor::EditorState, tool: Tool| {
+        run(s, A::Select(Selection::Element(layer.clone())));
+        run(s, A::Tool(tool));
+        run(s, A::Paint(olr_editor::tools::PaintChoice::Colour(Rgba::rgb(a as u8, b as u8, 7))));
+        for kind in [PointerKind::Down, PointerKind::Move, PointerKind::Up] {
+            run(s, A::Pointer { kind, world: at, shift: false, toggle: false });
+        }
+    };
+    match kind {
+        0 => drop(run(s, A::AddState)),
+        1 => drop(run(s, A::DuplicateState)),
+        2 => drop(run(s, A::SelectState(b.unsigned_abs() as usize % n))),
+        3 => drop(run(s, A::MakeStart)),
+        4 => {
+            run(s, A::RemoveState);
+            run(s, A::Choose(Choice::Confirm));
+        }
+        5 => drop(run(s, A::RenameState(format!("S{}", b.unsigned_abs())))),
+        6 => drop(run(s, A::FollowStart(layer.clone()))),
+        7 => stroke(s, Tool::Brush),
+        8 => stroke(s, Tool::Eraser),
+        9 => {
+            run(s, A::GlowStrength((b.unsigned_abs() % 101) as u8));
+            stroke(s, Tool::Glow);
+        }
+        10 => {
+            run(s, A::Select(Selection::Element(layer.clone())));
+            run(s, A::Remove);
+        }
+        11 => drop(run(s, A::Set(layer.clone(), Property::At((a % 5, b % 4))))),
+        12 => drop(run(
+            s,
+            A::Resize {
+                size: (10 + a.unsigned_abs() % 8, 4 + b.unsigned_abs() % 5),
+                offset: (a % 3, b % 3),
+                material: Material::Background,
+                colour: Rgba::BLACK,
+            },
+        )),
+        13 => drop(run(s, A::Set(layer.clone(), Property::Material(ElementMaterial::Rock)))),
+        14 => {
+            run(s, A::PaintMaterial(Some([ElementMaterial::Dirt, ElementMaterial::Rock][(b & 1) as usize])));
+            stroke(s, Tool::Brush);
+            run(s, A::PaintMaterial(None));
+        }
+        15 => drop(run(s, A::MergeDown(layer.clone()))),
+        _ => drop(run(s, A::Undo)),
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(24))]
+    #[test]
+    fn every_state_operation_undoes_to_the_same_asset(
+        ops in prop::collection::vec((0u8..17, -20i32..40, -20i32..40), 1..=8),
+    ) {
+        use olr_editor::EditorAction as A;
+        let Some((_tmp, mut s, _)) = crate::states::editing(&crate::states::alarm_lamp()) else { return Ok(()) };
+        let start = s.active_document().unwrap().to_asset();
+        let canvas = |s: &olr_editor::EditorState| {
+            let l = s.active_document().unwrap().level();
+            (l.size, l.material.clone(), l.front.clone(), l.back.clone(), l.glow.clone())
+        };
+        let first = canvas(&s);
+        for op in ops {
+            operate_states(&mut s, op);
+        }
+        let end = s.active_document().unwrap().to_asset();
+        let mut steps = 0;
+        while s.can_undo() {
+            crate::common::run(&mut s, A::Undo);
+            steps += 1;
+        }
+        prop_assert!(s.active_document().unwrap().to_asset() == start, "undone, the asset as it was");
+        crate::common::run(&mut s, A::SelectState(0));
+        prop_assert!(canvas(&s) == first, "and the start shown as it was");
+        for _ in 0..steps {
+            crate::common::run(&mut s, A::Redo);
+        }
+        prop_assert!(s.active_document().unwrap().to_asset() == end, "redo gives back the end");
+    }
+}

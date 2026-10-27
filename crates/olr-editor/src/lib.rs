@@ -16,6 +16,7 @@ pub mod look_ops;
 pub mod ops;
 mod pointer;
 pub mod state;
+pub mod state_ops;
 pub mod surface_ops;
 pub mod tools;
 pub mod ui;
