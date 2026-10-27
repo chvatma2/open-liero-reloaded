@@ -4,7 +4,10 @@
 
 use alloc::vec::Vec;
 
-use crate::{GlowGroup, Grade, LevelLook, Light, Occlusion, Reach, default_phase, identity_of};
+use crate::glow_beams::{GlowBeamSource, MAX_GLOW_BEAMS};
+use crate::{
+    Animation, GlowColour, GlowGroup, Grade, LevelLook, Light, Occlusion, Reach, default_phase, identity_of,
+};
 
 /// The most glowing discs a frame draws (plan 15c): play's lights, in
 /// order.
@@ -19,6 +22,35 @@ pub const MIN_OCCLUSION_REACH: u8 = 2;
 /// The longest ambient occlusion reach, world pixels (issue #10): the
 /// renderer reads the solid map this far past its light grid.
 pub const MAX_OCCLUSION_REACH: u8 = 32;
+
+/// The most a live copy's value sets a group's intensity to, percent (as
+/// `olr_format::look::MAX_INTENSITY`).
+pub const MAX_GROUP_INTENSITY: u16 = 1000;
+
+/// The longest reach a live copy's value gives a group, world pixels (as
+/// `olr_format::look::MAX_REACH`).
+pub const MAX_GROUP_REACH: u16 = 4096;
+
+/// A live copy's current values over one of its glow groups (issue #93):
+/// each `None` keeps the group's own setting. `colour` is `0xRRGGBB`
+/// (negative: the group's own), `intensity` percent, `reach` world pixels,
+/// `animation` one of the copy's animation table.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct GroupValues<'a> {
+    pub colour: Option<i64>,
+    pub intensity: Option<i64>,
+    pub reach: Option<i64>,
+    pub animation: Option<&'a Animation>,
+}
+
+/// A group's settings as a frame group is made of them.
+struct Parts<'a> {
+    colour: GlowColour,
+    intensity: u16,
+    reach: Reach,
+    animation: &'a Animation,
+    phase_ms: Option<u32>,
+}
 
 /// What the composite shows (the editor's toggle, spec §The level editor).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -105,6 +137,11 @@ pub struct LookFrame {
     /// engine's explosion and muzzle lights, a mod look's shot lights, end
     /// flashes and muzzle lights. `radius` is the disc's.
     pub emitters: Vec<FrameLight>,
+    /// The live copies' glow beams this frame (issue #93), copy and part
+    /// order, placed, turned and mirrored as the world shows them: the
+    /// renderer packs them after the level's own, at most
+    /// [`MAX_GLOW_BEAMS`] in all (past it the live ones drop).
+    pub live_beams: Vec<GlowBeamSource>,
     pub mode: ViewMode,
     /// The world state this frame shows (the render profile: the glow
     /// light once a tick): frames with the same `Some` step show the same
@@ -121,6 +158,7 @@ impl LookFrame {
     pub fn begin(&mut self, level: Option<&LevelLook>, t_ms: f64) {
         self.groups.clear();
         self.emitters.clear();
+        self.live_beams.clear();
         self.step = None;
         let Some(level) = level else {
             self.ambient = [1.0; 3];
@@ -168,19 +206,63 @@ impl LookFrame {
     /// flicker and pulse apart. A group past the 255th (no group map value
     /// names it) is left out. Allocates nothing once the vector is warm.
     pub fn push_live_group(&mut self, g: &GlowGroup, copy: &str, t_ms: f64) {
-        if self.groups.len() < usize::from(u8::MAX) {
-            self.push_group(g, live_identity(copy, &g.id), t_ms);
+        self.push_live_group_with(g, copy, t_ms, GroupValues::default());
+    }
+
+    /// [`LookFrame::push_live_group`] with the copy's current values `v`
+    /// over the group (issue #93, as `olr_edit`'s `posed` applies them to
+    /// a static copy): a colour casts it as a tint (a `Filtered` group
+    /// stays filtered, in it; a negative colour is the group's own), an
+    /// intensity (clamped to 0-1000) and a reach (1-4096, only over a
+    /// reach in pixels) replace the group's, and an animation replaces its
+    /// animation at the copy's clock and phase (its live identity's, so a
+    /// switch never brings two copies into step). Allocates nothing once
+    /// the vector is warm.
+    pub fn push_live_group_with(&mut self, g: &GlowGroup, copy: &str, t_ms: f64, v: GroupValues<'_>) {
+        if self.groups.len() >= usize::from(u8::MAX) {
+            return;
         }
+        let colour = match (v.colour, g.colour) {
+            (Some(c), own) if c >= 0 => {
+                let c = c.min(0xff_ffff);
+                let rgb = [(c >> 16) as u8, (c >> 8) as u8, c as u8];
+                match own {
+                    GlowColour::Filtered(_) => GlowColour::Filtered(rgb),
+                    _ => GlowColour::Tint(rgb),
+                }
+            }
+            _ => g.colour,
+        };
+        let intensity =
+            v.intensity.map_or(g.intensity, |i| i.clamp(0, i64::from(MAX_GROUP_INTENSITY)) as u16);
+        let reach = match (v.reach, g.reach) {
+            (Some(r), Reach::Pixels(_)) => Reach::Pixels(r.clamp(1, i64::from(MAX_GROUP_REACH)) as u16),
+            _ => g.reach,
+        };
+        let animation = v.animation.unwrap_or(&g.animation);
+        let identity = live_identity(copy, &g.id);
+        self.push_parts(Parts { colour, intensity, reach, animation, phase_ms: g.phase_ms }, identity, t_ms);
     }
 
     /// Pushes group `g` of identity `identity` at clock `t_ms`.
     fn push_group(&mut self, g: &GlowGroup, identity: u64, t_ms: f64) {
-        let phase = g.phase_ms.unwrap_or_else(|| phase_for(&g.animation, identity));
+        let parts = Parts {
+            colour: g.colour,
+            intensity: g.intensity,
+            reach: g.reach,
+            animation: &g.animation,
+            phase_ms: g.phase_ms,
+        };
+        self.push_parts(parts, identity, t_ms);
+    }
+
+    /// Pushes a group of `g`'s settings and identity `identity` at clock
+    /// `t_ms`.
+    fn push_parts(&mut self, g: Parts<'_>, identity: u64, t_ms: f64) {
+        let phase = g.phase_ms.unwrap_or_else(|| phase_for(g.animation, identity));
         // A flicker is the renderer's, per region (plan 15c).
-        let flicker = match g.animation {
-            crate::Animation::Flicker { speed, depth } => {
-                Some((f32::from(speed.max(1)), f32::from(depth.min(100))))
-            }
+        let flicker = match *g.animation {
+            Animation::Flicker { speed, depth } => Some((f32::from(speed.max(1)), f32::from(depth.min(100)))),
             _ => None,
         };
         let s = match flicker {
@@ -209,6 +291,14 @@ impl LookFrame {
         });
     }
 
+    /// Adds a live copy's glow beam after the others (issue #93), while
+    /// there are fewer than [`MAX_GLOW_BEAMS`] (no more can be packed).
+    pub fn push_live_beam(&mut self, beam: GlowBeamSource) {
+        if self.live_beams.len() < MAX_GLOW_BEAMS {
+            self.live_beams.push(beam);
+        }
+    }
+
     /// Adds a glowing disc after the others (plan 15c; the callers' order),
     /// while there are fewer than [`MAX_EMITTERS`]. Discs are never culled
     /// to a view: light bounced off a wall may reach the view from past a
@@ -228,7 +318,7 @@ pub fn live_identity(copy: &str, group: &str) -> u64 {
 }
 
 /// A looping animation's default phase; a curve that plays once starts at its start.
-fn phase_for(animation: &crate::Animation, identity: u64) -> u32 {
+fn phase_for(animation: &Animation, identity: u64) -> u32 {
     if animation.loops() { default_phase(identity) } else { 0 }
 }
 

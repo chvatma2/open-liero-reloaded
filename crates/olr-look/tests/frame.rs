@@ -2,8 +2,8 @@
 
 use olr_look::{
     Ambient, Animation, ExplosionHeatLook, ExplosionLight, FrameLight, GlowColour, GlowGroup, Grade,
-    LevelLook, Light, LookFrame, MAX_EMITTERS, ModLook, ProjectileHeat, ProjectileLook, Reach, ViewMode,
-    engine, fade, identity_of, light_at, srgb_to_linear,
+    GroupValues, LevelLook, Light, LookFrame, MAX_EMITTERS, ModLook, ProjectileHeat, ProjectileLook, Reach,
+    ViewMode, engine, fade, identity_of, light_at, srgb_to_linear,
 };
 
 fn near(a: f32, b: f32) -> bool {
@@ -554,4 +554,113 @@ fn a_level_without_live_copies_builds_todays_frame() {
     g.begin(Some(&level()), 123.0);
     assert_eq!(f, g, "begin clears what live copies pushed");
     assert_eq!(f.groups.len(), level().groups.len());
+}
+
+/// A console's screen group: own colour, 200 %, reach 24, steady.
+fn screen() -> GlowGroup {
+    GlowGroup {
+        id: "screen".into(),
+        colour: GlowColour::Own,
+        intensity: 200,
+        reach: Reach::Pixels(24),
+        animation: Animation::Steady,
+        phase_ms: None,
+    }
+}
+
+/// Issue #93: a copy's values replace its group's intensity and reach
+/// (clamped as `olr-look` reads them), a reach only over one in pixels;
+/// none keeps the group as authored.
+#[test]
+fn a_copys_values_override_its_groups() {
+    let g = screen();
+    let mut f = LookFrame::default();
+    f.begin(None, 0.0);
+    f.push_live_group_with(&g, "c", 0.0, GroupValues::default());
+    f.push_live_group(&g, "c", 0.0);
+    assert_eq!(f.groups[0], f.groups[1], "no values: the group as authored");
+    let v = GroupValues { intensity: Some(50), reach: Some(80), ..GroupValues::default() };
+    f.push_live_group_with(&g, "c", 0.0, v);
+    assert!(near(f.groups[2].cast[0], 0.5) && f.groups[2].reach == 80.0);
+    // Hostile values are clamped: 1000 % at most, a reach of 1 to 4096.
+    let v = GroupValues { intensity: Some(i64::MAX), reach: Some(-5), ..GroupValues::default() };
+    f.push_live_group_with(&g, "c", 0.0, v);
+    assert!(near(f.groups[3].cast[0], 10.0) && f.groups[3].reach == 1.0);
+    let v = GroupValues { intensity: Some(-1), reach: Some(1 << 40), ..GroupValues::default() };
+    f.push_live_group_with(&g, "c", 0.0, v);
+    assert!(f.groups[4].cast == [0.0; 3] && f.groups[4].reach == 4096.0);
+    // An unlimited reach is not offered: it stays unlimited.
+    let unlimited = GlowGroup { reach: Reach::Unlimited, ..g };
+    f.push_live_group_with(&unlimited, "c", 0.0, GroupValues { reach: Some(10), ..GroupValues::default() });
+    assert!(f.groups[5].reach.is_infinite());
+}
+
+/// Issue #93: a colour value casts as a tint of it (`posed`'s), a
+/// filtered group stays filtered in it, and -1 is the group's own.
+#[test]
+fn a_colour_value_tints_its_group() {
+    let mut f = LookFrame::default();
+    f.begin(None, 0.0);
+    let red = GroupValues { colour: Some(0xff_0000), ..GroupValues::default() };
+    f.push_live_group_with(&screen(), "c", 0.0, red);
+    let r = f.groups[0];
+    assert!(!r.own_colour && !r.filtered);
+    assert!(near(r.cast[0], 2.0) && r.cast[1] == 0.0 && r.cast[2] == 0.0, "{:?}", r.cast);
+    let filtered = GlowGroup { colour: GlowColour::Filtered([0, 255, 0]), ..screen() };
+    f.push_live_group_with(&filtered, "c", 0.0, red);
+    assert!(f.groups[1].own_colour && f.groups[1].filtered && near(f.groups[1].cast[0], 2.0));
+    let own = GroupValues { colour: Some(-1), ..GroupValues::default() };
+    f.push_live_group_with(&screen(), "c", 0.0, own);
+    assert!(f.groups[2].own_colour && near(f.groups[2].cast[0], 2.0));
+    // Past 0xffffff: white.
+    let past = GroupValues { colour: Some(i64::MAX), ..GroupValues::default() };
+    f.push_live_group_with(&screen(), "c", 0.0, past);
+    assert!(f.groups[3].cast.iter().all(|c| near(*c, 2.0)));
+}
+
+/// Issue #93: an animation value replaces the group's animation, at the
+/// copy's clock and its own phase (its live identity's): switching two
+/// copies to one pulse keeps them out of step, and a copy switched shows
+/// exactly what a copy made with that animation shows.
+#[test]
+fn an_animation_switch_keeps_the_copys_clock() {
+    let shape = olr_look::PulseShape::Sine;
+    let pulse = Animation::Pulse { period_ms: 1000, low: 0, high: 100, shape };
+    let v = GroupValues { animation: Some(&pulse), ..GroupValues::default() };
+    let mut f = LookFrame::default();
+    f.begin(None, 1234.0);
+    f.push_live_group_with(&screen(), "console-a", 1234.0, v);
+    f.push_live_group_with(&screen(), "console-b", 1234.0, v);
+    let authored = GlowGroup { animation: pulse.clone(), ..screen() };
+    f.push_live_group(&authored, "console-a", 1234.0);
+    assert_eq!(f.groups[0], f.groups[2], "the switched copy is the copy authored so");
+    assert_ne!(f.groups[0].self_scale, f.groups[1].self_scale, "two copies stay out of step");
+    // A steady group switched to a flicker flickers in its own region.
+    let flicker = Animation::Flicker { speed: 8, depth: 60 };
+    let v = GroupValues { animation: Some(&flicker), ..GroupValues::default() };
+    f.push_live_group_with(&screen(), "console-a", 1234.0, v);
+    assert_eq!(f.groups[3].flicker, Some((8.0, 60.0)));
+    assert_eq!(f.groups[3].seed, f.groups[0].seed, "its identity is the copy's");
+}
+
+/// Issue #93 (call 13): two copies of one asset take their own colour
+/// values: one turning red leaves the other as it was.
+#[test]
+fn two_copies_of_one_asset_change_colour_independently() {
+    let build = |a: Option<i64>, b: Option<i64>| {
+        let mut f = LookFrame::default();
+        f.begin(Some(&level()), 0.0);
+        let va = GroupValues { colour: a, ..GroupValues::default() };
+        let vb = GroupValues { colour: b, ..GroupValues::default() };
+        f.push_live_group_with(&screen(), "console-a", 0.0, va);
+        f.push_live_group_with(&screen(), "console-b", 0.0, vb);
+        f
+    };
+    let (green, red) = (Some(0x20_ff40), Some(0xff_2020));
+    let (before, after) = (build(green, Some(0x40_80ff)), build(red, Some(0x40_80ff)));
+    let n = level().groups.len();
+    assert_ne!(before.groups[n], after.groups[n], "console-a turned red");
+    assert_eq!(before.groups[n + 1], after.groups[n + 1], "console-b kept its blue");
+    assert_eq!(before.groups[..n], after.groups[..n], "the level's groups too");
+    assert!(after.groups[n].cast[0] > after.groups[n].cast[1]);
 }

@@ -103,6 +103,20 @@ own look. The simulation never sees it.
   `each_live_copy_has_its_own_groups`,
   `two_copies_of_one_asset_flicker_apart`,
   `a_level_without_live_copies_builds_todays_frame`.
+  Issue #93: `push_live_group_with(g, copy, t_ms, GroupValues)` lays the
+  copy's current values over the group, as `olr_edit`'s `posed` does for a
+  static copy: `colour` (`0xRRGGBB`) casts as `Tint` (a `Filtered` group
+  stays `Filtered` in it; negative: the group's own), `intensity` (clamped
+  0-`MAX_GROUP_INTENSITY` 1000) and `reach` (1-`MAX_GROUP_REACH` 4096, only
+  over a `Pixels` reach) replace the group's, `animation` replaces its
+  animation at the copy's clock and phase (the live identity's, so a switch
+  never brings two copies into step); `None` keeps the group's. Tests:
+  `a_copys_values_override_its_groups`, `a_colour_value_tints_its_group`,
+  `an_animation_switch_keeps_the_copys_clock`,
+  `two_copies_of_one_asset_change_colour_independently`.
+  `LookFrame::live_beams` (issue #93) are the live copies' beams this
+  frame, placed (`push_live_beam`, at most `MAX_GLOW_BEAMS`; `begin`
+  clears them): the renderer packs them after the level's.
 - **Engine** (`engine.rs`, R13): code, not data, acting only in a match
   with a look. `FLOOR` (50 %, the least self-light of projectiles and
   bonuses in a lit match), `WORM_FLOOR` (35 %) and `worm_floor_of(ambient)`
@@ -213,3 +227,15 @@ Test: `cargo nextest run -p olr-look`.
   the means over its art blocks. A misfit layer makes none. The cap
   `MAX_GLOW_BEAMS` (64) is applied by the callers: `olr-format`'s `check`
   counts derived patches and the lenient read drops a level's beams.
+  Issue #93, live beams: `live_patches(layer, back)` derives a live part's
+  picture as `derive` does, each `LivePatch` keeping its own direction
+  (whole degrees from the map's 2° steps), spread, first pixel and rows
+  (`(y, x0, x1)`, the row ends whose corners make every face);
+  `LivePatch::place(picture width, &PatchPlace)` places it at the part's
+  top-left, mirrored within the picture (`flip`, the direction too:
+  `mirrored_direction`, `(180 − d) mod 360`), its direction and spread the
+  copy's values (whole degrees, 0-359 and 1-90) or its own, its face and
+  width worked out for that direction as `derive` does, its glow × the
+  part's strength, its group the run-time value (none for 0), `first` its
+  first pixel's world index (0 outside the world)
+  (`live_patches_place_turn_and_mirror_as_derived`).
