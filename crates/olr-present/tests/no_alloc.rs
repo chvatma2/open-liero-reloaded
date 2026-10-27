@@ -107,7 +107,9 @@ fn look_frame_does_not_allocate_when_warm() {
 /// Issue #87: on a level with live copies (`fixtures/live/levels/live-test`
 /// over the content), drawing the copies after a tick and building a lit
 /// frame with their glow groups allocate nothing once warm, while their
-/// states change.
+/// states change; issue #93: and while the spot's beam turns and a
+/// console's colour changes (its groups' values, its beam placed and its
+/// beam map recomposed each tick).
 #[test]
 fn live_copies_do_not_allocate_when_warm() {
     let Some(dir) = std::env::var("OLR_CONTENT_DIR").ok().filter(|d| Path::new(d).is_dir()) else { return };
@@ -139,6 +141,10 @@ fn live_copies_do_not_allocate_when_warm() {
     let lamp_states = live.copy_by_id("lamp").unwrap().states.len() as u16;
     let console = live.copy("console-a").unwrap();
     let console_states = live.copy_by_id("console-a").unwrap().states.len() as u16;
+    let spot = live.copy("spot").unwrap();
+    let beam_dir = live.copy_by_id("spot").unwrap().prop("beam_dir").unwrap();
+    let colour = live.copy_by_id("console-b").unwrap().prop("screen_colour").unwrap();
+    let console_b = live.copy("console-b").unwrap();
     let (mut list, mut events) = (DrawList::new(), olr_sim::TickEvents::new());
     let (mut measured, mut dirty) = (0, 0);
     for t in 0..200u16 {
@@ -146,6 +152,8 @@ fn live_copies_do_not_allocate_when_warm() {
             world.set_live_state(lamp, t / 7 % lamp_states).unwrap();
             world.set_live_state(console, t / 7 % console_states).unwrap();
         }
+        world.set_live_value(spot, beam_dir, i64::from(t) * 3 % 360).unwrap();
+        world.set_live_value(console_b, colour, i64::from(t) * 0x0101).unwrap();
         world.tick(&[olr_sim::Keys(0); 2], &mut events);
         let mut frame = || {
             p.on_tick(&world, &events);
@@ -160,6 +168,7 @@ fn live_copies_do_not_allocate_when_warm() {
         assert_eq!(a.count_total, 0, "tick {t}: drawing the live copies allocated");
         measured += 1;
         assert!(p.look().unwrap().groups.len() >= 3, "the copies' groups");
+        assert_eq!(p.look().unwrap().live_beams.len(), 1, "the spot's beam");
     }
     assert!(measured > 0 && dirty > 0, "{measured} frames, {dirty} rectangles drawn anew");
 }

@@ -213,3 +213,150 @@ fn a_loaded_state_draws_its_live_states() {
     assert_ne!(present.color().pixels(), &console[..], "the loaded console is alarmed");
     assert_drawn_as(&present, &p, sim.world(), "after the load");
 }
+
+/// The look `present` built last (a lit frame of `world`).
+fn built(present: &mut Presentation, world: &World) -> olr_look::LookFrame {
+    present.build(world, 0.0, &mut olr_scene::DrawList::new());
+    present.look().expect("a lit level").clone()
+}
+
+/// The frame group of copy `id`'s group `group` (by id) in `look`.
+fn group_of(p: &Packs, look: &olr_look::LookFrame, id: &str, group: &str) -> olr_look::FrameGroup {
+    let live = p.level.live.as_ref().unwrap();
+    let mut v = p.level.look.as_ref().map_or(0, |l| l.groups.len());
+    for c in &live.light.copies {
+        for g in &c.groups {
+            if c.id == id && g.id == group {
+                return look.groups[v];
+            }
+            v += 1;
+        }
+    }
+    panic!("no group {group} of {id}")
+}
+
+/// Issue #93: each built frame's copies' groups take their values as the
+/// world holds them after the tick: console-a's screen turns red, the
+/// lamp's light dims by `lamp_light`, console-b stays as it was.
+#[test]
+fn a_copys_light_follows_its_values_each_tick() {
+    let Some(c) = content() else { return };
+    let p = packs(&c);
+    let mut world = world(&c);
+    let mut present = presentation(&c, &p, &world);
+    let mut events = olr_sim::TickEvents::new();
+    world.tick(&idle(), &mut events);
+    present.on_tick(&world, &events);
+    let before = built(&mut present, &world);
+    let (a, b, lamp) = (
+        group_of(&p, &before, "console-a", "screen"),
+        group_of(&p, &before, "console-b", "screen"),
+        group_of(&p, &before, "lamp", "lamp"),
+    );
+    assert!(a.cast[1] > a.cast[0], "console-a starts green: {:?}", a.cast);
+    let live = world.live().unwrap().level().clone();
+    let set = |world: &mut World, id: &str, name: &str, v: i64| {
+        let c = live.copy(id).unwrap();
+        world.set_live_value(c, live.copies[usize::from(c)].prop(name).unwrap(), v).unwrap();
+    };
+    set(&mut world, "console-a", "screen_colour", 0xff_2020);
+    set(&mut world, "lamp", "lamp_light", 60);
+    world.tick(&idle(), &mut events);
+    present.on_tick(&world, &events);
+    let after = built(&mut present, &world);
+    let (a2, b2, lamp2) = (
+        group_of(&p, &after, "console-a", "screen"),
+        group_of(&p, &after, "console-b", "screen"),
+        group_of(&p, &after, "lamp", "lamp"),
+    );
+    assert!(a2.cast[0] > a2.cast[1] && a2.cast[0] > a2.cast[2], "console-a red: {:?}", a2.cast);
+    assert_eq!((b2.cast, b2.reach), (b.cast, b.reach), "console-b as it was");
+    let k = lamp2.cast[0] / lamp.cast[0];
+    assert!((k - 60.0 / 300.0).abs() < 1e-4, "the lamp at 60 % of its 300 %: {k}");
+    assert_eq!(after.groups.len(), before.groups.len(), "the same groups, numbered as the map's");
+}
+
+/// The spot's beam as `present` placed it in its last built frame.
+fn spot_beam(present: &mut Presentation, world: &World) -> Option<olr_look::glow_beams::GlowBeamSource> {
+    let look = built(present, world);
+    assert!(look.live_beams.len() <= 1, "only the spot beams");
+    look.live_beams.first().cloned()
+}
+
+/// Issue #93: the spot's lens beam is placed at the lens (its part's
+/// place), turned to `beam_dir` and spread `beam_spread`, and mirrored with
+/// the copy's `Facing` (`spot_facing`); its beam map texels follow.
+#[test]
+fn live_beams_are_placed_turned_and_mirrored() {
+    let Some(c) = content() else { return };
+    let p = packs(&c);
+    let mut world = world(&c);
+    let mut present = presentation(&c, &p, &world);
+    let live = world.live().unwrap().level().clone();
+    let spot = live.copy("spot").unwrap();
+    let setup = &live.copies[usize::from(spot)];
+    let prop = |name: &str| setup.prop(name).unwrap();
+    let b = spot_beam(&mut present, &world).expect("the spot beams");
+    // At its default, 45° spread 20; the lens a 1 × 2 column at (6, 1) of
+    // the 7 × 4 spot at (150, 40): its face's middle at the lens's far
+    // corner, within a pixel.
+    let (x, y) = (150.0 + 6.0, 40.0 + 1.0);
+    let towards = |b: &olr_look::glow_beams::GlowBeamSource, deg: f32| {
+        let d = deg.to_radians();
+        (b.dir[0] - d.cos()).abs() < 1e-5 && (b.dir[1] - d.sin()).abs() < 1e-5
+    };
+    assert!(towards(&b, 45.0), "{:?}", b.dir);
+    assert!((b.spread - 20f32.to_radians()).abs() < 1e-5);
+    assert!(b.at[0] >= x && b.at[0] <= x + 2.0 && b.at[1] >= y && b.at[1] <= y + 3.0, "{:?}", b.at);
+    assert!(b.back, "a background part's beam");
+    let mut events = olr_sim::TickEvents::new();
+    let mut tick = |world: &mut World, present: &mut Presentation| {
+        world.tick(&idle(), &mut events);
+        present.on_tick(world, &events);
+    };
+    // Turned: the value, after the tick.
+    world.set_live_value(spot, prop("beam_dir"), 100).unwrap();
+    world.set_live_value(spot, prop("beam_spread"), 30).unwrap();
+    tick(&mut world, &mut present);
+    let t = spot_beam(&mut present, &world).unwrap();
+    assert!(towards(&t, 100.0) && (t.spread - 30f32.to_radians()).abs() < 1e-5, "{:?}", t.dir);
+    // Its beam map texel at the lens: 100° in 2° steps, spread 30.
+    let texel = |present: &Presentation, x: usize, y: usize| {
+        let beams = present.color().shown_beams().expect("a shown beam map");
+        let i = (y * present.color().material().width() as usize + x) * 2;
+        [beams[i], beams[i + 1]]
+    };
+    assert_eq!(texel(&present, 156, 41), [51, 30]);
+    // Mirrored: the lens at the copy's left, beaming at 80°.
+    world.set_live_value(spot, prop("spot_facing"), 1).unwrap();
+    tick(&mut world, &mut present);
+    let m = spot_beam(&mut present, &world).unwrap();
+    assert!(towards(&m, 80.0), "mirrored to 80°: {:?}", m.dir);
+    assert!(m.at[0] >= 149.0 && m.at[0] <= 152.0, "at the copy's left: {:?}", m.at);
+    assert_eq!(texel(&present, 150, 41), [41, 30], "its texel mirrored there");
+    assert_eq!(texel(&present, 156, 41), [0, 0], "none where it was");
+}
+
+/// Issue #93: a hidden part casts no beam: the spot's lens hidden by its
+/// `LayerVisible` (`lens_on`), then the whole copy by none of its parts
+/// showing, leaves the frame without live beams, and its texels go.
+#[test]
+fn a_hidden_part_casts_no_beam() {
+    let Some(c) = content() else { return };
+    let p = packs(&c);
+    let mut world = world(&c);
+    let mut present = presentation(&c, &p, &world);
+    assert!(spot_beam(&mut present, &world).is_some());
+    let live = world.live().unwrap().level().clone();
+    let spot = live.copy("spot").unwrap();
+    let lens_on = live.copies[usize::from(spot)].prop("lens_on").unwrap();
+    world.set_live_value(spot, lens_on, 0).unwrap();
+    let mut events = olr_sim::TickEvents::new();
+    world.tick(&idle(), &mut events);
+    present.on_tick(&world, &events);
+    assert!(spot_beam(&mut present, &world).is_none(), "the lens hidden: no beam");
+    let beams = present.color().shown_beams().unwrap();
+    let i = (41 * present.color().material().width() as usize + 156) * 2;
+    assert_eq!(&beams[i..i + 2], &[0, 0], "nor its texels");
+    assert_drawn_as(&present, &p, &world, "the lens hidden");
+}

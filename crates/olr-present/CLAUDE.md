@@ -58,6 +58,21 @@ wired in the frame loop's order **once**, so each mode that draws a world
     `a_loaded_state_draws_its_live_states`: each also the same as a map
     drawn afresh from the world) and `tests/no_alloc.rs`'
     `live_copies_do_not_allocate_when_warm`.
+    Issue #93 (live light): `build_look` hands the level's `LiveLight`
+    (`LoadedLive::light`, again at `restart`) and `world.live()` to
+    `olr_content::live_look` each frame: each copy's groups with its
+    current values over them (`GlowColour` a tint, `LightIntensity`,
+    `LightReach`, `GlowAnimation`; the first value of a group's layers in
+    prop order), then its visible parts' beams placed, turned and mirrored
+    into `LookFrame::live_beams`, which the renderer packs after the
+    level's (at most 64 in all, the live ones dropping first). The beam map
+    and glass texels go with the colour map's live layer (`live_frame`'s
+    beam and glass values), uploaded per dirty rectangle. Presentation
+    only: the world, its checksum and the match goldens are unchanged.
+    Tests: `a_copys_light_follows_its_values_each_tick`,
+    `live_beams_are_placed_turned_and_mirrored`, `a_hidden_part_casts_no_beam`;
+    `no_alloc.rs` with the spot's beam turning and a console's colour
+    changing every tick.
   - `build(&world, alpha, &mut list)` per drawn frame: scene, then entities
     (`Fx::draw` with the match's lit flag), then `build_look(&world,
     alpha)`: the frame's `olr_look::LookFrame`, which `look()` returns

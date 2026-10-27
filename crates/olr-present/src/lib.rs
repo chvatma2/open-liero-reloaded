@@ -32,10 +32,12 @@ pub mod net;
 
 pub use look::{BlastKey, FlashKey};
 
-use olr_content::{CorePack, LoadedLevel, LoadedMod, LoadedSkin, LoadedTheme};
+use std::sync::Arc;
+
+use olr_content::{CorePack, LiveLight, LoadedLevel, LoadedMod, LoadedSkin, LoadedTheme};
 use olr_data::image::Rgba;
 use olr_fx::{Fx, FxAssets, FxImages, FxTick, default_dirt_colour};
-use olr_look::{GlowGroup, LevelLook, LookFrame, ModLook};
+use olr_look::{LevelLook, LookFrame, ModLook};
 use olr_render::{HeatView, MAX_HEAT_DEPOSITS, MAX_HEAT_STEPS, Renderer};
 use olr_scene::{Camera, DrawList, Scene, SceneAssets, SceneOptions, ShadeRules, Viewport};
 use olr_sim::{TickEvents, World};
@@ -118,8 +120,9 @@ pub struct Presentation {
     /// The live copies' parts as last drawn into the colour map (issue
     /// #87), reused every tick.
     live: LiveFrame,
-    /// Each live copy's id and glow groups, pushed after the level's.
-    live_groups: Vec<(String, Vec<GlowGroup>)>,
+    /// Each live copy's light (issue #93: its groups, the values driving
+    /// them, its beams), pushed after the level's.
+    live_light: Option<Arc<LiveLight>>,
 }
 
 /// `level`'s colour map with its live copies' pictures (issue #87).
@@ -129,10 +132,9 @@ fn color_map(level: &LoadedLevel, theme: &LoadedTheme) -> ColorMap {
     color
 }
 
-/// Each of `level`'s live copies' id and glow groups, in copy order.
-fn live_groups(level: &LoadedLevel) -> Vec<(String, Vec<GlowGroup>)> {
-    let Some(live) = &level.live else { return Vec::new() };
-    live.source.file.copies.iter().zip(&live.groups).map(|(c, g)| (c.id.clone(), g.clone())).collect()
+/// `level`'s live copies' light (issue #93), `None` without any.
+fn live_light(level: &LoadedLevel) -> Option<Arc<LiveLight>> {
+    level.live.as_ref().map(|l| l.light.clone())
 }
 
 /// Whether `level`'s surface materials heat (issue #40): a material that
@@ -200,7 +202,7 @@ impl Presentation {
             heat_reset: false,
             step: 0,
             live: LiveFrame::default(),
-            live_groups: live_groups(s.level),
+            live_light: live_light(s.level),
         };
         present.sync_live(world);
         present
@@ -283,10 +285,21 @@ impl Presentation {
         let t_ms = world.time().0 as f64 + f64::from(alpha.clamp(0.0, 1.0)) * 10.0;
         self.look.begin(self.level_look.as_ref(), t_ms);
         // Issue #87: each live copy's groups after the level's, in copy
-        // order, as the colour map numbers them.
-        for (copy, groups) in &self.live_groups {
-            for g in groups {
-                self.look.push_live_group(g, copy, t_ms);
+        // order, as the colour map numbers them; issue #93: with the
+        // copy's values over them, and its beams placed.
+        if let Some(light) = &self.live_light {
+            match world.live() {
+                Some(view) => {
+                    let size = (self.color.material().width(), self.color.material().height());
+                    olr_content::live_look(view, light, size, &mut self.look, t_ms);
+                }
+                None => {
+                    for c in &light.copies {
+                        for g in &c.groups {
+                            self.look.push_live_group(g, &c.id, t_ms);
+                        }
+                    }
+                }
             }
         }
         self.look.step = Some(self.step);
@@ -381,7 +394,7 @@ impl Presentation {
         self.fx.clear();
         self.dynamic.clear();
         self.color = color_map(level, theme);
-        self.live_groups = live_groups(level);
+        self.live_light = live_light(level);
         self.sync_live(world);
         self.distant = level.distant.clone();
         self.surface = level.surface.clone();
