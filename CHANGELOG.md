@@ -153,6 +153,17 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   script, depth, lock), `script`, `raise`, `lower` and `remove` (an asset
   no copy uses leaves the level); `olr-cli level script` sets the level
   script.
+- **Export and import of levels with their assets**: `olr-cli level
+  export` writes a level, its scripts and every asset it uses as one
+  `.olrlevel` file, and `olr-cli level import` reads it: the level among
+  your packs (never over one), its assets into your asset library (an
+  identical one reused, a different one of the same name added as
+  "Console 2", none of yours ever overwritten). `olr-cli level library`
+  lists how a level's assets stand against the libraries (same, changed,
+  with what a change would break, or missing) and updates them (a
+  breaking change only with `--force`, each fix listed), restores a
+  missing one from the level's copy, makes one the level's own, or makes
+  one follow your copy of a built-in asset.
 
 ### Changed
 

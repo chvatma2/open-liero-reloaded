@@ -6680,6 +6680,81 @@ the placement, runs `check_placed` and keeps it only then; none bakes.
   (what the next bake gathers), so a removed copy's groups do not stay
   in the ground.
 
+## Asset library links, export and import (issue #76)
+
+No OLX counterpart. The design
+`docs/superpowers/specs/2026-10-26-asset-based-levels-design.md` ("The
+library, export and import", calls 7, 9, 17, 18); the code is
+`olr_edit::library`, `olr_pack::archive`'s level export and `olr-cli
+level library|export|import`. The level tab's notice and buttons are
+#84's.
+
+- **Compared by bytes, `thumb.png` left out.** A linked copy is `Same`
+  as its library asset when `asset.ron` (as read: the parsed file, which
+  both sides write canonically through `write_asset_files`), the element
+  files, the sounds and the script are byte for byte equal
+  (`placed::same_asset`). The thumbnail changes with rendering and
+  re-encoding, so it is never compared. A library folder that does not
+  read or check is `Missing`, as an absent one is.
+- **Pure cores, path wrappers.** `compare`, `update` and `relink` take
+  the placement and a `Libraries` value (each linked origin's library
+  version, or none), so the level editor's pure state can carry it
+  through #83's host round trip; `read_libraries`, `compare_from`,
+  `update_from` and `relink_from` read the libraries from disk, and the
+  CLI uses them only. `restore`, `adopt`, `export` and `import` touch
+  disk or nothing and need no core.
+- **`Builtin` never reads the user's library** (call 7: built-in levels
+  never follow it): a `Builtin` origin is looked up in the built-in
+  library only, a `Yours` origin in the user's only. A user's edited copy
+  of a built-in asset is a new user asset (call 18); a level follows it
+  only when relinked (`relink`, `olr-cli level library relink`).
+- **Breaks and the forced resolutions.** A changed version's breaks are
+  #73's `check_placed` rules and #71's `live_refusal` applied to each
+  copy with the new version: a value naming an exposed property it lacks
+  or of another type, a starting state it lacks, Live on an asset that
+  may no longer be, a distant copy of an asset that may no longer be
+  distant (`olr_format::levels::distant_refusal`, the rule
+  `check_placed` uses). A size change is no break (call 5's limits are
+  relative to the asset). Without force a breaking version is refused,
+  naming each break; forced, each is resolved and listed, never silently:
+  the value dropped, the copy started in the asset's start, made static,
+  made near. `Break::Script` is reserved for #89 (scripts are not
+  checked here); forced, it is listed as left for the script. Any other
+  problem of the result (`check_placed`, the bake) still refuses the
+  update whole.
+- **Restore and import never write over.** `restore` writes the level's
+  copy verbatim (`add_source_to_library`, so it compares `Same`) into a
+  new folder of the user's library, a name the user has numbered as
+  `import_into_library` numbers it (the level's copy renamed alike), and
+  links it `Yours`, whether it was `Yours` or `Builtin`. `import` links
+  a copy identical to a built-in asset to it, else one identical to a
+  user's asset (the origin's own folder first), else adds it (numbered,
+  "Console 2", in a new folder) and links it; a level whose id is taken
+  among the user's packs or the bundled ones gets `<id>-2`, … and a
+  numbered name. Every folder is chosen, and `MAX_USER_ASSETS` checked,
+  before anything is written; the level is written first, then the
+  assets, and a failure midway removes what the import wrote.
+- **Deviations from the issue's signatures.** `export` and `import` take
+  the theme's back tile as a lookup by theme id (`BackTile`), since the
+  theme is known only once the pack is read; `import` takes its places
+  as one `Places { packs, user, builtin, bundled }`, `bundled` being the
+  bundled packs' ids (`olr-content` is a layer above `olr-edit`, so the
+  caller lists them). `Updated` also lists the keys already the
+  library's (`same`).
+- **Why a new magic, not `.olpk`.** The export must carry `editor/`
+  (call 17: the archive is essentially the pack), which `.olpk` leaves
+  out and refuses so that players download only the bake. A flag inside
+  `.olpk` would let an editable archive pass where a download is
+  expected, so `.olrlevel` is its own format (`OLRL1\n`): the same
+  layout, `Limits::PACK` bounds and portability and case checks, with
+  `editor/` files allowed, spelled so. `.olpk` is unchanged byte for
+  byte, and so is the content hash.
+- **Downloads stay play-only.** Online content download, replays and
+  desync bundles keep `.olpk` and the baked files; a downloaded level
+  plays and is not editable. Call 17's "a shared level is fully
+  editable" is met by the export archive, the way levels are shared for
+  editing.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`

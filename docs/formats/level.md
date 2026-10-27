@@ -6,6 +6,8 @@ The level authoring format: `level.ron`, `material.png`, `front.png`, `back.png`
 
 Issues #73 and #74: a composed level is placed copies of assets, `editor/placed.ron` (OLR 0.2's `editor/composition.ron` is read only to convert it). Its ground (the level's own painted asset, key `ground`) is an asset folder rooted at `editor/` itself (`editor/asset.ron`, `editor/layers/<id>.png`, …, see `asset.md`); every other asset it uses is a copy in `editor/<key>/` (`a`, `b`, …); a copy's own script is `editor/scripts/<id>.rhai` and the level script `editor/level.rhai`. Static copies bake into the level's files in their starting state, stretched to their placed size (nearest neighbour), and their glow groups and materials are gathered into the level's look.
 
+Issue #76: a level travels to be edited as one `.olrlevel` archive (`olr-cli level export`, `level import`): the pack whole, `editor/` and every asset copy and script included, in `.olpk`'s layout under its own magic `OLRL1\n` (an `.olpk`, the online download, carries only the baked, playable files). Imported, the level goes among the user's packs and its assets into the user's library: an identical one reused, a different one of a taken name added as "Console 2", none written over.
+
 <a id="levelfile"></a>
 
 ## LevelFile (`level.ron`)
@@ -281,7 +283,7 @@ A surface material: a file `<id>.ron` of a material library, or one of a level's
 
 ## AssetOrigin (enum)
 
-Where a level's asset comes from.
+Where a level's asset comes from (ordered so a map can key on it, issue #76's `Libraries`).
 
 | Variant | Fields | Meaning |
 |---|---|---|
