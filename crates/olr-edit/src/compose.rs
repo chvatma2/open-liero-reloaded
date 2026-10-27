@@ -854,6 +854,38 @@ pub fn bake_elements_with_opacity(
     back_tile: &RgbaImage,
     rect: Rect,
 ) {
+    bake_items(level, items, opacity, masks, painted, back_tile, rect, false);
+}
+
+/// [`bake_elements_with_opacity`] as in a see-through level whatever its
+/// distant layers (issue #93: a live part's picture of glass): glass bakes
+/// at its opacity over what is below it, alpha 0 where nothing covers.
+#[allow(clippy::too_many_arguments)]
+pub fn bake_elements_see_through(
+    level: &mut LevelSource,
+    items: &[(&Element, &Decoded)],
+    opacity: &[u8],
+    masks: &GlowMasks,
+    painted: &PaintedSurfaces,
+    back_tile: &RgbaImage,
+    rect: Rect,
+) {
+    bake_items(level, items, opacity, masks, painted, back_tile, rect, true);
+}
+
+/// The bake, see-through when `see_through` or the items have a distant
+/// layer.
+#[allow(clippy::too_many_arguments)]
+fn bake_items(
+    level: &mut LevelSource,
+    items: &[(&Element, &Decoded)],
+    opacity: &[u8],
+    masks: &GlowMasks,
+    painted: &PaintedSurfaces,
+    back_tile: &RgbaImage,
+    rect: Rect,
+    see_through: bool,
+) {
     let (w, h) = level.size;
     let s = level.art_scale;
     let (Some(aw), Some(ah)) = (w.checked_mul(s), h.checked_mul(s)) else { return };
@@ -864,7 +896,7 @@ pub fn bake_elements_with_opacity(
     if !fits {
         return;
     }
-    let see_through = has_distant(items, (w, h), s);
+    let see_through = see_through || has_distant(items, (w, h), s);
     if rect.x == 0 && rect.y == 0 && rect.w >= w && rect.h >= h {
         bake_distant(level, items, masks);
     }

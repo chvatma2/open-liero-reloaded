@@ -570,3 +570,28 @@ fn a_level_lit_only_by_live_copies_gets_the_default_look() {
     assert!(l.look.is_none());
     assert!(l.live.is_some());
 }
+
+/// Issue #93: a live pane of glass (a background layer, its glass
+/// exposed) bakes see-through: its art is the glass's colour at its
+/// opacity, its glass map the filter and frost (`-glass.png`), and its
+/// files read back.
+#[test]
+fn a_live_pane_of_glass_keeps_its_glass() {
+    let mut p = piece("pane", ElementMaterial::Background, (0, 0), (2, 1), 1, |_, _| BLUE);
+    p.element.glass = Some(olr_format::levels::ElementGlass { opacity: 40, tint: 50, frost: 3 });
+    let mut a = Asset::new("Pane", 1, (2, 1), vec![p], vec![], vec![]);
+    a.exposed = vec![exposed("pane_tint", PropertySource::GlassTint("pane".into()), None)];
+    let src = placement(vec![("a", &a)], vec![live("pane", "a", (0, 0))]);
+    let l = baked(&blank((3, 1), 1), &src);
+    let p = played(&l);
+    let c = &p.file.copies[0];
+    assert_eq!(c.props[0].drives, Target::GlassTint(0));
+    let entry = c.pictures[usize::from(c.states[0].parts[0].picture)];
+    assert!(entry.glass && !entry.rock);
+    let pic = &p.pictures[0][usize::from(c.states[0].parts[0].picture)];
+    assert_eq!(pic.art.get(0, 0), Rgba { a: 102, ..BLUE }, "the glass at 40 % over nothing");
+    let glass = pic.glass.as_ref().expect("its glass map");
+    let filter = |v: u8| ((255 * 50 + u32::from(v) * 50 + 50) / 100) as u8;
+    assert_eq!(glass.get(1, 0), Rgba { r: filter(BLUE.r), g: filter(BLUE.g), b: filter(BLUE.b), a: 3 });
+    assert_eq!(round_trip(&l).live, l.live);
+}

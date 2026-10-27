@@ -20,8 +20,11 @@
 //! part takes the front art and glow of its rock cells, a background
 //! part the back art and glow. A targeted layer's glow mask is unscaled
 //! (baked at 100 %, its strength the part's `glow_strength`), a run's is
-//! the bake's (strengths applied, the part's strength 100). Live parts
-//! carry no surface materials and no glass map (STATUS.md).
+//! the bake's (strengths applied, the part's strength 100). A background
+//! part of glass (issue #93) is baked see-through, so its art holds the
+//! glass at its opacity over nothing, and keeps the glass map (its filter
+//! and frost, `-glass.png`), which presentation re-filters by the copy's
+//! `GlassTint`. Live parts carry no surface materials (STATUS.md).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -38,7 +41,9 @@ use olr_format::levels::{
 use olr_format::look::{AnimationSource, LookSource};
 
 use crate::asset::{Asset, LiveRefusal, PosedPiece, header, posed};
-use crate::compose::{Decoded, GlowMasks, PaintedSurfaces, Rect, bake_elements_with_opacity};
+use crate::compose::{
+    Decoded, GlowMasks, PaintedSurfaces, Rect, bake_elements_see_through, bake_elements_with_opacity,
+};
 use crate::placed::{Frame, PlacedError, lay};
 
 /// One part slot of a live copy: the layer it shows (none for a run),
@@ -328,7 +333,8 @@ struct Planned {
 }
 
 /// What a picture of `slot` has besides its art: a glow mask and groups
-/// when a layer of it glows, beams when one has a beam.
+/// when a layer of it glows, beams when one has a beam, a glass map when
+/// a background part's layer is glass (issue #93).
 fn picture_entry(asset: &Asset, slot: &Slot, size: (u32, u32)) -> LivePictureFile {
     let glows = slot.layers.iter().filter_map(|&l| asset.pieces[l].element.glow.as_ref());
     let (mut glow, mut beam) = (false, false);
@@ -336,7 +342,9 @@ fn picture_entry(asset: &Asset, slot: &Slot, size: (u32, u32)) -> LivePictureFil
         glow = true;
         beam |= g.beam.is_some();
     }
-    LivePictureFile { size, rock: slot.kind == PartKind::Rock, glow, groups: glow, beam, glass: false }
+    let rock = slot.kind == PartKind::Rock;
+    let glass = !rock && slot.layers.iter().any(|&l| asset.pieces[l].element.glass.is_some());
+    LivePictureFile { size, rock, glow, groups: glow, beam, glass }
 }
 
 /// The world box (in the copy) slot `slot`'s layers cover, placed by
@@ -646,15 +654,9 @@ fn make_picture(asset: &Asset, planned: &Planned, k: usize, s: u32) -> LivePictu
     let mut level = mini_level((bw, bh), s, look);
     let refs: Vec<(&olr_format::levels::Element, &Decoded)> = items.iter().map(|(e, d)| (e, d)).collect();
     let all = Rect { x: 0, y: 0, w: bw, h: bh };
-    bake_elements_with_opacity(
-        &mut level,
-        &refs,
-        &[],
-        &masks,
-        &PaintedSurfaces::new(),
-        &RgbaImage::new(1, 1),
-        all,
-    );
+    // Issue #93: glass bakes see-through, at its opacity over nothing.
+    let bake = if entry.glass { bake_elements_see_through } else { bake_elements_with_opacity };
+    bake(&mut level, &refs, &[], &masks, &PaintedSurfaces::new(), &RgbaImage::new(1, 1), all);
     let rock = slot.kind == PartKind::Rock;
     let solid = |x: u32, y: u32| level.material[(y * bw + x) as usize] == Material::Rock;
     let (aw, ah) = (bw * s, bh * s);
@@ -703,7 +705,14 @@ fn make_picture(asset: &Asset, planned: &Planned, k: usize, s: u32) -> LivePictu
         None => vec![0; 2 * cells],
     });
     let rock_mask = rock.then(|| world(&|_| 255));
-    LivePicture { art, rock: rock_mask, glow, groups, beam, glass: None }
+    // The glass map: the bake's (where some glass tints or frosts), else
+    // none anywhere (the art's alpha tells the glass).
+    let glass = entry.glass.then(|| {
+        let none = olr_format::levels::GlassMap::none((aw, ah));
+        let map = level.glass.as_ref().filter(|g| g.fits((aw, ah))).unwrap_or(&none);
+        RgbaImage::from_raw(aw, ah, map.texels.clone()).unwrap_or_else(|| RgbaImage::new(aw, ah))
+    });
+    LivePicture { art, rock: rock_mask, glow, groups, beam, glass }
 }
 
 /// A blank level of `size` at art scale `s` with `look`: what a picture

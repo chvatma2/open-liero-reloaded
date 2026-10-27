@@ -609,8 +609,13 @@ operations.
   a level of the slot's box and bakes it with
   `compose::bake_elements_with_opacity` (a transparent 1 × 1 back tile):
   a Rock part's front art, glow, groups and solid mask at its rock cells,
-  a Background part's back art and back glow, groups and beams; no glass,
-  no surface materials. Slot boxes are the layers' boxes clipped to the
+  a Background part's back art and back glow, groups and beams; no
+  surface materials. Issue #93: a Background slot with a glass layer is
+  baked with `compose::bake_elements_see_through` (the bake as in a
+  see-through level), so its art holds the glass at its opacity over
+  nothing, and keeps the glass map (`-glass.png`: the bake's filter and
+  frost, else none anywhere), which presentation re-filters by
+  `GlassTint` (`a_live_pane_of_glass_keeps_its_glass`). Slot boxes are the layers' boxes clipped to the
   copy, never cropped, so `check_budget(src, assets, s)` (the Live
   switch's, `placed::set_copies`) counts what the bake writes
   (`check_live_budget`); the bake ends with `check_live`.
