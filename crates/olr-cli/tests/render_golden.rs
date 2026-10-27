@@ -409,6 +409,26 @@ fn live_states() {
     live_golden("live-states.png", &["--live", "lamp=Off", "--live", "console-a=Alarm"]);
 }
 
+/// Issue #93: console-a's screen red through its `screen_colour`, the
+/// lamp dimmed by its `lamp_light` (`--live-value`).
+#[test]
+fn live_light() {
+    let v = ["--live-value", "console-a.screen_colour=#ff2020", "--live-value", "lamp.lamp_light=60"];
+    live_golden("live-light.png", &v);
+}
+
+/// Issue #93: the spot's beam worked out each frame from its values, at
+/// two directions and spreads.
+#[test]
+fn live_beam() {
+    live_golden(
+        "live-beam.png",
+        &["--live-value", "spot.beam_dir=100", "--live-value", "spot.beam_spread=30"],
+    );
+    let turned = ["--live-value", "spot.beam_dir=10", "--live-value", "spot.beam_spread=10"];
+    live_golden("live-beam-turned.png", &turned);
+}
+
 /// Issue #34, byte identity: chaos bots on Castle Strike Reloaded (its
 /// look: the flames' flicker and the sky's glow), its last 30 ticks drawn
 /// lit (`olr-cli frame-hashes`), a hash of each frame's light grid and lit

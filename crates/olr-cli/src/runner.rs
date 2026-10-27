@@ -278,6 +278,27 @@ impl Match {
         self.world.set_live_state(c, s).map_err(|e| anyhow::anyhow!("live copy {copy}: {e}"))
     }
 
+    /// Live copy `copy`'s value `name` (an exposed name) is `value` (in
+    /// the level's units: a position in whole world pixels) before the
+    /// first tick (issue #93: `render-match --live-value`), through
+    /// `World::set_live_value`, clamped into its limits. For drawing only,
+    /// as [`Match::set_live_state`]. Refused for a copy or value the level
+    /// lacks, or once a tick was played.
+    pub fn set_live_value(&mut self, copy: &str, name: &str, value: i64) -> anyhow::Result<()> {
+        ensure!(self.stats.tick_ns.is_empty(), "live values are set before the first tick");
+        let live = self.world.live().map(|l| l.level().clone());
+        let live = live.with_context(|| format!("live copy {copy}: the level has no live copies"))?;
+        let c = live.copy(copy).with_context(|| format!("no live copy {copy}"))?;
+        let setup = &live.copies[usize::from(c)];
+        let p = setup.prop(name).with_context(|| format!("live copy {copy}: no value {name}"))?;
+        let value = if setup.props[usize::from(p)].target.is_position() {
+            value.saturating_mul(olr_sim::LIVE_SUBPIXELS)
+        } else {
+            value
+        };
+        self.world.set_live_value(c, p, value).map_err(|e| anyhow::anyhow!("live copy {copy}: {e}"))
+    }
+
     /// Ticks played so far.
     pub fn ticks(&self) -> u32 {
         self.ticks

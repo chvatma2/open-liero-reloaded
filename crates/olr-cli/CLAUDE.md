@@ -431,7 +431,7 @@ The headless command-line tool. Its commands:
   `tests/look_preview.rs` (`look_preview_writes_a_png` edits a copy of
   Dirt Level with `level look` and a glowing patch, `level group add` and
   `level element set|glow`; `render_match_writes_a_png`: also 2, 3 and 4 local players' views and the PNG's size, issue #30).
-- `olr-cli render-match <match flags> --out f.png [--scale 2] [--skin ID] [--packs DIR]... [--content DIR] [--live COPY=STATE]...`
+- `olr-cli render-match <match flags> --out f.png [--scale 2] [--skin ID] [--packs DIR]... [--content DIR] [--live COPY=STATE]... [--live-value COPY.NAME=VALUE]...`
   (plan 15a Task 16, `render_match.rs`) plays a headless bot match (the
   runner's `advance`, unsettled: no invariants, no recording) on
   `--content` with each `--packs` directory laid over it (the first wins;
@@ -479,6 +479,17 @@ The headless command-line tool. Its commands:
   and `live-states.png` (`--live lamp=Off --live console-a=Alarm`): two
   idle bots, seed 1, tick 200, on `fixtures/live/levels/live-test`, the
   copies composited into the terrain and lit by their own groups.
+  Issue #93: `--live-value COPY.NAME=VALUE` (repeatable, in order, after
+  the `--live` states; an exposed name; a whole number, `#rrggbb` or
+  `0x…`, `true` or `false`; `live_values_parse`) sets a value before the
+  first tick (`Match::set_live_value`, `World::set_live_value`, a position
+  in whole pixels scaled to the world's 1/256, clamped into its limits;
+  drawing only, as `--live`). `live-light.png`
+  (`--live-value console-a.screen_colour=#ff2020 --live-value
+  lamp.lamp_light=60`: console-a red, the lamp dimmed by its intensity),
+  `live-beam.png` (`spot.beam_dir=100`, `spot.beam_spread=30`) and
+  `live-beam-turned.png` (`spot.beam_dir=10`, `spot.beam_spread=10`): the
+  spot's beam worked out each frame at two directions.
 - `olr-cli frame-hashes <match flags> [--frames 30] [--content DIR] [--out f.ron]`
   (issue #34, `frame_hash.rs`, the command in `frame_hashes_cmd.rs`):
   byte identity. Plays a headless bot match as `render-match` does (the

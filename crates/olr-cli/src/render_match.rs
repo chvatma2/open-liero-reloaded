@@ -4,7 +4,8 @@
 //! drawn the way the game draws it (its look included), so agents can see
 //! a match on any packs, such as the look test level and mod (plan 15a
 //! Task 16), which no OLX trace can replay. `--live COPY=STATE` sets a
-//! live copy's state before the first tick (issue #87).
+//! live copy's state before the first tick (issue #87), `--live-value
+//! COPY.NAME=VALUE` one of its values after the states (issue #93).
 
 use std::path::PathBuf;
 
@@ -44,6 +45,31 @@ pub struct Args {
     /// state name; issue #87), repeatable, in order.
     #[arg(long, value_name = "COPY=STATE", value_parser = live_state)]
     live: Vec<(String, String)>,
+    /// A live copy's value before the first tick, after the `--live`
+    /// states, `COPY.NAME=VALUE` (copy id, exposed name; a whole number,
+    /// `#rrggbb` or `0x…` for a colour, `true` or `false`; issue #93),
+    /// repeatable, in order.
+    #[arg(long, value_name = "COPY.NAME=VALUE", value_parser = live_value)]
+    live_value: Vec<(String, String, i64)>,
+}
+
+/// `--live-value`'s `COPY.NAME=VALUE`.
+fn live_value(s: &str) -> Result<(String, String, i64), String> {
+    let bad = || format!("{s}: expected COPY.NAME=VALUE");
+    let (target, value) = s.split_once('=').ok_or_else(bad)?;
+    let (copy, name) = target.rsplit_once('.').ok_or_else(bad)?;
+    if copy.is_empty() || name.is_empty() {
+        return Err(bad());
+    }
+    let hex = value.strip_prefix('#').or_else(|| value.strip_prefix("0x"));
+    let v = match (hex, value) {
+        (Some(h), _) => i64::from_str_radix(h, 16).ok(),
+        (None, "true") => Some(1),
+        (None, "false") => Some(0),
+        (None, v) => v.parse().ok(),
+    };
+    let v = v.ok_or_else(|| format!("{s}: {value} is not a number, a colour or true or false"))?;
+    Ok((copy.into(), name.into(), v))
 }
 
 /// `--live`'s `COPY=STATE`.
@@ -88,6 +114,9 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
     let mut game = Match::with_assets(&assets, &args.spec, &Options::default())?;
     for (copy, state) in &args.live {
         game.set_live_state(copy, state).context("--live")?;
+    }
+    for (copy, name, value) in &args.live_value {
+        game.set_live_value(copy, name, *value).context("--live-value")?;
     }
     let viewport = Viewport::GAME;
     let setup = PresentSetup {
@@ -148,6 +177,22 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
 mod tests {
     /// One view alone; two stacked; three and four in a 2 × 2 grid, a seam
     /// apart.
+    /// Issue #93: `--live-value`'s numbers, colours and switches.
+    #[test]
+    fn live_values_parse() {
+        let v = |s: &str| super::live_value(s);
+        assert_eq!(
+            v("console-a.screen_colour=#ff2020"),
+            Ok(("console-a".into(), "screen_colour".into(), 0xff2020))
+        );
+        assert_eq!(v("spot.beam_dir=-30"), Ok(("spot".into(), "beam_dir".into(), -30)));
+        assert_eq!(v("a.b.c=0x10"), Ok(("a.b".into(), "c".into(), 16)));
+        assert_eq!(v("lamp.on=true").map(|v| v.2), Ok(1));
+        assert!(
+            v("lamp=3").is_err() && v(".x=3").is_err() && v("lamp.x=").is_err() && v("lamp.x=red").is_err()
+        );
+    }
+
     #[test]
     fn views_are_laid_out_as_the_game_does_at_16_9() {
         let v = (854, 384);
