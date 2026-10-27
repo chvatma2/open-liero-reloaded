@@ -312,3 +312,32 @@ fn cli_saves_and_places_an_asset() {
     assert!(out.starts_with("added copy ceiling-lamp of \"Ceiling lamp\" (asset b, new)\n"), "{out}");
     checks_clean(p);
 }
+
+/// Issue #89: `level check-scripts` on the live fixture (its six scripts
+/// clean), then on a copy whose copy script names a state it lacks (the
+/// line named, a failure); `level copy script` refuses to save that.
+#[test]
+fn cli_check_scripts_passes_on_the_fixture_and_names_a_broken_line() {
+    let out = ok(&["level", "check-scripts", "fixtures/live/levels/live-test"]);
+    assert!(out.ends_with("live-test: 6 scripts, no problems\n"), "{out}");
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().join("live");
+    copy_dir(&repo().join("fixtures/live/levels/live-test"), &dir);
+    let p = dir.to_str().unwrap();
+    let broken = "fn start() { this.after(300, \"next\"); }\nfn next() {\n  this.set_state(\"Alarmm\");\n}\n";
+    // Written past the save, as by hand: the check names it.
+    std::fs::write(dir.join("editor/scripts/console-b.rhai"), broken).unwrap();
+    let o = cli(&["level", "check-scripts", p]);
+    assert!(!o.status.success(), "{}", text(&o));
+    assert_eq!(
+        String::from_utf8_lossy(&o.stdout),
+        "console-b's script, line 3: copy console-b has no state \"Alarmm\"\n"
+    );
+    // Through the CLI the save refuses it, the pack left as it was.
+    std::fs::remove_dir_all(&dir).unwrap();
+    copy_dir(&repo().join("fixtures/live/levels/live-test"), &dir);
+    let file = t.path().join("broken.rhai");
+    std::fs::write(&file, broken).unwrap();
+    let e = refused(&["level", "copy", "script", p, "console-b", "--set", file.to_str().unwrap()], &dir);
+    assert!(e.contains("console-b's script, line 3: copy console-b has no state \"Alarmm\""), "{e}");
+}

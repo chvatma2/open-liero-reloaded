@@ -107,7 +107,12 @@ enum LevelCommand {
     /// assets into your library (an identical one reused, never written
     /// over); prints its id and a line an asset.
     Import(crate::library_cmd::ImportArgs),
-    /// Set or clear the level script (`editor/level.rhai`, Rhai, not run).
+    /// Check the scripts the level runs (issue #89): their syntax, their
+    /// handlers and the copies, states and exposed names they use. Prints
+    /// each problem (`crane's script, line 3: …`) and fails on any; else
+    /// `<pack>: N scripts, no problems`.
+    CheckScripts { pack: PathBuf },
+    /// Set or clear the level script (`editor/level.rhai`, Rhai).
     Script {
         pack: PathBuf,
         #[command(flatten)]
@@ -387,6 +392,7 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         LevelCommand::Library(a) => crate::library_cmd::library(a),
         LevelCommand::Export(a) => crate::library_cmd::export(a),
         LevelCommand::Import(a) => crate::library_cmd::import(a),
+        LevelCommand::CheckScripts { pack } => check_scripts(pack),
         LevelCommand::Script { pack, script, content } => {
             crate::copy_cmd::level_script(pack, script, content)
         }
@@ -569,4 +575,24 @@ fn preview(l: &LevelSource, scale: u32, material: bool) -> anyhow::Result<RgbaIm
         }
     }
     Ok(img)
+}
+
+/// `level check-scripts`: each problem of a script `dir`'s level runs
+/// (`olr_edit::scripts::problems`), a line each; false when there is one.
+fn check_scripts(dir: &Path) -> anyhow::Result<bool> {
+    let pack = element_cmd::load_level(dir)?;
+    let Source::Level(_) = &pack.source else { anyhow::bail!("{}: not a level pack", dir.display()) };
+    let Some(src) = olr_edit::pack::placement(&pack) else {
+        println!("{}: 0 scripts, no problems", dir.display());
+        return Ok(true);
+    };
+    let problems = olr_edit::scripts::problems(&src);
+    for p in &problems {
+        println!("{p}");
+    }
+    let n = olr_edit::scripts::run_scripts(&src).len();
+    if problems.is_empty() {
+        println!("{}: {n} script{}, no problems", dir.display(), if n == 1 { "" } else { "s" });
+    }
+    Ok(problems.is_empty())
 }
