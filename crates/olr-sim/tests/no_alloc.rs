@@ -445,7 +445,7 @@ fn moving_rock_parts_push_and_crush_without_allocating() {
         .collect();
     let mut out = TickEvents::new();
     let mut crushed = 0;
-    let mut run = |w: &mut World, keys: &[Vec<Keys>], out: &mut TickEvents| {
+    let run = |w: &mut World, keys: &[Vec<Keys>], out: &mut TickEvents| {
         let mut n = 0;
         let info = allocation_counter::measure(|| {
             for (t, k) in keys.iter().enumerate() {
