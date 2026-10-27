@@ -79,7 +79,22 @@ pub struct LiveFile {
     /// The scripts, each `live/<k>.rhai` for its index `k` (UTF-8 Rhai, at
     /// most 64 KiB), at most `MAX_SCRIPTS` (129: the level's, and a default
     /// and an own per copy); identical texts are stored once. Default
-    /// none.
+    /// none. A script that does not compile refuses the level. Each tick
+    /// (issue #88, `olr-script`) the level script runs, then each copy's
+    /// default and own script: `start()` once, due timers, the handlers
+    /// `entered(state)`, `spawned(worm)`, `killed(victim, killer)`,
+    /// `exploded(x, y, damage)` and `damaged(worm, amount, by)` for the
+    /// events since the last script phase, then `tick()`. Each run's API
+    /// is `this`: `me`, `id`, `copy(id)`, `state`, `set_state`, `get`,
+    /// `set`, `has` (of this copy, or of a copy `c` as the first
+    /// argument), `switch_off_default`, `after(ticks, "fn")`,
+    /// `every(ticks, "fn")`, `cancel("fn")`, `rand(n)`, `chance(percent)`,
+    /// `time`, `game_over`, `worm_count`, `worm_alive(i)`, `worm_x(i)`,
+    /// `worm_y(i)` and `mem` (a map of at most 32 integers, booleans and
+    /// strings, kept between runs). Integers only; at most 5,000
+    /// operations a run and 20,000 a tick (the runs past it are skipped,
+    /// due timers firing next tick); a run
+    /// that fails changes nothing, and 16 failures switch its script off.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scripts: Vec<String>,
     /// The level script: an index into `scripts`. Default none.

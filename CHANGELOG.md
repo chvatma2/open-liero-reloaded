@@ -196,6 +196,17 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   by its Live copies draws lit. `olr-cli render-match --live COPY=STATE`
   starts a copy in a state. The editor's Live switch no longer says the
   copy is left out of play.
+- Live copies' scripts run in matches: each tick the level script, then
+  every copy's default and own script, with `start()`, `tick()`, timers
+  (`after`, `every`) and handlers for the match's events (`entered`,
+  `spawned`, `killed`, `exploded`, `damaged`), reading and setting copies'
+  states and values, their own memory and randomness, bounded per run and
+  per tick. A failing script changes nothing and is switched off after 16
+  failures; a script that does not compile refuses the level. Scripts'
+  state is rolled back, checksummed, sent with a state transfer and
+  replayed. Online play (protocol 8) from earlier builds is not
+  compatible. The editor's script panels no longer say scripts do not run
+  yet.
 
 ### Changed
 

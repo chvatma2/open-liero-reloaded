@@ -7120,7 +7120,8 @@ import.
 
 The design is `docs/superpowers/specs/2026-10-26-asset-based-levels-design.md`
 (calls 8, 11, 13 and 19). Issue #85 gives Live copies their played form;
-#86 puts them in the world, #87 draws them, #88 runs their scripts.
+#86 puts them in the world, #87 draws them, #88 runs their scripts (#89
+adds motion and the scripts' name checks).
 
 - **The played form is play files (#85).** `live.ron` and `live/` sit
   beside `level.ron`, outside `editor/`, so `olr_pack::content_hash`
@@ -7223,8 +7224,8 @@ The design is `docs/superpowers/specs/2026-10-26-asset-based-levels-design.md`
 - **Versions (#86).** `olr_proto::PROTOCOL_VERSION` 7 (the state's new
   field), `olr-replay`'s `FORMAT_VERSION` 8 (`SetupCall::LiveState`,
   `LiveValue`), `olr-cli`'s desync `BUNDLE_VERSION` 6; older ones are
-  refused. #88, #89 and #90 extend `LiveWorld` and `LiveWire` and bump
-  the protocol again. `olr-present`'s rollback keys class `LiveState` by
+  refused. #88 (8: script state), #89 and #90 extend `LiveWorld` and
+  `LiveWire` and bump the protocol again. `olr-present`'s rollback keys class `LiveState` by
   its copy and state, so a re-simulated tick's entry plays its effects
   once (#92).
 - **Drawn into the terrain (#87).** Live copies are composited into the
@@ -7271,6 +7272,53 @@ The design is `docs/superpowers/specs/2026-10-26-asset-based-levels-design.md`
   (`a_level_without_live_copies_builds_todays_frame`). A level lit only
   by live copies (no look, no glow maps) gets a glow channel
   (`GlowLayers::empty`) and draws lit (`LoadedLevel::has_look`).
+- **Scripts run (#88).** `olr-script`'s `Scripts` (Rhai 1.27.0, pinned:
+  its operation count is part of the simulation, so a Rhai bump is a
+  simulation change, and `olr-proto`'s fingerprint covers the crate) is
+  the world's `Director`, compiled with the level (`olr_content`; a script
+  that does not compile refuses the level on every peer alike). Once a
+  tick, after the mode's `on_tick` and its commands, the level script's
+  instance, then each copy's in level and run order (its asset's
+  default, then its own); in each, `start()` once, its due timers in the
+  order set, its handlers of the tick's events, `tick()`. A frozen world
+  (after the match's end) runs none. Handlers see the events emitted
+  before the script phase and the last phase's state changes: a state
+  change a script makes reaches `entered` next tick, never in a loop. The
+  API (`crates/olr-script/CLAUDE.md`, `docs/formats/level.md`) reaches
+  only states, exposed values, timers, memory, the scripts' own
+  generator and reading the match (time, worms, events).
+- **Determinism rules for scripts (#88).** **No floats** (`no_float`,
+  `only_i64`: a float literal does not compile; overflow is a script
+  error). **Their own generator** (`ScriptRng`, SplitMix64 seeded from
+  the match seed, drawn in run order, in the world): `rand`/`chance`
+  never draw from the world's `rand()` or `FindSpot` streams
+  (`rand_calls`, `mt_calls` unchanged). **No clock, files, modules,
+  console or closures** (`no_time`, `no_module`, `eval` disabled,
+  printing does nothing). **No hash order:** Rhai's maps are `BTreeMap`s
+  and the compiled functions are sorted before they get an index (game
+  builds seed `ahash` at random). **Stateless director:** the engine
+  holds no mutable state its functions write (the interner off); all
+  script state (each instance's memory, timers, error count, switched
+  off and started flags, the generator, the last phase's entries) is in
+  `LiveWorld`, hashed (only with a director: a live level without
+  scripts hashes as before), cloned for rollback and transferred
+  (`olr_proto::PROTOCOL_VERSION` 8). **A budget per run:** a run is
+  charged its own operation count (read from Rhai's runtime state by a
+  native `__done` at the end of each call's wrapper), a failed one its
+  limit (5,000); a run starts only while the tick has that much of its
+  20,000 left, so no run overruns and the same runs are skipped on every
+  peer (their timers fire next tick). A failed run (an error, overflow,
+  a limit) applies none of its commands and keeps its memory, and emits
+  `ScriptError`; 16 switch the instance off for the match.
+  `World::script_peak()` reports the most one run and one tick used (not
+  state).
+- **Allocation in scripted ticks (#88).** Rhai allocates while it runs
+  (the API object, maps, strings), so a tick that runs scripts may
+  allocate, bounded by the limits (strings 256 bytes, arrays and maps 64,
+  variables 64, call depth 16) and freed by the run's end; script memory
+  lives in one flat buffer per world. A world without a director keeps
+  `World::tick` allocation-free (`no_alloc`). The cost of a tick at the
+  scripts' budget is `docs/deferred-verification.md`'s.
 
 ## Kept OLX quirks
 
