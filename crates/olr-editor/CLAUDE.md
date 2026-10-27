@@ -893,9 +893,9 @@ whose column tab is `LAYERS`);
     live_refusal`: `Hidden` for nothing to drive, `Disabled(why)` shown
     off with the reason as hover text and a line under it, `LIVE_DIRT`,
     the refusal's text for a raster or distant layer, `LIVE_DISTANT` on
-    a distant copy; a copy Live already is always `Offered`), while on
-    `LIVE_NOT_YET` ("Plays from a later version: left out of play for
-    now": issue #85 leaves Live copies out of the ground; `to_pack`
+    a distant copy; a copy Live already is always `Offered`; no hint under
+    it since issue #87 draws live copies in play, its `LIVE_NOT_YET`
+    gone; issue #85 leaves Live copies out of the ground; `to_pack`
     (`document::played`) and `playable()` run `olr_edit::placed::bake_pack`
     when a copy is Live, so Save writes and Play reads the played form); `STARTING_STATE` (a picker, hidden for one state:
     `labels::asset_start(start)` sets `state: None`, then each state);

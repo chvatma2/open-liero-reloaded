@@ -56,9 +56,6 @@ fn live(ui: &mut Ui, c: &PlacedCopy, f: &CopyFacts, out: &mut Vec<EditorAction>)
             if r.changed() {
                 out.push(EditorAction::SetCopy { id: c.id.clone(), change: CopyChange::Live(on) });
             }
-            if c.live {
-                ui.weak(labels::LIVE_NOT_YET);
-            }
         }
     }
 }

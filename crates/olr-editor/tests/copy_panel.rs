@@ -168,8 +168,8 @@ fn live_is_hidden_disabled_or_offered_as_call_2_says() {
     set(&mut s, &dirt, CopyChange::Live(true));
     assert!(!copy(&s, &dirt).live);
 
-    // On screen: none, disabled with the reason under it, a switch saying
-    // it is left out of play for now (issue #85).
+    // On screen: none, disabled with the reason under it, a switch with
+    // no hint under it (issue #87 draws live copies in play).
     run(&mut s, A::Select(Selection::Copy("torch".into())));
     let mut h = harness(s);
     h.run();
@@ -183,7 +183,7 @@ fn live_is_hidden_disabled_or_offered_as_call_2_says() {
     h.run();
     let live = h.get_by_role_and_label(Role::CheckBox, labels::LIVE);
     assert!(!live.accesskit_node().is_disabled());
-    h.get_by_label(labels::LIVE_NOT_YET);
+    assert!(h.query_by_label_contains("later version").is_none(), "no hint that it is left out of play");
     // The switch turns it off, one step.
     live.click();
     h.run();

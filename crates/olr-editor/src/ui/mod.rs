@@ -311,9 +311,6 @@ pub mod labels {
     /// Under the Id field until #89 reports the scripts naming it.
     pub const ID_HINT: &str = "Scripts use this id";
     pub const LIVE: &str = "Live";
-    /// Under Live while on, until #86 and #87 put live copies in play
-    /// (issue #85 saves their played form, out of the ground).
-    pub const LIVE_NOT_YET: &str = "Plays from a later version: left out of play for now";
     pub const STARTING_STATE: &str = "Starting state";
     pub const VALUES: &str = "Values";
     /// A value row's button clearing the copy's own value (shown; each
