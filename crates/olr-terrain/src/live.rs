@@ -20,6 +20,13 @@
 //!   its opacity laid over what is there as the static bake lays a
 //!   translucent background (straight alpha, never over a see-through
 //!   pixel unless it is glass), its glow and groups over the ground's.
+//!
+//! Issue #93: the shown beam map (two bytes a world pixel, as
+//! [`crate::GlowBeamMap`]'s) and the shown glass map (as
+//! [`crate::GlassMap`]'s) are composited alike when the ground has one or a
+//! picture does: a drawn part's pixel shows the part's beam texel (its
+//! direction and spread the frame's, mirrored with the part) and glass
+//! texel (its tint the frame's) or none, elsewhere the ground's.
 
 use alloc::sync::Arc;
 use alloc::vec;
@@ -46,6 +53,13 @@ pub struct LivePicture {
     /// Per world pixel, the group map value at run time (the caller maps
     /// the copy's own groups after the level's), 0 none.
     pub groups: Option<Vec<u8>>,
+    /// Per world pixel, two bytes (direction / 2 + 1, 0 none; the spread),
+    /// as [`crate::GlowBeamMap`]'s (issue #93).
+    pub beam: Option<Vec<u8>>,
+    /// Per art pixel, RGBA: the glass's filter (`mix(255, colour, tint)`
+    /// at its authored tint) and frost, as [`crate::GlassMap`]'s, white
+    /// and 0 where it is not glass (issue #93; a background picture's).
+    pub glass: Option<Vec<u8>>,
 }
 
 /// Every live copy's pictures, by copy then picture index.
@@ -60,10 +74,22 @@ impl LiveArt {
     pub fn glows(&self) -> bool {
         self.copies.iter().flatten().any(|p| p.glow.as_ref().is_some_and(|g| g.iter().any(|&v| v != 0)))
     }
+
+    /// Whether any picture has a directional pixel (issue #93): the map
+    /// then keeps a shown beam map.
+    pub fn beams(&self) -> bool {
+        self.copies.iter().flatten().any(|p| p.beam.as_ref().is_some_and(|b| b.iter().any(|&v| v != 0)))
+    }
+
+    /// Whether any picture has glass (issue #93): the map then keeps a
+    /// shown glass map.
+    pub fn glass(&self) -> bool {
+        self.copies.iter().flatten().any(|p| p.glass.is_some())
+    }
 }
 
 /// One shown part of a live copy, where it is drawn this tick.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LivePlaced {
     /// An index into its copy's pictures.
     pub picture: u16,
@@ -77,6 +103,16 @@ pub struct LivePlaced {
     pub alpha: u8,
     /// Its glow strength, percent (shown: mask × strength).
     pub glow: u8,
+    /// Its beams' direction, whole degrees 0-359 before mirroring (its
+    /// layer's `BeamDirection`, issue #93); `None` its pictures' own.
+    pub beam_direction: Option<u16>,
+    /// Its beams' spread, degrees 1-90 (`BeamSpread`); `None` their own.
+    pub beam_spread: Option<u8>,
+    /// Its glass's opacity, percent 1-99 (a background part's
+    /// `GlassOpacity`, issue #93); `None` as baked.
+    pub glass_opacity: Option<u8>,
+    /// Its glass's tint, percent 0-100 (`GlassTint`); `None` as baked.
+    pub glass_tint: Option<u8>,
 }
 
 /// The live copies' shown parts, copy by copy, bottom to top: what
@@ -142,6 +178,12 @@ pub(crate) struct Live {
     pub(crate) glow: Option<(Vec<u8>, Vec<u8>)>,
     /// Per world pixel, 1 where a rock part is solid.
     pub(crate) solid: Vec<u8>,
+    /// The shown beam map, two bytes a world pixel (issue #93), when the
+    /// ground or a picture has beams.
+    pub(crate) beams: Option<Vec<u8>>,
+    /// The shown glass map, RGBA an art pixel (issue #93), when the
+    /// ground or a picture has glass.
+    pub(crate) glass: Option<Vec<u8>>,
     /// What ground edits changed since the composite was last settled.
     pub(crate) stale: DirtyTiles,
     /// Scratch: the boxes a frame change recomposes.
@@ -159,6 +201,37 @@ pub(crate) struct Ground<'a> {
     pub(crate) cells: &'a [u8],
     /// World pixels.
     pub(crate) world: (u32, u32),
+    /// The ground's beam maps (composite, backdrop) when they fit.
+    pub(crate) beams: Option<(&'a [u8], &'a [u8])>,
+    /// The ground's glass map when it fits.
+    pub(crate) glass: Option<&'a [u8]>,
+}
+
+/// A glass map's texel where there is no glass.
+const NO_GLASS: [u8; 4] = [255, 255, 255, 0];
+
+impl Ground<'_> {
+    /// The ground's beam texel at world pixel `cell`: the backdrop's on
+    /// background, the composite's elsewhere (as the renderer uploads it).
+    fn beam(&self, cell: usize) -> [u8; 2] {
+        let Some((front, back)) = self.beams else { return [0, 0] };
+        let layer = if self.cells[cell] == Material::Background as u8 { back } else { front };
+        [layer[2 * cell], layer[2 * cell + 1]]
+    }
+}
+
+/// A picture's beam texel `t` as part `p` shows it: its direction the
+/// part's value or its own, mirrored when the part is, in the map's 2°
+/// steps, its spread the part's or its own; none stays none.
+fn shown_beam(t: [u8; 2], p: &LivePlaced) -> [u8; 2] {
+    if t[0] == 0 {
+        return [0, 0];
+    }
+    let own = i64::from(t[0] - 1) * 2;
+    let d = p.beam_direction.map_or(own, |d| i64::from(d) % 360);
+    let d = if p.flip { (180 - d).rem_euclid(360) } else { d };
+    let spread = p.beam_spread.map_or(t[1], |s| s.clamp(1, 90));
+    [(d / 2 + 1) as u8, spread.max(1)]
 }
 
 /// The glow a part shows at a mask value `mask` at `strength` percent:
@@ -196,15 +269,36 @@ impl Live {
     /// (the shown composite is the ground).
     pub(crate) fn new(art: Arc<LiveArt>, g: &Ground<'_>, tile: u32) -> Live {
         let art_size = (g.width, g.pixels.len() as u32 / 4 / g.width.max(1));
-        Live {
+        let mut live = Live {
             art,
             frame: LiveFrame::default(),
             pixels: g.pixels.to_vec(),
             glow: g.glow.map(|(a, w)| (a.to_vec(), w.to_vec())),
             solid: vec![0; g.cells.len()],
+            beams: None,
+            glass: None,
             stale: DirtyTiles::new(art_size, tile),
             boxes: Vec::new(),
-        }
+        };
+        live.base(g);
+        live
+    }
+
+    /// The shown beam and glass maps afresh as the ground's (none where
+    /// neither the ground nor a picture has any).
+    fn base(&mut self, g: &Ground<'_>) {
+        let cells = g.cells.len();
+        self.beams = (g.beams.is_some() || self.art.beams()).then(|| {
+            let mut b = vec![0; 2 * cells];
+            for (i, t) in b.as_chunks_mut::<2>().0.iter_mut().enumerate() {
+                *t = g.beam(i);
+            }
+            b
+        });
+        self.glass = (g.glass.is_some() || self.art.glass()).then(|| match g.glass {
+            Some(t) => t.to_vec(),
+            None => NO_GLASS.repeat(g.pixels.len() / 4),
+        });
     }
 
     /// Copy `copy`'s part `p`'s world box, clipped to the level (`None`
@@ -259,6 +353,7 @@ impl Live {
         self.glow = g.glow.map(|(a, w)| (a.to_vec(), w.to_vec()));
         self.solid.clear();
         self.solid.resize(g.cells.len(), 0);
+        self.base(g);
         self.compose(g, (0, 0, g.world.0, g.world.1));
     }
 
@@ -277,12 +372,23 @@ impl Live {
             if let (Some((glow, _)), Some((ground, _))) = (&mut self.glow, g.glow) {
                 glow[a..e].copy_from_slice(&ground[a..e]);
             }
+            if let Some(glass) = &mut self.glass {
+                match g.glass {
+                    Some(ground) => glass[a * 4..e * 4].copy_from_slice(&ground[a * 4..e * 4]),
+                    None => glass[a * 4..e * 4].as_chunks_mut::<4>().0.fill(NO_GLASS),
+                }
+            }
         }
         for wy in y0 as usize..y1 as usize {
             let (a, e) = (wy * mw + x0 as usize, wy * mw + x1 as usize);
             self.solid[a..e].fill(0);
             if let (Some((_, groups)), Some((_, ground))) = (&mut self.glow, g.glow) {
                 groups[a..e].copy_from_slice(&ground[a..e]);
+            }
+            if let Some(beams) = &mut self.beams {
+                for i in a..e {
+                    beams[2 * i..2 * i + 2].copy_from_slice(&g.beam(i));
+                }
             }
         }
         let art = Arc::clone(&self.art);
@@ -310,6 +416,10 @@ impl Live {
         }
         let (rock, mask, groups) =
             (fits(&pic.rock, pw * ph), fits(&pic.glow, aw * ph * s), fits(&pic.groups, pw * ph));
+        let (beam, glass) = (fits(&pic.beam, 2 * pw * ph), fits(&pic.glass, aw * ph * s * 4));
+        let glass = glass.filter(|_| !p.rock);
+        // The glass's opacity as the frame sets it (the bake's rounding).
+        let glass_alpha = p.glass_opacity.map(|o| ((u32::from(o.clamp(1, 99)) * 255 + 50) / 100) as u8);
         if p.rock && rock.is_none() {
             return;
         }
@@ -341,10 +451,20 @@ impl Live {
                         ];
                         let dst_i = (wy * s + sy) * w + wx * s + sx;
                         let dst = &mut self.pixels[dst_i * 4..dst_i * 4 + 4];
+                        // Issue #93: a glass pixel (a glass map, alpha
+                        // 1-254) at the frame's opacity, filtered at its tint.
+                        let glassy = glass.is_some() && (1..255).contains(&src[3]);
+                        let src_a = match glass_alpha {
+                            Some(a) if glassy => a,
+                            _ => src[3],
+                        };
                         if p.rock {
                             dst.copy_from_slice(&[src[0], src[1], src[2], 255]);
+                            if let Some(gl) = &mut self.glass {
+                                gl[dst_i * 4..dst_i * 4 + 4].copy_from_slice(&NO_GLASS);
+                            }
                         } else {
-                            let a = ((u32::from(src[3]) * u32::from(p.alpha) + 127) / 255) as u8;
+                            let a = ((u32::from(src_a) * u32::from(p.alpha) + 127) / 255) as u8;
                             if a == 0 {
                                 continue;
                             }
@@ -359,6 +479,26 @@ impl Live {
                             } else {
                                 over(src, a, d)
                             });
+                            if let Some(gl) = &mut self.glass {
+                                let texel = match glass {
+                                    Some(m) if glassy => {
+                                        let t = &m[src_i * 4..src_i * 4 + 4];
+                                        match p.glass_tint {
+                                            Some(tint) => {
+                                                let tint = u32::from(tint.min(100));
+                                                let f = |v: u8| {
+                                                    ((255 * (100 - tint) + u32::from(v) * tint + 50) / 100)
+                                                        as u8
+                                                };
+                                                [f(src[0]), f(src[1]), f(src[2]), t[3]]
+                                            }
+                                            None => [t[0], t[1], t[2], t[3]],
+                                        }
+                                    }
+                                    _ => NO_GLASS,
+                                };
+                                gl[dst_i * 4..dst_i * 4 + 4].copy_from_slice(&texel);
+                            }
                         }
                         centre |= sy == s / 2 && sx == s / 2;
                         if let Some((glow, _)) = &mut self.glow {
@@ -378,6 +518,13 @@ impl Live {
                     && (p.rock || centre)
                 {
                     gr[cell] = groups.map_or(0, |v| v[local]);
+                }
+                // Its beam texel likewise (issue #93), as the frame turns it.
+                if let Some(bm) = &mut self.beams
+                    && (p.rock || centre)
+                {
+                    let t = beam.map_or([0, 0], |b| shown_beam([b[2 * local], b[2 * local + 1]], p));
+                    bm[2 * cell..2 * cell + 2].copy_from_slice(&t);
                 }
             }
         }

@@ -333,14 +333,33 @@ impl ColorMap {
             g => {
                 self.glass = g.map(Box::new);
                 self.glass_generation = self.glass_generation.wrapping_add(1);
+                self.compose_live();
                 true
             }
         }
     }
 
-    /// The level's glass map; `None` when no glass tints or frosts.
+    /// The level's glass map; `None` when no glass tints or frosts. With
+    /// live copies of glass (issue #93) it is the shown one,
+    /// [`ColorMap::shown_glass`].
     pub fn glass(&self) -> Option<&GlassMap> {
         self.glass.as_deref()
+    }
+
+    /// The glass map shown (issue #93): with live copies the ground's with
+    /// their glass over it (`art × 4` bytes, as [`GlassMap::texels`]), when
+    /// the ground or a live picture has glass; else the ground's.
+    pub fn shown_glass(&self) -> Option<&[u8]> {
+        match &self.live {
+            Some(l) => l.glass.as_deref(),
+            None => self.glass.as_deref().map(|g| &g.texels[..]),
+        }
+    }
+
+    /// Whether live copies have glass (issue #93): the renderer then
+    /// uploads the shown glass map's dirty rectangles.
+    pub fn has_live_glass(&self) -> bool {
+        self.live.as_ref().is_some_and(|l| l.art.glass())
     }
 
     /// Changes with each glass map [`set_glass`](Self::set_glass) takes.
@@ -358,14 +377,30 @@ impl ColorMap {
             b => {
                 self.glow_beams = b.map(Box::new);
                 self.beams_generation = self.beams_generation.wrapping_add(1);
+                self.compose_live();
                 true
             }
         }
     }
 
-    /// The level's glow beams; `None` when no glow is directional.
+    /// The level's glow beams; `None` when no glow is directional. The
+    /// ground's only: live copies' are in [`ColorMap::shown_beams`].
     pub fn glow_beams(&self) -> Option<&GlowBeamMap> {
         self.glow_beams.as_deref()
+    }
+
+    /// The beam map shown (issue #93), two bytes a world pixel: with live
+    /// copies, the ground's (the backdrop's on background) with their
+    /// parts' beams over it as last drawn, when the ground or a live
+    /// picture has beams; `None` otherwise and without live copies.
+    pub fn shown_beams(&self) -> Option<&[u8]> {
+        self.live.as_ref().and_then(|l| l.beams.as_deref())
+    }
+
+    /// Whether live copies have directional pixels (issue #93): the
+    /// renderer then keeps a beam map for them.
+    pub fn has_live_beams(&self) -> bool {
+        self.live.as_ref().is_some_and(|l| l.art.beams())
     }
 
     /// Sets the level's haze map (the directional-glow design): grey per
@@ -522,6 +557,12 @@ impl ColorMap {
             glow: self.glow.as_deref().map(|g| (&g.comp[..], &g.comp_groups[..])),
             cells: &self.material.cells,
             world: (self.material.width(), self.material.height()),
+            beams: self
+                .glow_beams
+                .as_deref()
+                .filter(|b| b.fits((self.material.width(), self.material.height())))
+                .map(|b| (&b.front[..], &b.back[..])),
+            glass: self.glass.as_deref().filter(|g| g.fits((self.width, self.height))).map(|g| &g.texels[..]),
         }
     }
 
@@ -539,8 +580,13 @@ impl ColorMap {
             let (a, w) = ((self.width, self.height), (self.material.width(), self.material.height()));
             self.set_glow(Some(GlowLayers::empty(a, w)));
         }
+        let glass = art.glass();
         let live = Live::new(art, &self.ground(), Self::DIRTY_TILE * self.scale);
         self.live = Some(Box::new(live));
+        // Issue #93: the renderer uploads the shown glass map afresh.
+        if glass {
+            self.glass_generation = self.glass_generation.wrapping_add(1);
+        }
     }
 
     /// Whether the map draws live copies ([`ColorMap::set_live_art`]).

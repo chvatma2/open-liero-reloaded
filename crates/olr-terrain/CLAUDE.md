@@ -128,6 +128,27 @@ and the colour image that follows it (`ColorMap`).
   `art_layers()`, `glow_beams()` and `beams_generation()` stay the
   ground's (the static beams never see live copies). Tests:
   `tests/live.rs`.
+  Issue #93, live light: `LivePicture::beam` (two bytes a world pixel, as
+  `GlowBeamMap`'s) and `glass` (RGBA an art pixel, as `GlassMap`'s: the
+  filter at the authored tint and the frost); `LivePlaced::beam_direction`
+  (whole degrees, before mirroring), `beam_spread`, `glass_opacity` and
+  `glass_tint` (the frame's values, `None` as baked). When the ground or a
+  picture has beams (`LiveArt::beams`), the live layer keeps a shown beam
+  map (`shown_beams()`: the ground's texel, the backdrop's on background,
+  with each drawn part's texel over it, rock or a background part's centre
+  pixel, its direction the frame's or its own, mirrored with `flip`, in
+  the map's 2° steps; a part without beams shows none there), and when the
+  ground or a picture has glass (`LiveArt::glass`) a shown glass map
+  (`shown_glass()`: a background part's glass pixel, a glass map and alpha
+  1-254, shows its texel, refiltered `mix(255, art, tint)` at the frame's
+  tint, and draws at the frame's opacity; any other drawn pixel none);
+  both recompose with the colour, so `set_live`'s dirty boxes cover them.
+  `glow_beams()` and `glass()` stay the ground's; `has_live_beams()`,
+  `has_live_glass()` tell the renderer to keep and upload the shown maps
+  (`set_live_art` with glass is a new `glass_generation`). `set_glow_beams`
+  and `set_glass` recompose the live layer. Tests:
+  `a_live_beam_texel_turns_and_mirrors_with_its_part`,
+  `live_glass_takes_the_frames_opacity_and_tint`.
 - **Journal** (`journal.rs`, networking spec §3.3): off by default; `start_journal` records each mutator's clipped pre-image and keeps the order-independent cell hash. Every new write to `cells` must go through `set_cell` after `record`, or rollback breaks.
 - **Restored areas**: `undo_to` reports each undone edit's rectangle and a `load_cells` the whole map; `take_restored_areas()` drains them (`Area`, world px, at most `MAX_RESTORED`, merged into the bounding box beyond), so the colour map, which only replays the ticks' edits, can `rebuild_area` what an undo or a load changed.
 - **State transfer**: `cells()` and `load_cells` (all-or-nothing, valid materials only). A load is not undoable: it seals the journal, so every older mark is `Forgotten`.

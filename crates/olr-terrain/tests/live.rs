@@ -79,11 +79,12 @@ fn picture(size: (u32, u32), c: Rgba, a: u8, rock: bool, glow: Option<(u8, u8)>)
         rock: rock.then(|| vec![1; world]),
         glow: glow.map(|(m, _)| vec![m; (aw * ah) as usize]),
         groups: glow.map(|(_, g)| vec![g; world]),
+        ..LivePicture::default()
     }
 }
 
 fn part(picture: u16, rock: bool, at: (i32, i32)) -> LivePlaced {
-    LivePlaced { picture, rock, at, flip: false, alpha: 255, glow: 100 }
+    LivePlaced { picture, rock, at, flip: false, alpha: 255, glow: 100, ..LivePlaced::default() }
 }
 
 /// Copy 0: picture 0 a red rock block 4 × 4 glowing 200 in group 3,
@@ -360,8 +361,85 @@ fn hostile_frames_never_panic() {
     m.set_live(&frame(&[&far, &far, &far]));
     drain(&mut m);
     // A picture whose buffers do not fit draws nothing.
-    let bad = LivePicture { size: (3, 3), art: vec![1; 5], rock: Some(vec![1; 2]), glow: None, groups: None };
+    let bad = LivePicture { size: (3, 3), art: vec![1; 5], rock: Some(vec![1; 2]), ..LivePicture::default() };
     m.set_live_art(Some(Arc::new(LiveArt { copies: vec![vec![bad]] })));
     m.set_live(&frame(&[&[part(0, true, (1, 1))]]));
     assert_eq!(at(&m, 1, 1), BACK);
+}
+
+/// Issue #93: a live part's beam texels show in the shown beam map where
+/// the part is drawn, turned to the frame's direction and spread (in the
+/// map's 2° steps) and mirrored with it, the ground's elsewhere and again
+/// where it left; the ground's own beam map is never changed.
+#[test]
+fn a_live_beam_texel_turns_and_mirrors_with_its_part() {
+    let t = level();
+    let mut m = map_of(&t);
+    let mut ground = GlowBeamMap::none((32, 20));
+    // A ground beam at (10, 10) on the backdrop.
+    let gi = (10 * 32 + 10) * 2;
+    (ground.back[gi], ground.back[gi + 1]) = (46, 30);
+    assert!(m.set_glow_beams(Some(ground.clone())));
+    // A 2 × 2 background lamp beaming at 0° spread 20.
+    let lamp = LivePicture { beam: Some([1, 20].repeat(4)), ..picture((2, 2), RED, 255, false, None) };
+    m.set_live_art(Some(Arc::new(LiveArt { copies: vec![vec![lamp]] })));
+    assert_eq!(m.shown_beams().map(|b| &b[gi..gi + 2]), Some(&[46, 30][..]), "the ground's before");
+    let texel = |m: &ColorMap, x: usize, y: usize| {
+        let b = m.shown_beams().unwrap();
+        [b[(y * 32 + x) * 2], b[(y * 32 + x) * 2 + 1]]
+    };
+    m.set_live(&frame(&[&[part(0, false, (10, 10))]]));
+    assert_eq!(texel(&m, 10, 10), [1, 20], "the part's own, over the ground's");
+    let turned = LivePlaced { beam_direction: Some(91), beam_spread: Some(45), ..part(0, false, (10, 10)) };
+    m.set_live(&frame(&[&[turned]]));
+    assert_eq!(texel(&m, 11, 11), [46, 45], "91° in 2° steps, spread 45");
+    m.set_live(&frame(&[&[LivePlaced { flip: true, ..turned }]]));
+    assert_eq!(texel(&m, 11, 11), [45, 45], "mirrored: 89°");
+    m.set_live(&frame(&[&[part(0, false, (4, 4))]]));
+    assert_eq!(texel(&m, 10, 10), [46, 30], "the ground's again where it left");
+    assert_eq!(texel(&m, 4, 4), [1, 20]);
+    assert_eq!(m.glow_beams(), Some(&ground), "the ground's map unchanged");
+    // A rock part without beams hides a ground beam under it.
+    let wall = picture((2, 2), RED, 255, true, None);
+    let mut m = map_of(&t);
+    assert!(m.set_glow_beams(Some(ground)));
+    m.set_live_art(Some(Arc::new(LiveArt { copies: vec![vec![wall]] })));
+    m.set_live(&frame(&[&[part(0, true, (10, 10))]]));
+    assert_eq!(texel(&m, 10, 10), [0, 0]);
+    // A map without beams anywhere keeps none.
+    let mut m = map_of(&t);
+    m.set_live_art(Some(art()));
+    assert!(m.shown_beams().is_none() && !m.has_live_beams());
+}
+
+/// Issue #93: a background part's glass shows in the shown glass map,
+/// filtered at the frame's tint, and its pixels at the frame's glass
+/// opacity; elsewhere the map is the ground's (none here).
+#[test]
+fn live_glass_takes_the_frames_opacity_and_tint() {
+    let t = level();
+    let mut m = map_of(&t);
+    // A 2 × 2 pane, blue at alpha 89 (35 %), its filter at tint 0 white.
+    let blue = Rgba::rgb(0, 0, 255);
+    let n = (2 * S * 2 * S) as usize;
+    let pane =
+        LivePicture { glass: Some([255, 255, 255, 3].repeat(n)), ..picture((2, 2), blue, 89, false, None) };
+    m.set_live_art(Some(Arc::new(LiveArt { copies: vec![vec![pane]] })));
+    assert!(m.has_live_glass() && m.glass().is_none());
+    let texel = |m: &ColorMap, x: u32, y: u32| {
+        let i = ((y * m.width() + x) * 4) as usize;
+        m.shown_glass().unwrap()[i..i + 4].to_vec()
+    };
+    assert_eq!(texel(&m, 20, 20), [255, 255, 255, 0], "no glass yet");
+    let at_ = (6, 6);
+    m.set_live(&frame(&[&[part(0, false, at_)]]));
+    assert_eq!(texel(&m, 12, 12), [255, 255, 255, 3], "as baked");
+    let set = LivePlaced { glass_opacity: Some(80), glass_tint: Some(50), ..part(0, false, at_) };
+    m.set_live(&frame(&[&[set]]));
+    assert_eq!(texel(&m, 12, 12), [128, 128, 255, 3], "tint 50: halfway to blue, its frost kept");
+    let before = at(&m, 6, 6);
+    m.set_live(&frame(&[&[part(0, false, at_)]]));
+    assert_ne!(before, at(&m, 6, 6), "the pane's opacity changes what shows");
+    m.set_live(&frame(&[&[]]));
+    assert_eq!(texel(&m, 12, 12), [255, 255, 255, 0], "gone with the part");
 }
