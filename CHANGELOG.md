@@ -164,6 +164,20 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   breaking change only with `--force`, each fix listed), restores a
   missing one from the level's copy, makes one the level's own, or makes
   one follow your copy of a built-in asset.
+- The level editor exports and imports levels with their assets; placed
+  copies have ids, Live, a starting state, values and scripts. The copy
+  panel names a copy (scripts use the id), makes it Live (hidden when its
+  asset drives nothing, disabled with the reason when it holds dirt or
+  is distant: it bakes as placed until a later version moves it), picks
+  its starting state, sets its exposed values (Default clears one) and
+  opens its script in the middle of the level tab, as the level panel
+  opens the level's; script syntax errors are listed as warnings. When
+  a level opens after your library changed its assets, a notice offers
+  Update, Update all, Update anyway (each break resolved and noted), Add
+  to your library and Make it the level's own; Later keeps the problems
+  listed and File ▾ Library changes… brings it back. File ▾ Export level…
+  writes a `.olrlevel` file and Import level… opens one, its assets
+  joining your library.
 
 ### Changed
 

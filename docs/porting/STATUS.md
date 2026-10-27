@@ -6894,7 +6894,7 @@ skin editor's layout, #79 adds the states panel (`state_ops.rs`,
 - **The script editor does not wrap (#80).** Lines run on and the
   editor scrolls across, so the line-number gutter stays beside them.
 
-## Level tab (issues #81, #82, #83)
+## Level tab (issues #81 to #84)
 
 No OLX counterpart. The design
 `docs/superpowers/specs/2026-10-26-asset-based-levels-design.md` ("The
@@ -6903,7 +6903,11 @@ level tab", call 16); the code is `olr-editor`'s `ground.rs` and
 level tab shows the ground as one copy. Part 2 (#82, `copies.rs`,
 `level_tab.rs`) makes it a placement editor of copies. Part 3 (#83,
 `links.rs`, `ui/library.rs`, `ui/level_tab.rs`) puts the asset library
-on the left and keeps the copies linked to it.
+on the left and keeps the copies linked to it. Part 4 (#84,
+`copy_ops.rs`, `notice.rs`, `ui/copy_panel.rs`, `ui/level_script.rs`)
+gives copies their ids, Live, starting state, values and scripts, the
+level its script, and the level its library-change notice, export and
+import.
 
 - **The level tab shows one locked copy, the ground (#81).** The right
   panel's first tab is Copies (`labels::COPIES`), listing the ground
@@ -7043,6 +7047,68 @@ on the left and keeps the copies linked to it.
 - **`AssetRead` still carries the source only (#83).** The design's
   decoded `Asset` beside the source is not sent: `add_copy` decodes the
   source itself, once.
+- **The copy panel's Id, starting state and values (#84).** Under the
+  link: **Id** (refused with `set_copy`'s reason when taken or not an
+  id; a rename keeps the copy's script and selection) with the hint
+  "Scripts use this id"; **Starting state**, a picker whose first entry
+  is "The asset's (★ <start>)", hidden for a one-state asset; **Values**,
+  one row per exposed property by its type within the exposed limits
+  (a set row marked ●, **Default** clearing it), the canvas posing the
+  copy. Each change is one step.
+- **Live has three looks (#84, call 2).** Hidden when the asset drives
+  nothing (one state, no values, sounds or script); shown off and
+  disabled, the reason as hover text and a line under it, when it holds
+  dirt ("it holds dirt: only rock and background can be live"), a raster
+  or a distant layer, or the copy is distant; otherwise a switch, which
+  while on says "Moves in play from a later version: bakes as placed for
+  now" (#87 makes it move). A copy Live already can always be switched
+  off. **Distant** (with **Depth**, 1 to 99, on at 50) is offered only for
+  an asset of Background images and plain drawn layers; Distant and Live
+  each disable the other, with the reason.
+- **Scripts open in the middle (#84).** The copy panel's **Copy script**
+  (New script, or Edit script and Remove script, which asks first; "Also
+  run <asset>'s script" when the asset has one, offered while Live) and
+  the level panel's **Level script** open the script editor in place of
+  the canvas on `editor/scripts/<id>.rhai` or `editor/level.rhai`, with
+  **Back to level**; a new script is one step, and so is each commit
+  (after a pause, losing the keyboard or leaving the script). Nothing
+  runs them yet.
+- **Saving with breaks (#84).** The level's problems list each library
+  break ("crane: value claw_x: … in Crane") and each copy of a missing
+  asset ("crane: Crane is not in your library") as errors, and each
+  script's syntax errors ("crane's script, line 3: …", the level's and
+  the assets' default scripts too) as warnings; none refuses a save, and
+  a level saved with them keeps them. The status line shows the first
+  problem cut to the line and "(+N more)", all of them on hover.
+- **The library-change notice (#84).** Opening a level asks the library;
+  when anything differs, "Your library changed since this level was
+  saved" lists the changed assets that break nothing (Update, Update
+  all: one step each), those that break copies (the breaks listed;
+  **Update anyway** applies the library's version in one step, resolving
+  each break, the resolutions said in the status line and added to the
+  level's notes) and the missing ones (**Add to your library** saves the
+  level's copy as yours, its name numbered on a clash, and relinks the
+  copies in one step; **Make it the level's own** unlinks them). Nothing
+  is taken from the library while the notice is answered on opening.
+- **Later keeps the errors (#84).** Later closes the notice; its breaks
+  and missing assets stay the level's errors, and a later library write
+  updates only the assets whose library version changed since, so the
+  notice does not come back unless asked: File ▾ **Library changes…**
+  opens it again (or says nothing changed).
+- **Export through the name field (#84).** File ▾ **Export level…** asks
+  to save first (Save or Cancel: an export is of the saved level), then
+  opens the browser in its one save purpose: a **File name** field,
+  `<pack id>.olrlevel` by default (`.olrlevel` added when missing, a
+  click on a file taking its name), and "Replace <name>?" for a file
+  there. The host writes `olr_edit::library::export`'s archive and says
+  "Exported castle.olrlevel (812 KiB, 3 assets)".
+- **Import opens the level (#84).** File ▾ **Import level…** picks a
+  `.olrlevel` file; the host imports it into the data folder
+  (`olr_edit::library::import`: the pack in `packs/`, its new assets in
+  the user's library) and the editor opens it (asking about unsaved
+  changes first), the status line naming what came in ("Castle 2:
+  reused yours console; added Console 2"); the game's level lists are
+  read again.
 - **A plain level is one locked ground (#81).** It opens split into its
   three layers as before; its `Kept` glow, beams and clear flags stay
   while no layer glows or is clear, an Edit Ground included.

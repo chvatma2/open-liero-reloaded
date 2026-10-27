@@ -948,7 +948,17 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   folder written, `AssetSaved` (issue #83: with the folder's source read
   back), or `Failed` (`EditorHost::assets`). Issue #83: `CompareLibrary
   { origins }` answers `LibraryCompared` (`olr_edit::library::
-  read_origins` over the built-in and user folders). The
+  read_origins` over the built-in and user folders). Issue #84:
+  `ExportLevel { pack_dir, to }` writes `olr_edit::library::export`'s
+  archive (the theme's back tile from the catalog, `back_tile`) and
+  answers `Note("Exported <file> (<size>, <n> assets)")`
+  (`files::size_said`) or `Failed`; `ImportLevel(path)` reads the file
+  (at most `olr_pack::archive::MAX_ARCHIVE`), runs `olr_edit::library::
+  import` into the data directory (`packs/`, the user's assets, the
+  built-in ones; the bundled packs' ids taken, `files::pack_ids`) and
+  answers `AssetsChanged` and `LevelImported { dir, report }`, with
+  `HostOut::ContentChanged` (the shell lists the content and the
+  editor's packs again), or `Failed`. The
   built-in folder is never written (`tests/editor_host.rs`'s
   `assets_are_listed_saved_placed_and_removed`). Issue #77, the asset
   tab: `ReadAssetToEdit` answers `AssetToEdit` (`read_asset`, as
@@ -960,7 +970,7 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `Event::Paste` (`app::paste_swallowed`, the window's modifiers kept in
   `App::modifiers`), so the editor's own clipboard pastes.
   `HostOut::{Upload, FullUpload, Distant, Play, Closed,
-  Message}` is what the app does. The shell owns the host (`Shell::editor`):
+  Message, PlaySound, ContentChanged}` is what the app does. The shell owns the host (`Shell::editor`):
   while it is open `App::frame` draws `olr_editor::ui::show` instead of the
   menus, `Shell::editor_frame` runs it (Play becomes `Launch::Edited`:
   `setup::load_edited` of an `EditedPlay` with `PlayLevel::Edited` and

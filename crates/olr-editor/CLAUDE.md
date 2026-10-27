@@ -23,11 +23,13 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   `Play`, `SaveSettings`, `List`, `ReadImage`, `RecoveryDone`, `Close`;
   the libraries' `AddTexture`, `RemoveTexture`, `ReadAsset`, `SaveAsset`,
   `ImportAsset`, `RemoveAsset`; issue #11's `Distant`; issue #77's
-  `ReadAssetToEdit`; issue #83's `CompareLibrary`)
+  `ReadAssetToEdit`; issue #83's `CompareLibrary`; issue #84's
+  `ExportLevel { pack_dir, to }` and `ImportLevel(path)`)
   and answers (`Opened`, `Recovered`: as `Opened` but unsaved, `OpenFailed`,
   `Saved`, `PlayEnded`, `Listed`, `ImportImage`, `ImportFailed`,
   `TexturesChanged`, `AssetsChanged`, `AssetSaved` (the key and, issue
-  #83, the saved source), `AssetRead`, `AssetToEdit`, `LibraryCompared`; and
+  #83, the saved source), `AssetRead`, `AssetToEdit`, `LibraryCompared`,
+  `LevelImported { dir, report }` (issue #84); and
   `Failed(why)`, an error dialog, `Note(text)`, the status bar's message,
   for what the host could not do: a Play that did not start, a recovery
   copy not written).
@@ -43,7 +45,8 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   browser's `browse_dir`, plan 14c; whether the properties' "More" and the
   lighting's "Fine tuning" are open, issue #8).
 - **File browser** (`browser.rs`, `ui/browser.rs`, plan 14c R9): `Browse(
-  Purpose::{ImportImage, OpenPack, ImportTexture, ImportAsset})` opens it at `browse_dir`, else
+  Purpose::{ImportImage, OpenPack, ImportTexture, ImportAsset,
+  ExportLevel, ImportLevel})` opens it at `browse_dir`, else
   `Catalog::home` (the host's home directory; else `.`), and asks
   `List(dir)`; `Listed` sorts (folders first,
   then by name case aside, then exactly) and `shown()` filters (no hidden
@@ -879,6 +882,104 @@ whose column tab is `LAYERS`);
     selected, the lighting's fine tuning, a library copy, the own strip
     light, the Spawns tab); the test host answers `CompareLibrary` from
     its library (`common::run`).
+- **The copy panel and the level's library (issue #84)** (STATUS.md
+  "Level tab (issues #81 to #84)"; `copy_ops.rs`, `notice.rs`,
+  `ui/copy_panel.rs`, `ui/level_script.rs`):
+  - **The copy panel** (`ui::copy_panel::rows`, under #82's and #83's
+    rows; `Document::copy_facts(id) -> CopyFacts`, none for the ground):
+    `COPY_ID` (a `text` field: `CopyChange::Id`, refused with
+    `set_copy`'s reason; the selection and an open script follow the
+    new id), `ID_HINT`; `LIVE` by `LiveOffer` (call 2, `olr_edit::asset::
+    live_refusal`: `Hidden` for nothing to drive, `Disabled(why)` shown
+    off with the reason as hover text and a line under it, `LIVE_DIRT`,
+    the refusal's text for a raster or distant layer, `LIVE_DISTANT` on
+    a distant copy; a copy Live already is always `Offered`), while on
+    `LIVE_NOT_YET`; `STARTING_STATE` (a picker, hidden for one state:
+    `labels::asset_start(start)` sets `state: None`, then each state);
+    `VALUES` (`ValueRow`s: each exposed property's `parts::value_field`
+    by its `property_type` within the exposed limits, named
+    `labels::copy_value(name)`, its value the copy's own else
+    `value_in_state` in the copy's starting state; a set row marked ●
+    and given `DEFAULT_VALUE`, named `labels::default_value(name)`,
+    clearing it); `COPY_SCRIPT` (`NEW_SCRIPT` or `EDIT_SCRIPT` and
+    `REMOVE_SCRIPT`; `RUN_DEFAULT_SCRIPT`, shown "Also run <asset>'s
+    script", when the asset has a script, enabled while Live);
+    `DISTANT` and its `DEPTH` slider (`MIN_DEPTH`-`MAX_DEPTH`, on at
+    `ops::DEFAULT_DEPTH`) when `distant_refusal` allows the asset,
+    disabled with `DISTANT_LIVE` while Live (`check_placed` refuses
+    both). Each change is one `SetCopy` step (`CopyChange::{Id, Live,
+    State, Value, DefaultScript, Distant}` → `CopyProperty`).
+  - **Scripts** (`ScriptTarget::{Copy(id), Level}`: `file()`
+    `editor/scripts/<id>.rhai` or `editor/level.rhai`, `said()`):
+    `OpenScript` (level tab, not the ground; a missing script made first
+    with `NEW_COPY_SCRIPT` or `NEW_LEVEL_SCRIPT`, one step) sets
+    `script_open()` (none once its script or copy is gone);
+    `SetTargetScript` commits one step (`set_target_script` through
+    `placement_op`; `PlacementSnap` carries `level_script`);
+    `RemoveTargetScript` asks (`Dialog::RemoveTargetScript`);
+    `CloseScript`. The level tab's middle (`ui::level_script`) shows the
+    open script instead of the canvas: `BACK_TO_LEVEL`, its file, Remove
+    script, the syntax errors (a click puts the cursor there) and the
+    asset tab's editor (`parts::script_text`, `sync_draft`; the draft,
+    `EditorData::level_script`, commits to the script it was of on a
+    switch, a renamed copy's kept). The level panel (`ui::level`):
+    `LEVEL_SCRIPT` New or Edit and Remove (named "Level script <button>").
+  - **Problems** (`refresh_problems`, the level in place):
+    `link_problems` errors, each break "<copy>: value glow: …" naming
+    the asset ("… in Console"), each copy of a missing asset "<copy>:
+    <name> is not in your library" ("the built-in library");
+    `script_problems` warnings "<id>'s script, line 3: …", "the level
+    script, line …", "<Asset>'s default script, line …"
+    (`olr_script::check`). None refuses a save. The status line shows
+    the first, cut to the line, and "(+N more)", all on hover.
+  - **The notice** (`notice.rs`): `opened_links` (from `opened`) resets
+    the kept answer (`libraries()`), the resolutions, a pending restore
+    and the open script, and sends `CompareLibrary` with
+    `notice_on_compare`; that answer opens `Dialog::LibraryChanged` when
+    `library_changed()` (and no dialog is open) and takes nothing. A
+    later answer (after `AssetsChanged`, `AssetSaved`, a placing whose
+    origin the answer lacks) is merged into the kept one and
+    `take_library` runs on the origins whose version changed since, so
+    what Later put off stays; the links are recomputed from the kept
+    answer on every `refresh_problems` (`relink_links`: origins it lacks
+    are left out until the next). `Library(LibraryAction)`: `Update(key)`
+    and `UpdateAll` (each unbreaking change, one step each, "Update
+    <library name>"), `UpdateAnyway(key)` (`force_update`: one step with
+    the resolutions appended to the level's notes, said in the status
+    line and kept in `resolutions()`), `Restore(key)` (`restorable`: the
+    level's copy, its name numbered on a clash, `SaveAsset { replace:
+    None }`; its `AssetSaved` relinks as Save to library does,
+    `pending_restore`), `Adopt(key)` ("Unlink <name>"). The dialog
+    (`ui::dialogs::library_changed`, scrolled, within the window): the
+    changed assets with Update, those with breaks (listed) with Update
+    anyway, the missing ones with `RESTORE_ASSET` and `ADOPT`, each
+    button named `labels::update(name)` and so on; `UPDATE_ALL`;
+    `LATER` (`Choice::Cancel`). It closes when nothing is left. File ▾
+    `LIBRARY_CHANGES` (`library_changes`) opens it again and asks the
+    library anew.
+  - **Export and import**: File ▾ `EXPORT_LEVEL` (`export_level`: the
+    asset tab's edits applied; unsaved, `Dialog::Unsaved { then:
+    Pending::Export }` offers Save and Cancel only) opens the browser
+    in its one save purpose (`Browser::new_save(Purpose::ExportLevel,
+    dir, "<pack id>.olrlevel")`: `file_name()`; the UI's `FILE_NAME`
+    field, `EXPORT`; a click on a file takes its name). `ExportTo { name,
+    replace }` adds `.olrlevel`, refuses what is not a plain file name,
+    asks "Replace <name>?" for an entry of the folder (`replacing()`,
+    `REPLACE` or `CancelReplace`), else closes the browser, remembers
+    the folder and sends `ExportLevel`; the host answers `Note("Exported
+    <file> (<size>, <n> assets)")` or `Failed`. File ▾ `IMPORT_LEVEL`
+    browses `Purpose::ImportLevel` (folders and `.olrlevel` files); the
+    pick sends `ImportLevel(path)`; `LevelImported` opens the level
+    (`leave`: asking about unsaved changes) and says `import_said`
+    ("Castle 2: reused yours console; added Console 2"; kept for the
+    level it brought, `import_note`).
+  - **Tests**: `tests/copy_panel.rs`, `tests/library_notice.rs` (the
+    issue's acceptance tests; the test host exports and imports with
+    `olr_edit::library`, its data folder the user library's parent),
+    `flows.rs`' `make_a_live_console_with_values_and_a_script`,
+    `fits.rs`' `the_copy_panel_and_the_notice_fit` (a copy of an asset
+    exposing 64 values; the notice of ten assets, checked against the
+    window only).
 - **Tests** (`tests/`, one binary): `asset.rs` (issue #9: save, the name
   clash, the rectangle unclipped and hidden layers left out, placing a
   copy as one step with lighting added, Remove, Import, and the
