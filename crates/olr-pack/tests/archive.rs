@@ -326,3 +326,111 @@ fn a_skin_of_many_deep_files_is_refused() {
     let r = archive::decode(&mut raw(&few).as_slice(), &mut MemFs::new(), &skin);
     assert!(matches!(r, Err(ArchiveError::TooDeep(_))), "{r:?}");
 }
+
+/// A level export's archive of `files` (path, bytes) in the given order,
+/// unchecked.
+fn raw_export(files: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut a = raw(files);
+    a[..archive::LEVEL_MAGIC.len()].copy_from_slice(archive::LEVEL_MAGIC);
+    a
+}
+
+fn level_with_editor() -> MemFs {
+    pack()
+        .with("editor/placed.ron", "(assets: [], copies: [])")
+        .with("editor/a/asset.ron", "x")
+        .with("editor/scripts/crane.rhai", "// hi")
+}
+
+/// Issue #76: a `.olrlevel` carries `editor/` and round-trips exactly,
+/// under its own magic.
+#[test]
+fn a_level_export_round_trips_with_editor_files() {
+    let src = level_with_editor().with(".DS_Store", vec![1u8]);
+    let a = archive::encode_level_export(&src).unwrap();
+    assert_eq!(&a[..6], archive::LEVEL_MAGIC);
+    assert_eq!(a, archive::encode_level_export(&level_with_editor()).unwrap(), "hidden files stay out");
+    let mut out = MemFs::new();
+    let got = archive::decode_level_export(&mut a.as_slice(), &mut out, &archive::Limits::PACK).unwrap();
+    assert_eq!(got.files, 6);
+    assert_eq!(out, level_with_editor());
+    // Not an `.olpk`, nor the reverse.
+    let r = archive::decode(&mut a.as_slice(), &mut MemFs::new(), &archive::Limits::PACK);
+    assert!(matches!(r, Err(ArchiveError::Magic)), "{r:?}");
+    let olpk = archive::encode(&pack()).unwrap();
+    let r = archive::decode_level_export(&mut olpk.as_slice(), &mut MemFs::new(), &archive::Limits::PACK);
+    assert!(matches!(r, Err(ArchiveError::LevelMagic)), "{r:?}");
+}
+
+/// Issue #76: `.olpk` is unchanged: it leaves `editor/` out and refuses an
+/// archive holding it, byte for byte the archive it was.
+#[test]
+fn an_olpk_still_refuses_editor_files() {
+    let a = archive::encode(&level_with_editor()).unwrap();
+    assert_eq!(a, archive::encode(&pack()).unwrap());
+    let forged = raw(&[("editor/placed.ron", b"x")]);
+    let e = archive::decode(&mut &forged[..], &mut MemFs::new(), &archive::Limits::PACK).unwrap_err();
+    assert!(e.to_string().contains("authoring files are never in an archive"), "{e}");
+}
+
+/// Issue #76: a level export refuses what `.olpk` refuses (bad paths,
+/// case clashes, depth, size), and `editor/` only so spelled.
+#[test]
+fn level_exports_refuse_what_olpk_refuses() {
+    let decode = |a: Vec<u8>, limits: &archive::Limits| {
+        archive::decode_level_export(&mut a.as_slice(), &mut MemFs::new(), limits)
+    };
+    for bad in ["../x", "/x", "a\\b", ".hidden", "a//b", "C:/x", "NUL.png", "editor/../x", "editor/a?"] {
+        let r = decode(raw_export(&[(bad, b"x")]), &archive::Limits::PACK);
+        assert!(matches!(r, Err(ArchiveError::BadPath(_))), "{bad}: {r:?}");
+    }
+    for pair in [["Editor/x", "editor/y"], ["editor/A/x", "editor/a/y"]] {
+        let r = decode(raw_export(&[(pair[0], b"1"), (pair[1], b"2")]), &archive::Limits::PACK);
+        assert!(matches!(r, Err(ArchiveError::BadPath(_))), "{pair:?}: {r:?}");
+    }
+    // `editor/` in another case alone is refused too, and never archived.
+    let r = decode(raw_export(&[("EDITOR/x", b"1")]), &archive::Limits::PACK);
+    assert!(matches!(&r, Err(ArchiveError::BadPath(p)) if p.contains("spelled")), "{r:?}");
+    assert!(archive::encode_level_export(&pack().with("Editor/x", vec![1u8])).is_err());
+    let deep = format!("editor/{}x", "a/".repeat(archive::MAX_DEPTH));
+    let r = decode(raw_export(&[(&deep, b"")]), &archive::Limits::PACK);
+    assert!(matches!(r, Err(ArchiveError::TooDeep(_))), "{r:?}");
+    assert!(archive::encode_level_export(&pack().with(deep.as_str(), vec![1u8])).is_err());
+    let good = archive::encode_level_export(&level_with_editor()).unwrap();
+    let r = decode(good.clone(), &archive::Limits { bytes: 16, ..archive::Limits::PACK });
+    assert!(matches!(r, Err(ArchiveError::TooLarge(16))), "{r:?}");
+    let r = decode(good.clone(), &archive::Limits { disk: archive::BLOCK, ..archive::Limits::PACK });
+    assert!(matches!(r, Err(ArchiveError::TooLargeUnpacked(_))), "{r:?}");
+    let mut padded = good.clone();
+    padded.push(0);
+    assert!(matches!(decode(padded, &archive::Limits::PACK), Err(ArchiveError::Trailing)));
+    assert!(matches!(
+        decode(good[..good.len() - 1].to_vec(), &archive::Limits::PACK),
+        Err(ArchiveError::Truncated)
+    ));
+    let r = decode(raw_export(&[("editor/b", b""), ("editor/a", b"")]), &archive::Limits::PACK);
+    assert!(matches!(r, Err(ArchiveError::Order(_))), "{r:?}");
+    let mut big = archive::LEVEL_MAGIC.to_vec();
+    big.extend(1u32.to_le_bytes());
+    big.extend(1u16.to_le_bytes());
+    big.extend(b"a");
+    big.extend(u64::MAX.to_le_bytes());
+    assert!(matches!(decode(big, &archive::Limits::PACK), Err(ArchiveError::TooLarge(_))));
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig { cases: 256, failure_persistence: None, ..Default::default() })]
+    #[test]
+    fn mutated_level_exports_never_panic(edits in proptest::collection::vec((0usize..400, proptest::prelude::any::<u8>()), 1..8), cut in 0usize..400) {
+        let mut a = archive::encode_level_export(&level_with_editor()).unwrap();
+        for (i, b) in edits { if i < a.len() { a[i] = b; } }
+        a.truncate(a.len().saturating_sub(cut));
+        let _ = archive::decode_level_export(&mut a.as_slice(), &mut MemFs::new(), &archive::Limits::PACK);
+    }
+    #[test]
+    fn arbitrary_bytes_never_panic_a_level_export(bytes in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..4096)) {
+        let mut a = archive::LEVEL_MAGIC.to_vec();
+        a.extend(bytes);
+        let _ = archive::decode_level_export(&mut a.as_slice(), &mut MemFs::new(), &archive::Limits::PACK);
+    }
+}

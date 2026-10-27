@@ -38,6 +38,13 @@
 //! (at most [`MAX_FILE_BYTES`]) in memory, checks every length before it
 //! reads the bytes, and stops at the first violation. The strictly
 //! increasing order makes duplicates detectable in one pass.
+//!
+//! The level export (issue #76, `.olrlevel`): the same layout under its
+//! own magic [`LEVEL_MAGIC`] (`OLRL1\n`), with the same bounds and path
+//! checks, that also carries a level's authoring files (`editor/`, spelled
+//! so), which an `.olpk` never does: [`encode_level_export`] and
+//! [`decode_level_export`]. It is how a level travels to be edited; the
+//! online download stays the `.olpk` of its bake.
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -48,6 +55,19 @@ use crate::{MAX_FILE_BYTES, PackError};
 
 /// The first bytes of every archive.
 pub const MAGIC: &[u8; 6] = b"OLPK1\n";
+/// The first bytes of every level export (`.olrlevel`, issue #76).
+pub const LEVEL_MAGIC: &[u8; 6] = b"OLRL1\n";
+
+/// Which of the two archives: its magic and whether it carries authoring
+/// files.
+#[derive(Clone, Copy)]
+struct Kind {
+    magic: &'static [u8; 6],
+    authoring: bool,
+}
+
+const PACK_ARCHIVE: Kind = Kind { magic: MAGIC, authoring: false };
+const LEVEL_EXPORT: Kind = Kind { magic: LEVEL_MAGIC, authoring: true };
 /// The most bytes an archive may have (a skin's archive has a smaller limit,
 /// the caller's [`Limits`]).
 pub const MAX_ARCHIVE: u64 = 512 << 20;
@@ -107,6 +127,8 @@ pub struct Unpacked {
 pub enum ArchiveError {
     #[error("not a pack archive")]
     Magic,
+    #[error("not a level export (.olrlevel)")]
+    LevelMagic,
     #[error("the archive is cut short")]
     Truncated,
     #[error("the archive has bytes after its last file")]
@@ -140,16 +162,29 @@ pub enum ArchiveError {
 /// files or [`MAX_DIRS`], a file over [`MAX_FILE_BYTES`], a total over
 /// [`MAX_ARCHIVE`] or a disk charge over [`MAX_UNPACKED`].
 pub fn encode(src: &dyn ContentSource) -> Result<Vec<u8>, PackError> {
+    encode_kind(src, PACK_ARCHIVE)
+}
+
+/// The level export (`.olrlevel`, issue #76) of every file under `src`'s
+/// root: [`encode`]'s archive under [`LEVEL_MAGIC`], its authoring files
+/// (`editor/`) included. Hidden files are left out; a path whose first
+/// component is `editor` in another case is refused, as [`decode_level_export`]
+/// refuses it, and so is everything [`encode`] refuses.
+pub fn encode_level_export(src: &dyn ContentSource) -> Result<Vec<u8>, PackError> {
+    encode_kind(src, LEVEL_EXPORT)
+}
+
+fn encode_kind(src: &dyn ContentSource, kind: Kind) -> Result<Vec<u8>, PackError> {
     let mut paths = walk(src, &VPath::root())?;
-    paths.retain(|p| !is_hidden(p.as_str()) && !crate::is_authoring(p.as_str()));
+    paths.retain(|p| !is_hidden(p.as_str()) && (kind.authoring || !crate::is_authoring(p.as_str())));
     if paths.len() > MAX_ARCHIVE_FILES as usize {
         return Err(PackError::invalid("archive", format!("more than {MAX_ARCHIVE_FILES} files")));
     }
-    let mut out = MAGIC.to_vec();
+    let mut out = kind.magic.to_vec();
     out.extend((paths.len() as u32).to_le_bytes());
     let mut layout = Layout::new(Limits::PACK, paths.len() as u32);
     for path in &paths {
-        if let Some(why) = path_problem(path.as_str()) {
+        if let Some(why) = path_problem(path.as_str()).or_else(|| authoring_problem(path.as_str(), kind)) {
             return Err(PackError::invalid(path.as_str(), why));
         }
         let data = src.read_max(path, MAX_FILE_BYTES)?;
@@ -185,6 +220,20 @@ fn path_problem(path: &str) -> Option<&'static str> {
         Some("not a valid path")
     } else {
         path.split('/').find_map(non_portable)
+    }
+}
+
+/// Why `path`, an authoring path or one alike, may not be in an archive of
+/// `kind`: never in an `.olpk`; in a level export only as `editor/…`.
+fn authoring_problem(path: &str, kind: Kind) -> Option<&'static str> {
+    if !crate::is_authoring(path) {
+        None
+    } else if !kind.authoring {
+        Some("authoring files are never in an archive")
+    } else if !path.starts_with(&format!("{}/", olr_format::levels::EDITOR_DIR)) {
+        Some("authoring files are under editor/, spelled so")
+    } else {
+        None
     }
 }
 
@@ -328,14 +377,37 @@ pub fn decode(
     sink: &mut dyn ContentSink,
     limits: &Limits,
 ) -> Result<Unpacked, ArchiveError> {
+    decode_kind(r, sink, limits, PACK_ARCHIVE)
+}
+
+/// Reads a level export (`.olrlevel`, issue #76) from `r` into `sink` as
+/// [`decode`] reads an archive (the same bounds, order and path checks),
+/// its magic [`LEVEL_MAGIC`] (else [`ArchiveError::LevelMagic`]), with
+/// authoring files allowed under `editor/` (another spelling of it a
+/// `BadPath`).
+pub fn decode_level_export(
+    r: &mut dyn Read,
+    sink: &mut dyn ContentSink,
+    limits: &Limits,
+) -> Result<Unpacked, ArchiveError> {
+    decode_kind(r, sink, limits, LEVEL_EXPORT)
+}
+
+fn decode_kind(
+    r: &mut dyn Read,
+    sink: &mut dyn ContentSink,
+    limits: &Limits,
+    kind: Kind,
+) -> Result<Unpacked, ArchiveError> {
+    let wrong = if kind.authoring { ArchiveError::LevelMagic } else { ArchiveError::Magic };
     let mut r = Counted { r, taken: 0, limit: limits.bytes };
     let mut magic = [0u8; MAGIC.len()];
     match r.exact(&mut magic) {
-        Err(ArchiveError::Truncated) => return Err(ArchiveError::Magic),
+        Err(ArchiveError::Truncated) => return Err(wrong),
         other => other?,
     }
-    if &magic != MAGIC {
-        return Err(ArchiveError::Magic);
+    if &magic != kind.magic {
+        return Err(wrong);
     }
     let count = r.u32()?;
     if count > MAX_ARCHIVE_FILES || count > limits.files {
@@ -355,8 +427,8 @@ pub fn decode(
         if let Some(why) = path_problem(&path) {
             return Err(ArchiveError::BadPath(format!("{path} ({why})")));
         }
-        if crate::is_authoring(&path) {
-            return Err(ArchiveError::BadPath(format!("{path}: authoring files are never in an archive")));
+        if let Some(why) = authoring_problem(&path, kind) {
+            return Err(ArchiveError::BadPath(format!("{path}: {why}")));
         }
         if previous.as_ref().is_some_and(|p| path <= *p) {
             return Err(ArchiveError::Order(path));

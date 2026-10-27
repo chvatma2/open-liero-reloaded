@@ -134,5 +134,17 @@ header's size); content hashing; validation.
   block) per directory, charged before each file is written; directories
   are at most the file count and `MAX_DIRS` (512). `decode` returns
   `Unpacked { files, disk }`; `encode` refuses what `Limits::PACK` would.
+- **Level export** (`.olrlevel`, issue #76): `encode_level_export(src)` /
+  `decode_level_export(reader, sink, &Limits)` share `.olpk`'s code (a
+  `Kind`: the magic and whether authoring files travel): magic
+  `LEVEL_MAGIC` (`OLRL1\n`; the other magic is `ArchiveError::LevelMagic`,
+  "not a level export"), the same layout, bounds, order, portability and
+  case checks, and `editor/` files allowed, only so spelled (`Editor/x` a
+  `BadPath`). `.olpk` is unchanged byte for byte: it still leaves
+  `editor/` out and refuses it. It is the editable form of a level
+  (`olr_edit::library::export`/`import`); downloads stay `.olpk`. Tests:
+  `a_level_export_round_trips_with_editor_files`,
+  `an_olpk_still_refuses_editor_files`,
+  `level_exports_refuse_what_olpk_refuses`, and two never-panic proptests.
 
 Test: `cargo nextest run -p olr-pack`.
