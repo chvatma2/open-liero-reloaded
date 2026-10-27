@@ -139,3 +139,37 @@ fn from_source_gives_the_saved_packs_live_level() {
     let baked = LoadedLevel::from_source(src).unwrap().live_sim().unwrap();
     assert_eq!(*baked, *saved);
 }
+
+/// Issue #86: a match on a live level holds its copies' state, entered at
+/// their starting states, and a replay's assets carry the same copies.
+#[test]
+fn a_live_levels_world_holds_its_copies() {
+    let (_tmp, content) = content(|dir| {
+        let path = dir.join("level.ron");
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, text.replace("olx-theme-dirt", "test-theme")).unwrap();
+    });
+    let setup = olr_content::SandboxSetup {
+        mod_id: "broken-mod".into(),
+        level_id: ID.into(),
+        seed: 3,
+        settings: olr_sim::SimSettings::lx56(),
+        worms: vec![olr_content::SpawnSpec::default()],
+        restrictions: olr_content::DEFAULT_PRESET.into(),
+    };
+    let world = content.new_world(&setup).unwrap();
+    let live = world.live().expect("live copies in the world");
+    let states: Vec<(&str, &str)> = live.copies().map(|c| (c.id(), c.state_name())).collect();
+    assert_eq!(states[..3], [("lamp", "Dim"), ("console-a", "Normal"), ("console-b", "Alarm")]);
+    // The press's own start value, in 1/256 pixel.
+    let press = live.copy_by_id("press").unwrap();
+    assert_eq!(press.value("head_y"), Some(3 * olr_sim::LIVE_SUBPIXELS));
+    let (m, level) = (content.load_mod("broken-mod").unwrap(), content.load_level(ID).unwrap());
+    let theme = content.load_theme(&level.theme).unwrap();
+    let assets = olr_content::replay_assets_from(&m, &level, &theme);
+    assert_eq!(assets.live.as_deref(), Some(live.level()));
+    // A level without live copies has none in its world.
+    let plain =
+        content.new_world(&olr_content::SandboxSetup { level_id: "test-level".into(), ..setup }).unwrap();
+    assert!(plain.live().is_none());
+}

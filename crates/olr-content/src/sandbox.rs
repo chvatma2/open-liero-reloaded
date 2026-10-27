@@ -65,7 +65,8 @@ pub fn new_world_from(
 }
 
 /// The [`MatchSetup`] `setup` describes, for a world of any game mode: the
-/// level with the theme's holes and green-dirt mask, and the worms in
+/// level with the theme's holes and green-dirt mask and its live copies
+/// (`LoadedLevel::live_sim`, issue #86), and the worms in
 /// order with their weapons. Worms without a position draw one from
 /// `FindSpot` when they spawn, so the same setup always gives the same
 /// world. Natural bonuses hold the weapons `setup.restrictions` does not ban
@@ -101,6 +102,7 @@ pub fn match_setup(
         seed: setup.seed,
         worms,
         bonus_weapons: Some(m.weapon_rules(&setup.restrictions).bonus_weapons()),
+        live: level.live_sim(),
         ..MatchSetup::new(settings, m.sim.clone(), terrain)
     })
 }
