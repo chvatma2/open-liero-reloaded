@@ -17,6 +17,8 @@ mod glow_beams;
 mod halo;
 #[path = "gpu/heat.rs"]
 mod heat;
+#[path = "gpu/live.rs"]
+mod live;
 #[path = "gpu/soak.rs"]
 mod soak;
 

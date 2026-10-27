@@ -1077,13 +1077,16 @@ impl LookState {
         // The beam map shows the backdrop's beams where a pixel is dug.
         t.glow_beams.write(queue, map, wr);
         let cells = map.material().cells();
-        let Some(clear) = map.clear().filter(|c| c.len() == cells.len()) else {
+        let clear = map.clear().filter(|c| c.len() == cells.len());
+        // Issue #87: a live copy's rock part is solid for the light.
+        let live = map.live_solid().filter(|l| l.len() == cells.len());
+        if clear.is_none() && live.is_none() {
             write_bytes(queue, &t.solid, (cells, t.level.0), wr);
             if let Some(h) = &mut t.heat {
                 h.relayer(queue, (cells, t.level.0), wr);
             }
             return;
-        };
+        }
         if t.light_cells.len() != cells.len() {
             t.light_cells = cells.to_vec();
         }
@@ -1091,13 +1094,14 @@ impl LookState {
         let (x0, x1) = ((wr.x as usize).min(w), (wr.x.saturating_add(wr.w) as usize).min(w));
         let rows = (wr.y as usize)..(wr.y.saturating_add(wr.h) as usize).min(cells.len() / w.max(1));
         for y in rows {
-            let i = y * w;
-            for ((out, &cell), &flag) in t.light_cells[i + x0..i + x1]
-                .iter_mut()
-                .zip(&cells[i + x0..i + x1])
-                .zip(&clear[i + x0..i + x1])
-            {
-                *out = if flag != 0 { Material::Background as u8 } else { cell };
+            for i in y * w + x0..y * w + x1 {
+                t.light_cells[i] = if live.is_some_and(|l| l[i] != 0) {
+                    Material::Rock as u8
+                } else if clear.is_some_and(|c| c[i] != 0) {
+                    Material::Background as u8
+                } else {
+                    cells[i]
+                };
             }
         }
         write_bytes(queue, &t.solid, (&t.light_cells, t.level.0), wr);
