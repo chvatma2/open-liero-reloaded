@@ -1403,6 +1403,44 @@ fn preview_dark_glows_and_light_does_not() {
     assert!(sum(dark.get(2, 10)) < sum(grey), "the rest is dark");
 }
 
+/// Issue #79: the asset tab's canvas poses a state where things are: the
+/// positions and Facing ignored, its other values applied.
+#[test]
+fn posed_in_place_ignores_positions_and_facing() {
+    let mut a = lamp();
+    a.states = vec![state(
+        "S",
+        vec![
+            (P::X, V::Int(3)),
+            (P::Facing, V::Bool(true)),
+            (P::OffsetX("shade".into()), V::Int(2)),
+            (P::GlowStrength("lamp".into()), V::Int(0)),
+        ],
+    )];
+    let at = |p: &olr_edit::asset::Posed, id: &str| match piece(p, id).unwrap().piece.element.kind {
+        ElementKind::Drawn { at, .. } => at,
+        _ => panic!(),
+    };
+    let here = olr_edit::asset::posed_in_place(&a, 0).unwrap();
+    assert_eq!((at(&here, "shade"), at(&here, "lamp")), ((0, 0), (0, 0)));
+    assert!(piece(&here, "lamp").unwrap().piece.element.glow.is_none(), "its glow value applies");
+    let moved = posed(&a, 0, &BTreeMap::new()).unwrap();
+    assert_ne!(at(&moved, "shade"), (0, 0), "posed moves it");
+}
+
+/// Issue #79: a state's preview shows its own pictures.
+#[test]
+fn preview_state_shows_the_states_pictures() {
+    let mut a = lamp();
+    olr_edit::asset::add_state(&mut a, "Red", None).unwrap();
+    let pic = own(&a.pieces[0], RED, 255);
+    olr_edit::asset::own_picture(&mut a, "Red", "lamp", pic).unwrap();
+    let (start, red) = (preview(&a, false), olr_edit::asset::preview_state(&a, 1, false));
+    assert_eq!(olr_edit::asset::preview_state(&a, 0, false), start);
+    assert_eq!((start.get(0, 5), red.get(0, 5)), (BLUE, RED));
+    assert_eq!(olr_edit::asset::preview_state(&a, 9, false), start, "a state it lacks: the start");
+}
+
 /// Issue #78: a preview is at most `PREVIEW_MAX` a side, keeping the
 /// asset's aspect.
 #[test]

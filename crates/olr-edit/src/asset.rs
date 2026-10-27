@@ -958,7 +958,7 @@ fn strip(path: &str) -> String {
 /// `asset` drawn lit under [`preview_look`] (its uncovered pixels black),
 /// letterboxed into the level thumbnail's size.
 pub fn thumbnail(asset: &Asset) -> RgbaImage {
-    level_thumbnail(&baked(asset, true))
+    level_thumbnail(&baked(asset, asset.start, true))
 }
 
 /// The largest side (pixels) of a [`preview`].
@@ -971,6 +971,13 @@ pub const PREVIEW_MAX: u32 = 512;
 /// pixels lit, else full bright. Uncovered pixels are black, as the
 /// thumbnail's.
 pub fn preview(asset: &Asset, dark: bool) -> RgbaImage {
+    preview_state(asset, asset.start, dark)
+}
+
+/// [`preview`] of `asset` in its state `state` (an index of
+/// `asset.states`; issue #79, the asset tab's previews and states panel),
+/// posed with its defaults; a state it lacks previews the start.
+pub fn preview_state(asset: &Asset, state: usize, dark: bool) -> RgbaImage {
     let s = asset.art_scale.max(1);
     let (aw, ah) = (asset.size.0.saturating_mul(s).max(1), asset.size.1.saturating_mul(s).max(1));
     let size = if aw <= PREVIEW_MAX && ah <= PREVIEW_MAX {
@@ -979,13 +986,13 @@ pub fn preview(asset: &Asset, dark: bool) -> RgbaImage {
         let (_, _, w, h) = olr_format::levels::letterbox(aw, ah, PREVIEW_MAX, PREVIEW_MAX);
         (w, h)
     };
-    olr_format::levels::level_lit(&baked(asset, dark), size)
+    olr_format::levels::level_lit(&baked(asset, state, dark), size)
 }
 
-/// `asset` in its starting state with its defaults, baked as a level of
-/// its size and art scale; under [`preview_look`] when `lit`, else with no
-/// look.
-fn baked(asset: &Asset, lit: bool) -> LevelSource {
+/// `asset` in state `state` (else its starting state) with its defaults,
+/// baked as a level of its size and art scale; under [`preview_look`] when
+/// `lit`, else with no look.
+fn baked(asset: &Asset, state: usize, lit: bool) -> LevelSource {
     let (w, h) = asset.size;
     let s = asset.art_scale.max(1);
     let mut level = LevelSource {
@@ -1009,10 +1016,12 @@ fn baked(asset: &Asset, lit: bool) -> LevelSource {
         surface: None,
         distant_surfaces: Vec::new(),
     };
-    // The asset in its starting state with its defaults (its pieces when
-    // nothing sets a value).
-    let (pieces, groups) =
-        landed_pieces(asset).unwrap_or_else(|_| (asset.pieces.clone(), asset.groups.clone()));
+    // The asset in the state with its defaults (its pieces when nothing
+    // sets a value).
+    let state = if state < asset.states.len() { state } else { asset.start };
+    let (pieces, groups) = posed(asset, state, &BTreeMap::new())
+        .map(|p| (p.pieces.into_iter().map(|p| p.piece).collect(), p.groups))
+        .unwrap_or_else(|_| (asset.pieces.clone(), asset.groups.clone()));
     if lit {
         level.look = Some(preview_look(&groups));
     }

@@ -362,7 +362,12 @@ operations.
   (box-filtered down, its aspect kept), full bright or (`dark`) under
   `preview_look` through `olr_format::levels::level_lit`, the
   thumbnail's light model (`preview_dark_glows_and_light_does_not`,
-  `a_big_asset_preview_is_at_most_512`); `decode` checks (`check_asset`) and decodes
+  `a_big_asset_preview_is_at_most_512`); issue #79's
+  `preview_state(asset, state, dark)` previews any state (a state it lacks
+  the start; `preview_state_shows_the_states_pictures`) and
+  `posed_in_place(asset, state)` is `posed` where things are (no copy
+  values; `X`, `Y`, the offsets and `Facing` ignored: the asset tab's
+  canvas, `posed_in_place_ignores_positions_and_facing`); `decode` checks (`check_asset`) and decodes
   (`decode_element`, `decode_glow_masks`). `load_dir`, `read_dir`,
   `save_dir` (`replace_dir`), `summary` (`asset.ron` and the thumbnail
   only: the Assets tab's entry). `DecodedLevel::of_pack` (a plain level

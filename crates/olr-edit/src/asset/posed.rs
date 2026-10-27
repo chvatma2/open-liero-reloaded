@@ -146,6 +146,24 @@ fn resolved(
 /// `X`/`Y` move them all and `Visible` false leaves none. An unknown name
 /// or a value of the wrong type or range in `copy` is an error.
 pub fn posed(asset: &Asset, state: usize, copy: &BTreeMap<String, ValueSource>) -> Result<Posed, AssetError> {
+    posed_with(asset, state, copy, false)
+}
+
+/// [`posed`] where things are (issue #79, the asset tab's canvas): with
+/// no copy values, and the positions (`X`, `Y`, `OffsetX`/`Y`) and
+/// `Facing` ignored, so every piece keeps its box and a stroke lands where
+/// its layer is drawn.
+pub fn posed_in_place(asset: &Asset, state: usize) -> Result<Posed, AssetError> {
+    posed_with(asset, state, &BTreeMap::new(), true)
+}
+
+/// [`posed`], the positions and `Facing` ignored when `in_place`.
+fn posed_with(
+    asset: &Asset,
+    state: usize,
+    copy: &BTreeMap<String, ValueSource>,
+    in_place: bool,
+) -> Result<Posed, AssetError> {
     use PropertySource as P;
     use ValueSource as V;
     let st =
@@ -179,6 +197,9 @@ pub fn posed(asset: &Asset, state: usize, copy: &BTreeMap<String, ValueSource>) 
         .collect();
     let (mut facing, mut shown, mut at) = (false, true, (0i64, 0i64));
     for (property, value) in values.values() {
+        if in_place && matches!(property, P::X | P::Y | P::Facing | P::OffsetX(_) | P::OffsetY(_)) {
+            continue;
+        }
         let int = match value {
             V::Int(n) => *n,
             _ => 0,
