@@ -3,7 +3,8 @@
 //! screen as the game lays it out on a 16:9 window, issue #30) as a PNG,
 //! drawn the way the game draws it (its look included), so agents can see
 //! a match on any packs, such as the look test level and mod (plan 15a
-//! Task 16), which no OLX trace can replay.
+//! Task 16), which no OLX trace can replay. `--live COPY=STATE` sets a
+//! live copy's state before the first tick (issue #87).
 
 use std::path::PathBuf;
 
@@ -39,6 +40,18 @@ pub struct Args {
     /// (the `reloaded` directory beside it) over it.
     #[arg(long, default_value = "content/packs")]
     content: PathBuf,
+    /// A live copy's state before the first tick, `COPY=STATE` (copy id,
+    /// state name; issue #87), repeatable, in order.
+    #[arg(long, value_name = "COPY=STATE", value_parser = live_state)]
+    live: Vec<(String, String)>,
+}
+
+/// `--live`'s `COPY=STATE`.
+fn live_state(s: &str) -> Result<(String, String), String> {
+    match s.split_once('=') {
+        Some((copy, state)) if !copy.is_empty() && !state.is_empty() => Ok((copy.into(), state.into())),
+        _ => Err(format!("{s}: expected COPY=STATE")),
+    }
 }
 
 /// The seam between split screen's views, in world pixels: OLX's 4
@@ -73,6 +86,9 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         eprintln!("warning: {w}");
     }
     let mut game = Match::with_assets(&assets, &args.spec, &Options::default())?;
+    for (copy, state) in &args.live {
+        game.set_live_state(copy, state).context("--live")?;
+    }
     let viewport = Viewport::GAME;
     let setup = PresentSetup {
         core: content.core(),

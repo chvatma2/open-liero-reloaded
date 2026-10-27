@@ -366,6 +366,49 @@ fn look_double_skin() {
     compare("look-skin.png", &args, &[]);
 }
 
+/// Issue #87: idle bots on the live test level (`fixtures/live/levels/
+/// live-test`, its copies in their starting states, or with `extra`'s
+/// `--live` states), the copies composited into the terrain and lit by
+/// their own glow groups.
+fn live_golden(name: &str, extra: &[&str]) {
+    let Some(content) = content_dir() else { return };
+    let levels = root().join("fixtures/live/levels");
+    let args = [
+        "render-match",
+        "--mod",
+        "olx-classic",
+        "--level",
+        "olr-level-live-test",
+        "--bots",
+        "2",
+        "--personality",
+        "idle",
+        "--seed",
+        "1",
+        "--ticks",
+        "200",
+        "--packs",
+        levels.to_str().unwrap(),
+        "--content",
+        &content,
+    ];
+    compare(name, &args, extra);
+}
+
+/// Issue #87: the live copies as they start (the lamp dim, the second
+/// console alarmed).
+#[test]
+fn live_start() {
+    live_golden("live-start.png", &[]);
+}
+
+/// Issue #87: the lamp off and the first console alarmed before the
+/// first tick (`--live`).
+#[test]
+fn live_states() {
+    live_golden("live-states.png", &["--live", "lamp=Off", "--live", "console-a=Alarm"]);
+}
+
 /// Issue #34, byte identity: chaos bots on Castle Strike Reloaded (its
 /// look: the flames' flicker and the sky's glow), its last 30 ticks drawn
 /// lit (`olr-cli frame-hashes`), a hash of each frame's light grid and lit

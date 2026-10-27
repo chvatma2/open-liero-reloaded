@@ -431,7 +431,7 @@ The headless command-line tool. Its commands:
   `tests/look_preview.rs` (`look_preview_writes_a_png` edits a copy of
   Dirt Level with `level look` and a glowing patch, `level group add` and
   `level element set|glow`; `render_match_writes_a_png`: also 2, 3 and 4 local players' views and the PNG's size, issue #30).
-- `olr-cli render-match <match flags> --out f.png [--scale 2] [--skin ID] [--packs DIR]... [--content DIR]`
+- `olr-cli render-match <match flags> --out f.png [--scale 2] [--skin ID] [--packs DIR]... [--content DIR] [--live COPY=STATE]...`
   (plan 15a Task 16, `render_match.rs`) plays a headless bot match (the
   runner's `advance`, unsettled: no invariants, no recording) on
   `--content` with each `--packs` directory laid over it (the first wins;
@@ -471,6 +471,14 @@ The headless command-line tool. Its commands:
   bots, seed 1, with `look-test-laser-mod` (Classic's Laser emptying in
   five bursts, then a 12.5 s reload) on `look-test-heat`: the beams
   lighting the cave and the dug tunnels' edges hot, then cooling.
+  Issue #87: `--live COPY=STATE` (repeatable, in order; a copy id and a
+  state name) puts a live copy in a state before the first tick
+  (`Match::set_live_state`, `World::set_live_state`; drawing only: the
+  match's recorder started with the build, so its replay would not hold
+  it; an unknown copy or state is an error naming it). `live-start.png`
+  and `live-states.png` (`--live lamp=Off --live console-a=Alarm`): two
+  idle bots, seed 1, tick 200, on `fixtures/live/levels/live-test`, the
+  copies composited into the terrain and lit by their own groups.
 - `olr-cli frame-hashes <match flags> [--frames 30] [--content DIR] [--out f.ron]`
   (issue #34, `frame_hash.rs`, the command in `frame_hashes_cmd.rs`):
   byte identity. Plays a headless bot match as `render-match` does (the

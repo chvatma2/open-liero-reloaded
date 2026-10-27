@@ -261,6 +261,23 @@ impl Match {
         &self.world
     }
 
+    /// Live copy `copy` (its id) enters state `state` (its name) before
+    /// the first tick (issue #87: `render-match --live`), through
+    /// `World::set_live_state`. For drawing only: the match's replay
+    /// started recording with its build and does not hold the change, so
+    /// `render-match`, which keeps none, is the one caller. Refused for a
+    /// copy or state the level lacks, or once a tick was played.
+    pub fn set_live_state(&mut self, copy: &str, state: &str) -> anyhow::Result<()> {
+        ensure!(self.stats.tick_ns.is_empty(), "live states are set before the first tick");
+        let live = self.world.live().map(|l| l.level().clone());
+        let live = live.with_context(|| format!("live copy {copy}: the level has no live copies"))?;
+        let c = live.copy(copy).with_context(|| format!("no live copy {copy}"))?;
+        let s = live.copies[usize::from(c)]
+            .state(state)
+            .with_context(|| format!("live copy {copy}: no state {state}"))?;
+        self.world.set_live_state(c, s).map_err(|e| anyhow::anyhow!("live copy {copy}: {e}"))
+    }
+
     /// Ticks played so far.
     pub fn ticks(&self) -> u32 {
         self.ticks
