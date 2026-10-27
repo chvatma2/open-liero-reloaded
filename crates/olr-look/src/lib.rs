@@ -21,7 +21,7 @@ pub use anim::{default_phase, splitmix64};
 pub use engine::worm_floor_of;
 pub use frame::{
     FrameGroup, FrameLight, LookFrame, MAX_EMITTERS, MAX_OCCLUSION_REACH, MAX_SOAK, MIN_OCCLUSION_REACH,
-    ViewMode, fade, light_at, srgb_to_linear,
+    ViewMode, fade, light_at, live_identity, srgb_to_linear,
 };
 pub use material::{
     Heat, LAVA_RAMP, MAX_CAPACITY, MAX_CONDUCTIVITY, MAX_COOLING, MAX_GLOW, MAX_MATERIALS, MAX_RAMP_KEYS,

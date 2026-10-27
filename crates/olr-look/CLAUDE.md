@@ -88,7 +88,21 @@ own look. The simulation never sees it.
   it gives no light, or when a value is not finite; intensity is capped at
   1000. `fade(d, reach)` is `(1 - (d/r)²)²`, nothing at or past the reach,
   1 for `Unlimited`, 0 for `Pixels(0)` and a NaN distance.
-- **Identities:** a group's is `identity_of(id)` (FNV-1a 64).
+- **Identities:** a group's is `identity_of(id)` (FNV-1a 64); a live
+  copy's group's (issue #87) `live_identity(copy, group)`, `identity_of`
+  of `"<copy id>/<group id>"` made without a string.
+- **Live copies' groups** (issue #87, the design's call 13):
+  `LookFrame::push_live_group(&GlowGroup, copy, t_ms)` appends a copy's
+  group after those so far, made as `begin` makes the level's
+  (`push_group`) with its live identity, so two copies of one asset
+  flicker and pulse apart; past the 255th (no group map value names it)
+  it is left out. `olr-present` pushes every copy's groups after
+  `begin`, copies in level order, each in its group order: copy `c`'s
+  group `g` is value `n + offset(c) + g`. A level without live copies
+  builds exactly the frame it did. Tests (`frame.rs`):
+  `each_live_copy_has_its_own_groups`,
+  `two_copies_of_one_asset_flicker_apart`,
+  `a_level_without_live_copies_builds_todays_frame`.
 - **Engine** (`engine.rs`, R13): code, not data, acting only in a match
   with a look. `FLOOR` (50 %, the least self-light of projectiles and
   bonuses in a lit match), `WORM_FLOOR` (35 %) and `worm_floor_of(ambient)`

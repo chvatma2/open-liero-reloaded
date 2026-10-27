@@ -3,7 +3,7 @@
 use olr_look::{
     Ambient, Animation, ExplosionHeatLook, ExplosionLight, FrameLight, GlowColour, GlowGroup, Grade,
     LevelLook, Light, LookFrame, MAX_EMITTERS, ModLook, ProjectileHeat, ProjectileLook, Reach, ViewMode,
-    engine, fade, light_at, srgb_to_linear,
+    engine, fade, identity_of, light_at, srgb_to_linear,
 };
 
 fn near(a: f32, b: f32) -> bool {
@@ -488,4 +488,70 @@ fn begin_takes_the_levels_haze() {
     assert_eq!(f.haze, 100, "clamped");
     f.begin(None, 0.0);
     assert_eq!(f.haze, 0);
+}
+
+/// Issue #87 (call 13): each live copy's groups follow the level's, in
+/// copy order, then in the copy's group order, made as the level's are.
+#[test]
+fn each_live_copy_has_its_own_groups() {
+    let look = level();
+    let (lava, sky) = (&look.groups[0], &look.groups[1]);
+    let mut f = LookFrame::default();
+    f.begin(Some(&look), 0.0);
+    f.push_live_group(sky, "console-a", 0.0);
+    f.push_live_group(lava, "console-a", 0.0);
+    f.push_live_group(sky, "console-b", 0.0);
+    assert_eq!(f.groups.len(), 5, "the level's 2, then the copies' 3");
+    // Values 3 and 4 are console-a's groups in its order, 5 console-b's.
+    assert!(f.groups[2].own_colour && f.groups[2].reach.is_infinite());
+    assert!(!f.groups[3].own_colour && near(f.groups[3].cast[0], 0.5));
+    assert_eq!(f.groups[4].cast, f.groups[2].cast);
+    // No group map value names a group past the 255th.
+    for _ in 0..300 {
+        f.push_live_group(lava, "many", 0.0);
+    }
+    assert_eq!(f.groups.len(), 255);
+}
+
+/// Issue #87: two copies of one asset flicker and pulse apart: a copy's
+/// group's identity is `identity_of("<copy>/<group>")`.
+#[test]
+fn two_copies_of_one_asset_flicker_apart() {
+    assert_eq!(olr_look::live_identity("console-a", "screen"), identity_of("console-a/screen"));
+    let flicker = GlowGroup {
+        id: "screen".into(),
+        colour: GlowColour::Own,
+        intensity: 100,
+        reach: Reach::Pixels(24),
+        animation: Animation::Flicker { speed: 8, depth: 60 },
+        phase_ms: None,
+    };
+    let mut f = LookFrame::default();
+    f.begin(None, 1000.0);
+    f.push_live_group(&flicker, "console-a", 1000.0);
+    f.push_live_group(&flicker, "console-b", 1000.0);
+    let (a, b) = (f.groups[0], f.groups[1]);
+    assert_ne!(a.seed, b.seed, "their flicker noise is their own");
+    assert_ne!(a.t_ms, b.t_ms, "and so is their default phase");
+    let shape = olr_look::PulseShape::Sine;
+    let animation = Animation::Pulse { period_ms: 1000, low: 0, high: 100, shape };
+    let pulse = GlowGroup { animation, ..flicker };
+    f.begin(None, 250.0);
+    f.push_live_group(&pulse, "console-a", 250.0);
+    f.push_live_group(&pulse, "console-b", 250.0);
+    assert_ne!(f.groups[0].self_scale, f.groups[1].self_scale, "pulses out of step");
+}
+
+/// Issue #87: a level without live copies builds exactly today's frame:
+/// `begin` alone, its groups the level's.
+#[test]
+fn a_level_without_live_copies_builds_todays_frame() {
+    let mut f = LookFrame::default();
+    f.begin(Some(&level()), 123.0);
+    let mut g = LookFrame::default();
+    g.begin(Some(&level()), 123.0);
+    g.push_live_group(&level().groups[0], "lamp", 123.0);
+    g.begin(Some(&level()), 123.0);
+    assert_eq!(f, g, "begin clears what live copies pushed");
+    assert_eq!(f.groups.len(), level().groups.len());
 }

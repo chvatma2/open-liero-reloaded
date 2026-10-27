@@ -4,7 +4,7 @@
 
 use alloc::vec::Vec;
 
-use crate::{Grade, LevelLook, Light, Occlusion, Reach, default_phase, identity_of};
+use crate::{GlowGroup, Grade, LevelLook, Light, Occlusion, Reach, default_phase, identity_of};
 
 /// The most glowing discs a frame draws (plan 15c): play's lights, in
 /// order.
@@ -155,41 +155,58 @@ impl LookFrame {
         self.grade = level.grade;
         self.haze = level.haze.min(100);
         for g in &level.groups {
-            let identity = identity_of(&g.id);
-            let phase = g.phase_ms.unwrap_or_else(|| phase_for(&g.animation, identity));
-            // A flicker is the renderer's, per region (plan 15c).
-            let flicker = match g.animation {
-                crate::Animation::Flicker { speed, depth } => {
-                    Some((f32::from(speed.max(1)), f32::from(depth.min(100))))
-                }
-                _ => None,
-            };
-            let s = match flicker {
-                Some(_) => crate::anim::STEADY_SAMPLE,
-                None => g.animation.sample(t_ms, phase, identity),
-            };
-            let k = f32::from(g.intensity) / 100.0 * s.scale;
-            // The flicker's clock, kept within f32's whole milliseconds.
-            let clock = t_ms + f64::from(phase);
-            let wrap = 16_777_216.0;
-            let clock =
-                if clock.is_finite() { (clock - libm::floor(clock / wrap) * wrap) as f32 } else { 0.0 };
-            let (own, filtered, base) = match (s.colour, g.colour) {
-                (Some(c), _) | (None, crate::GlowColour::Tint(c)) => (false, false, c.map(srgb_to_linear)),
-                (None, crate::GlowColour::Own) => (true, false, [1.0; 3]),
-                (None, crate::GlowColour::Filtered(c)) => (true, true, c.map(srgb_to_linear)),
-            };
-            self.groups.push(FrameGroup {
-                cast: base.map(|c| c * k),
-                own_colour: own,
-                filtered,
-                self_scale: s.scale,
-                reach: g.reach.pixels(),
-                flicker,
-                t_ms: clock,
-                seed: (identity ^ (identity >> 32)) as u32,
-            });
+            self.push_group(g, identity_of(&g.id), t_ms);
         }
+    }
+
+    /// Appends live copy `copy`'s glow group `g` after the groups so far
+    /// (issue #87, call 13: each live copy's groups follow the level's, in
+    /// copy order, then in the copy's group order, so a group map value is
+    /// `n + offset(copy) + g`), made as the level's are at clock `t_ms`.
+    /// Its identity (flicker seed, default phase) is
+    /// `identity_of("<copy>/<group id>")`, so two copies of one asset
+    /// flicker and pulse apart. A group past the 255th (no group map value
+    /// names it) is left out. Allocates nothing once the vector is warm.
+    pub fn push_live_group(&mut self, g: &GlowGroup, copy: &str, t_ms: f64) {
+        if self.groups.len() < usize::from(u8::MAX) {
+            self.push_group(g, live_identity(copy, &g.id), t_ms);
+        }
+    }
+
+    /// Pushes group `g` of identity `identity` at clock `t_ms`.
+    fn push_group(&mut self, g: &GlowGroup, identity: u64, t_ms: f64) {
+        let phase = g.phase_ms.unwrap_or_else(|| phase_for(&g.animation, identity));
+        // A flicker is the renderer's, per region (plan 15c).
+        let flicker = match g.animation {
+            crate::Animation::Flicker { speed, depth } => {
+                Some((f32::from(speed.max(1)), f32::from(depth.min(100))))
+            }
+            _ => None,
+        };
+        let s = match flicker {
+            Some(_) => crate::anim::STEADY_SAMPLE,
+            None => g.animation.sample(t_ms, phase, identity),
+        };
+        let k = f32::from(g.intensity) / 100.0 * s.scale;
+        // The flicker's clock, kept within f32's whole milliseconds.
+        let clock = t_ms + f64::from(phase);
+        let wrap = 16_777_216.0;
+        let clock = if clock.is_finite() { (clock - libm::floor(clock / wrap) * wrap) as f32 } else { 0.0 };
+        let (own, filtered, base) = match (s.colour, g.colour) {
+            (Some(c), _) | (None, crate::GlowColour::Tint(c)) => (false, false, c.map(srgb_to_linear)),
+            (None, crate::GlowColour::Own) => (true, false, [1.0; 3]),
+            (None, crate::GlowColour::Filtered(c)) => (true, true, c.map(srgb_to_linear)),
+        };
+        self.groups.push(FrameGroup {
+            cast: base.map(|c| c * k),
+            own_colour: own,
+            filtered,
+            self_scale: s.scale,
+            reach: g.reach.pixels(),
+            flicker,
+            t_ms: clock,
+            seed: (identity ^ (identity >> 32)) as u32,
+        });
     }
 
     /// Adds a glowing disc after the others (plan 15c; the callers' order),
@@ -201,6 +218,13 @@ impl LookFrame {
             self.emitters.push(light);
         }
     }
+}
+
+/// [`identity_of`] of `"<copy>/<group>"`, without making the string.
+pub fn live_identity(copy: &str, group: &str) -> u64 {
+    let fold = |h: u64, b: u8| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+    let h = copy.bytes().fold(0xcbf2_9ce4_8422_2325, fold);
+    group.bytes().fold(fold(h, b'/'), fold)
 }
 
 /// A looping animation's default phase; a curve that plays once starts at its start.
