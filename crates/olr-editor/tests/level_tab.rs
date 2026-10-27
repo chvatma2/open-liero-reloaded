@@ -256,6 +256,13 @@ fn the_ground_keeps_its_distant_layers_in_the_asset_tab() {
     run(&mut s, A::ShowTab(DocTab::Asset));
     assert_eq!(distant(s.active_document().unwrap()), Some(50), "kept in the asset tab");
     assert!(s.can_undo(), "its history kept");
+    // The panels offer the Distant switch and View ▾ Preview parallax.
+    let mut h = harness(s);
+    h.run();
+    h.get_by_label(labels::DISTANT);
+    h.get_by_label(labels::VIEW).click();
+    h.run();
+    h.get_by_label(labels::PREVIEW_PARALLAX);
 }
 
 #[test]
