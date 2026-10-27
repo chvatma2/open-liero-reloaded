@@ -37,7 +37,27 @@ wired in the frame loop's order **once**, so each mode that draws a world
     and online it scales the cosmetics `NetPresenter` hands the entities.
   - `on_tick(&world, &events)` after every `World::tick`: `Fx::step_tick`
     (the only place the tick's terrain edits reach the colour map; never
-    also call `olr_content::apply_edits`), then `Scene::after_tick`.
+    also call `olr_content::apply_edits`), then `sync_live(&world)`, then
+    `Scene::after_tick`.
+  - **Live copies** (issue #87, STATUS.md "Live assets"): the colour map
+    gets the level's `live_art()` (`new`, `restart`), and
+    `sync_live(&world)` draws the copies as the world shows them
+    (`olr_content::live_frame` into a reused `LiveFrame`, then
+    `ColorMap::set_live`: only the rectangles of copies that changed are
+    dirty, so `upload` sends them; an unchanged tick sends nothing). It
+    runs after `step_fx` in `on_tick`, in `new`, `restart` and
+    `state_loaded`, and last in `NetPresenter::apply` (the newest world,
+    after the restored areas and every tick's edits: a correction draws
+    the corrected states). Replays and the sandbox present through
+    `on_tick` too. `build_look` pushes each copy's glow groups after the
+    level's (`LookFrame::push_live_group`, copy order, the identity of
+    `"<copy id>/<group id>"`), as `olr-content` numbers them in the group
+    map. Tests: `tests/live.rs` (`a_live_copy_is_drawn_in_its_starting_state`,
+    `a_state_change_is_drawn_after_the_tick`,
+    `a_rollback_draws_the_corrected_state`,
+    `a_loaded_state_draws_its_live_states`: each also the same as a map
+    drawn afresh from the world) and `tests/no_alloc.rs`'
+    `live_copies_do_not_allocate_when_warm`.
   - `build(&world, alpha, &mut list)` per drawn frame: scene, then entities
     (`Fx::draw` with the match's lit flag), then `build_look(&world,
     alpha)`: the frame's `olr_look::LookFrame`, which `look()` returns

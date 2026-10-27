@@ -114,10 +114,13 @@ impl LoadedLevel {
         })
     }
 
-    /// The level has a look, glows or has clear solids: the renderer's
-    /// look passes draw it.
+    /// The level has a look, glows, has clear solids or (issue #87) live
+    /// copies that glow: the renderer's look passes draw it.
     pub fn has_look(&self) -> bool {
-        self.look.is_some() || self.glow.is_some() || self.clear.is_some()
+        self.look.is_some()
+            || self.glow.is_some()
+            || self.clear.is_some()
+            || self.live.as_ref().is_some_and(|l| l.art.glows())
     }
 
     /// The simulation's data of its live copies (issue #85), shared by

@@ -206,7 +206,10 @@ impl NetPresenter {
     /// cosmetics with a new key spawn, only its sounds with a new key
     /// play, only its explosions with a new key shake the cameras. The
     /// scene's history and marks are not touched here: they are read
-    /// inside the advance, where the world is as of each tick.
+    /// inside the advance, where the world is as of each tick. Last, the
+    /// live copies are drawn as `world` shows them (issue #87,
+    /// [`Presentation::sync_live`]): a correction's states, never a
+    /// re-simulated tick's.
     ///
     /// In debug builds it checks the colour terrain's material is the
     /// world's afterwards ([`Presentation::terrain_drift`]): a drift is
@@ -277,6 +280,9 @@ impl NetPresenter {
             present.step_fx(&fx(&self.kept, 0));
             present.scene.shake_for(&self.shakes, world.time());
         }
+        // Issue #87: the live copies as the newest world shows them, after
+        // the restored areas and the ticks' edits.
+        present.sync_live(world);
         if cfg!(debug_assertions) && !(self.next == 0 && restored.is_empty()) && present.terrain_drift(world)
         {
             self.drifts += 1;

@@ -11,6 +11,8 @@
 //! - [`Presentation::on_tick`] after every `World::tick`: the entities
 //!   replay the tick's terrain edits on the colour map (`olr_fx::Fx::step_tick`;
 //!   nothing else may apply them), then the scene reads the tick.
+//!   Then the live copies (issue #87) are drawn into the colour map as the
+//!   world shows them.
 //! - [`Presentation::build`] per drawn frame: the scene, then the entities
 //!   ([`Presentation::build_views`]: a draw list per view, split screen).
 //! - [`Presentation::upload`] right before the frame is drawn: the atlas
@@ -33,11 +35,11 @@ pub use look::{BlastKey, FlashKey};
 use olr_content::{CorePack, LoadedLevel, LoadedMod, LoadedSkin, LoadedTheme};
 use olr_data::image::Rgba;
 use olr_fx::{Fx, FxAssets, FxImages, FxTick, default_dirt_colour};
-use olr_look::{LevelLook, LookFrame, ModLook};
+use olr_look::{GlowGroup, LevelLook, LookFrame, ModLook};
 use olr_render::{HeatView, MAX_HEAT_DEPOSITS, MAX_HEAT_STEPS, Renderer};
 use olr_scene::{Camera, DrawList, Scene, SceneAssets, SceneOptions, ShadeRules, Viewport};
 use olr_sim::{TickEvents, World};
-use olr_terrain::ColorMap;
+use olr_terrain::{ColorMap, LiveFrame};
 
 /// OLX's default worm colours for the first worms (`Profiles.cpp`): red,
 /// blue, green, yellow.
@@ -113,6 +115,24 @@ pub struct Presentation {
     /// ([`Presentation::step_fx`]), loaded state and restart; the look's
     /// [`LookFrame::step`] (the glow light once a tick).
     step: u64,
+    /// The live copies' parts as last drawn into the colour map (issue
+    /// #87), reused every tick.
+    live: LiveFrame,
+    /// Each live copy's id and glow groups, pushed after the level's.
+    live_groups: Vec<(String, Vec<GlowGroup>)>,
+}
+
+/// `level`'s colour map with its live copies' pictures (issue #87).
+fn color_map(level: &LoadedLevel, theme: &LoadedTheme) -> ColorMap {
+    let mut color = level.color_map(theme);
+    color.set_live_art(level.live_art());
+    color
+}
+
+/// Each of `level`'s live copies' id and glow groups, in copy order.
+fn live_groups(level: &LoadedLevel) -> Vec<(String, Vec<GlowGroup>)> {
+    let Some(live) = &level.live else { return Vec::new() };
+    live.source.file.copies.iter().zip(&live.groups).map(|(c, g)| (c.id.clone(), g.clone())).collect()
 }
 
 /// Whether `level`'s surface materials heat (issue #40): a material that
@@ -157,10 +177,10 @@ impl Presentation {
             projectile_heat: projectile_heat(&s.m.look, heats(s.level)),
         }));
         scene.start(world);
-        Presentation {
+        let mut present = Presentation {
             scene,
             fx: Fx::for_match(s.seed.wrapping_add(2), world.settings().olx_quirks),
-            color: s.level.color_map(s.theme),
+            color: color_map(s.level, s.theme),
             assets,
             fx_assets,
             seed: s.seed,
@@ -179,6 +199,26 @@ impl Presentation {
             heat_clock: world.time().0,
             heat_reset: false,
             step: 0,
+            live: LiveFrame::default(),
+            live_groups: live_groups(s.level),
+        };
+        present.sync_live(world);
+        present
+    }
+
+    /// Draws the live copies (issue #87) into the colour map as `world`
+    /// shows them: the rectangles of each copy that changed are marked
+    /// dirty, an unchanged world marks nothing. [`Presentation::on_tick`],
+    /// `new`, `restart` and `state_loaded` call it, and online play's
+    /// [`net::NetPresenter::apply`] after its ticks. Allocates nothing once
+    /// warm.
+    pub fn sync_live(&mut self, world: &World) {
+        if self.color.has_live() {
+            match world.live() {
+                Some(view) => olr_content::live_frame(view, &mut self.live),
+                None => self.live.clear(),
+            }
+            self.color.set_live(&self.live);
         }
     }
 
@@ -242,6 +282,13 @@ impl Presentation {
         }
         let t_ms = world.time().0 as f64 + f64::from(alpha.clamp(0.0, 1.0)) * 10.0;
         self.look.begin(self.level_look.as_ref(), t_ms);
+        // Issue #87: each live copy's groups after the level's, in copy
+        // order, as the colour map numbers them.
+        for (copy, groups) in &self.live_groups {
+            for g in groups {
+                self.look.push_live_group(g, copy, t_ms);
+            }
+        }
         self.look.step = Some(self.step);
         let skins = self.level_look.is_some().then_some(&self.assets);
         let (m, heats) = (&self.mod_look, self.heats);
@@ -289,9 +336,12 @@ impl Presentation {
 
     /// After every `world.tick(.., events)`: the entities (which replay the
     /// tick's terrain edits on the colour map, and rebuild an area the tick
-    /// lost), then the scene (history, shake, marks).
+    /// lost), the live copies as the tick left them
+    /// ([`Presentation::sync_live`]), then the scene (history, shake,
+    /// marks).
     pub fn on_tick(&mut self, world: &World, events: &TickEvents) {
         self.step_fx(&FxTick::new(world, events));
+        self.sync_live(world);
         self.scene.after_tick(world, events);
     }
 
@@ -330,7 +380,9 @@ impl Presentation {
         self.scene.start(world);
         self.fx.clear();
         self.dynamic.clear();
-        self.color = level.color_map(theme);
+        self.color = color_map(level, theme);
+        self.live_groups = live_groups(level);
+        self.sync_live(world);
         self.distant = level.distant.clone();
         self.surface = level.surface.clone();
         self.distant_surface = level.distant_surface.clone();
@@ -351,9 +403,11 @@ impl Presentation {
     /// repair or a late spectator, `olr_netcode::Event::StateLoaded`): the
     /// scene starts from it and the entities go. The colour terrain is
     /// repainted by the whole-map restored area the load reports
-    /// ([`net::NetPresenter::apply`]); call [`net::NetPresenter::reset`] too.
+    /// ([`net::NetPresenter::apply`]), the live copies drawn in its states;
+    /// call [`net::NetPresenter::reset`] too.
     pub fn state_loaded(&mut self, world: &World) {
         self.scene.start(world);
+        self.sync_live(world);
         self.fx.clear();
         self.dynamic.clear();
         self.reset_heat(world);
