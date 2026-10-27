@@ -644,6 +644,14 @@ impl<'a> LiveCopyView<'a> {
         self.values.get(usize::from(self.setup.prop(name)?)).copied()
     }
 
+    /// The value driving `target` (the first value that does), in the
+    /// world's units; `None` when no value drives it (issue #87: what
+    /// presentation reads to draw a part, such as `Facing`, a layer's
+    /// `Opacity` or `GlowStrength`).
+    pub fn target(&self, target: LiveTarget) -> Option<i64> {
+        self.setup.value_of(self.values, target)
+    }
+
     /// Where the copy is, world pixels: its placed top-left moved by its
     /// `X` and `Y` (rounded down), and its size.
     pub fn rect(&self) -> (i32, i32, u32, u32) {

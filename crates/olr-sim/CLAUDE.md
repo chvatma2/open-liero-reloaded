@@ -221,14 +221,16 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   `LiveError` for an unknown copy, state or prop, nothing changed);
   tests and tools may call them between ticks. `World::live()` is a
   `LiveView` (`copy`, `copy_by_id`, `copies`) of `LiveCopyView`s: id,
-  `rect`, `state`/`state_name`, `values`/`value(name)`, `visible_parts`
+  `rect`, `state`/`state_name`, `values`/`value(name)`, issue #87's
+  `target(LiveTarget)` (the first value driving it: presentation reads
+  `Facing`, a layer's `Opacity` and `GlowStrength` so), `visible_parts`
   and `rock_parts` at whole-pixel places (copy place + `X`/`Y` + part
   place + its layer's offsets; `Visible` and `LayerVisible` 0 hide).
   Nothing reads the parts in play yet (#90, #91, #94). `LiveWorld` is
   where #88 (script state) and #89 (motion) extend: each adds to the
   struct, `LiveWorld::hash` and `LiveWire` (exhaustive destructurings).
   Tests: `tests/live.rs` (`tests/common/live.rs`'s console, press and
-  crate), `tests/state.rs`' live refusals and proptest, `tests/no_alloc.rs`'s
+  crate; `a_value_is_read_by_its_target`), `tests/state.rs`' live refusals and proptest, `tests/no_alloc.rs`'s
   `a_live_world_ticks_without_allocating`.
 - **Checksum** (`checksum.rs`): FNV-1a 64 over all mutable state, through an
   exhaustive destructuring of each type; a new field must be hashed there

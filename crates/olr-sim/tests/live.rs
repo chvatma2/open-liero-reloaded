@@ -181,6 +181,19 @@ fn values_are_clamped_and_parts_placed_at_the_whole_pixel() {
     assert_eq!(values(&w, 2), [0]);
 }
 
+/// Issue #87: presentation reads a copy's value by what it drives.
+#[test]
+fn a_value_is_read_by_its_target() {
+    let mut w = live_world();
+    let live = w.live().unwrap();
+    let console = live.copy_by_id("console").unwrap();
+    assert_eq!(console.target(LiveTarget::GlowStrength(1)), Some(50));
+    assert_eq!(console.target(LiveTarget::Facing), None, "nothing drives it");
+    w.set_live_value(1, 0, 3 * PX).unwrap();
+    let press = w.live().unwrap().copy(1).unwrap();
+    assert_eq!(press.target(LiveTarget::OffsetY(1)), Some(3 * PX), "the world's units");
+}
+
 #[test]
 fn unknown_copies_states_and_values_are_refused() {
     let mut w = live_world();
