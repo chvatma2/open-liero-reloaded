@@ -1,7 +1,8 @@
 //! Assets (issue #9): saved and placed pieces round-trip their pixels,
 //! materials, glow masks and groups, at one art scale and across two; a
-//! rectangle's cut follows its rules; placing joins or adds glow groups; a
-//! bad folder is refused; the user's library.
+//! rectangle's cut follows its rules; placing (issue #75: a copy,
+//! `placed::add_copy`, baked) shares or adds glow groups; a bad folder is
+//! refused; the user's library.
 
 use std::collections::BTreeMap;
 
@@ -112,6 +113,16 @@ fn baked(p: &Pack) -> LevelSource {
     l
 }
 
+/// `asset` placed in `target` as a copy of the user's (issue #75) with its
+/// top-left at `at`, and baked: what the copy brought.
+fn place(target: &mut Pack, asset: &Asset, at: (i32, i32)) -> olr_edit::placed::Added {
+    ensure_composed(target).unwrap();
+    let origin = olr_format::levels::AssetOrigin::Yours("a".into());
+    let added = olr_edit::placed::add_copy(target, &encode(asset).unwrap(), origin, at, None, None).unwrap();
+    olr_edit::placed::bake_pack(target, &RgbaImage::new(1, 1)).unwrap();
+    added
+}
+
 /// The asset written to a folder and read back.
 fn through_folder(asset: &Asset) -> Asset {
     let t = tempfile::tempdir().unwrap();
@@ -145,11 +156,11 @@ fn elements_round_trip_through_a_folder_and_land_where_placed() {
         let back = through_folder(&asset);
         assert_eq!(back, asset, "scale {s}");
         let mut target = pack(20, 12, s, None);
-        let placed = place_in_pack(&mut target, &back, (3, 4)).unwrap();
-        assert_eq!(placed.ids, ids(&["bits-ground", "bits-pillar"]));
-        assert!(!placed.groups.changes(), "no glow, no look");
+        let placed = place(&mut target, &back, (3, 4));
+        assert_eq!(placed.id, "bits");
+        assert!(placed.groups_added.is_empty() && !placed.added_look, "no glow, no look");
         assert_eq!(level(&target).look, None);
-        let landed = baked(&target);
+        let landed = level(&target).clone();
         for y in 0..6 {
             for x in 0..12 {
                 let (from, to) = (cell(&source, x, y + 2), cell(&landed, x + 3, y + 4));
@@ -177,34 +188,41 @@ fn glow_masks_and_groups_travel_with_an_asset() {
 
     // No look: the default one and the asset's group, said.
     let mut bare = pack(12, 8, 2, None);
-    let placed = place_in_pack(&mut bare, &asset, (0, 0)).unwrap();
-    assert!(placed.groups.added_look);
-    assert_eq!(placed.groups.added, ids(&["lamps"]));
+    let placed = place(&mut bare, &asset, (0, 0));
+    assert!(placed.added_look);
+    assert_eq!(placed.groups_added, ids(&["lamps"]));
     assert_eq!(
         level(&bare).look,
         Some(LookSource { glow_groups: vec![group("lamps", 777)], ..LookSource::default() })
     );
-    let src = bare.composition.as_ref().unwrap();
+    let copy = &bare.placed.as_ref().unwrap().assets[&placed.key];
     assert_eq!(
-        src.files[&olr_format::levels::glow_file("wall")],
+        copy.files["glow/wall.png"],
         olr_format::image_io::encode_grey(24, 16, &mask),
         "the mask is kept"
     );
-    let glow = baked(&bare).glow.expect("it glows");
+    let glow = level(&bare).glow.clone().expect("it glows");
     assert_eq!(glow.groups[(2 * 12 + 2) as usize], 1);
 
-    // A level with the group: joined, its own settings kept.
+    // A level with the group of other settings: the copy's own under a
+    // new id (issue #73's gathering), the level's kept.
     let mut has =
         pack(12, 8, 2, Some(LookSource { glow_groups: vec![group("lamps", 5)], ..Default::default() }));
-    let placed = place_in_pack(&mut has, &asset, (0, 0)).unwrap();
-    assert_eq!((placed.groups.joined.clone(), placed.groups.added_look), (ids(&["lamps"]), false));
-    assert_eq!(level(&has).look.as_ref().unwrap().glow_groups, vec![group("lamps", 5)]);
+    let placed = place(&mut has, &asset, (0, 0));
+    assert_eq!((placed.groups_added.clone(), placed.added_look), (ids(&["lamps-2"]), false));
+    let renamed = GlowGroupSource { id: "lamps-2".into(), ..group("lamps", 777) };
+    assert_eq!(level(&has).look.as_ref().unwrap().glow_groups, vec![group("lamps", 5), renamed]);
+    // Of the same settings: shared.
+    let mut same =
+        pack(12, 8, 2, Some(LookSource { glow_groups: vec![group("lamps", 777)], ..Default::default() }));
+    assert!(place(&mut same, &asset, (0, 0)).groups_added.is_empty());
+    assert_eq!(level(&same).look.as_ref().unwrap().glow_groups, vec![group("lamps", 777)]);
 
     // A level with another group: the asset's added after it, with the
     // asset's settings (not a new group's defaults).
     let mut other =
         pack(12, 8, 2, Some(LookSource { glow_groups: vec![group("sky", 300)], ..Default::default() }));
-    place_in_pack(&mut other, &asset, (0, 0)).unwrap();
+    place(&mut other, &asset, (0, 0));
     assert_eq!(
         level(&other).look.as_ref().unwrap().glow_groups,
         vec![group("sky", 300), group("lamps", 777)]
@@ -217,23 +235,18 @@ fn an_asset_is_resampled_to_the_level_art_scale() {
     let decoded = DecodedLevel::of_pack(&p).unwrap();
     let asset = from_elements(&decoded.level(), &ids(&["wall", "ground"]), "Two").unwrap();
     let mut target = pack(12, 8, 3, None);
-    let placed = place_in_pack(&mut target, &asset, (0, 0)).unwrap();
-    assert_eq!(placed.ids, ids(&["two-wall", "two-ground"]));
-    let l = baked(&target);
+    let placed = place(&mut target, &asset, (0, 0));
+    assert_eq!(placed.id, "two");
+    let l = level(&target).clone();
     assert_eq!(l.art_scale, 3);
     // Each world pixel's art block is the one colour it had.
     assert_eq!(cell(&l, 5, 7), (Material::Dirt, vec![RED; 9], cell(&l, 5, 7).2));
     assert_eq!(cell(&l, 5, 1).1, vec![BLUE; 9]);
     // The mask, resampled: three times as fine, glowing where it did.
-    let src = target.composition.as_ref().unwrap();
-    let mask = olr_format::image_io::decode_grey_within(
-        &src.files[&olr_format::levels::glow_file("two-wall")],
-        olr_format::image_io::IMAGES,
-    )
-    .unwrap();
-    assert_eq!((mask.0, mask.1), (36, 24));
-    assert_eq!(mask.2[(7 * 36 + 7) as usize], 255);
-    assert_eq!(mask.2[(7 * 36 + 13) as usize], 0);
+    let glow = l.glow.expect("it glows");
+    assert_eq!(glow.art, (36, 24));
+    assert!(glow.back[(7 * 36 + 7) as usize] > 0);
+    assert_eq!(glow.back[(7 * 36 + 13) as usize], 0);
 }
 
 #[test]
@@ -326,8 +339,8 @@ fn a_cut_raster_keeps_its_cells_and_back_art() {
     assert!(matches!(piece.element.kind, ElementKind::Drawn { mixed: true, back: true, .. }), "{piece:?}");
     assert!(matches!(&piece.decoded, Decoded::Drawn { cells: Some(_), back: Some(_), .. }));
     let mut target = pack(6, 4, 2, None);
-    place_in_pack(&mut target, &through_folder(&a), (1, 1)).unwrap();
-    let landed = baked(&target);
+    place(&mut target, &through_folder(&a), (1, 1));
+    let landed = level(&target).clone();
     for y in 1..3 {
         for x in 1..5 {
             assert_eq!(cell(&landed, x, y), cell(&source, x, y), "{x},{y}");
@@ -489,29 +502,33 @@ fn materials_and_painted_maps_travel_with_an_asset() {
         let back = through_folder(&asset);
         assert_eq!(back, asset, "scale {s}");
 
-        // A level with wood (its own settings) and sky: wood joined,
-        // stone and metal added after it.
+        // A level with wood of other settings: stone, the asset's wood
+        // (as wood-2: issue #73's gathering) and metal added after it.
         let mut target = pack(
             20,
             12,
             s,
             Some(LookSource { materials: vec![material("wood", "Oak")], ..Default::default() }),
         );
-        let placed = place_in_pack(&mut target, &back, (3, 4)).unwrap();
-        assert_eq!(placed.materials.joined, ids(&["wood"]));
-        assert_eq!(placed.materials.added, ids(&["stone", "metal"]));
-        assert!(!placed.materials.added_look);
+        let placed = place(&mut target, &back, (3, 4));
+        assert_eq!(placed.materials_added, ids(&["stone", "wood-2", "metal"]));
+        assert!(!placed.added_look);
         let look = level(&target).look.clone().unwrap();
         assert_eq!(
             look.materials,
-            vec![material("wood", "Oak"), material("stone", "Stone"), material("metal", "Metal")]
+            vec![
+                material("wood", "Oak"),
+                material("stone", "Stone"),
+                material("wood-2", "Wood"),
+                material("metal", "Metal")
+            ]
         );
-        let l = baked(&target);
-        // The pillar's top (asset 8, 0) is wood (1), its foot metal (3),
-        // the ground stone (2).
-        assert_eq!(front_surface(&l, 3 + 8, 4), 1, "scale {s}");
-        assert_eq!(front_surface(&l, 3 + 9, 4 + 1), 1, "scale {s}");
-        assert_eq!(front_surface(&l, 3 + 8, 4 + 2), 3, "scale {s}");
+        let l = level(&target).clone();
+        // The pillar's top (asset 8, 0) is the asset's wood (3), its foot
+        // metal (4), the ground stone (2).
+        assert_eq!(front_surface(&l, 3 + 8, 4), 3, "scale {s}");
+        assert_eq!(front_surface(&l, 3 + 9, 4 + 1), 3, "scale {s}");
+        assert_eq!(front_surface(&l, 3 + 8, 4 + 2), 4, "scale {s}");
         assert_eq!(front_surface(&l, 3, 4 + 5), 2, "scale {s}");
         assert_eq!(front_surface(&l, 0, 0), 0);
     }
@@ -525,12 +542,10 @@ fn placing_materials_gives_a_level_a_look_and_checks() {
         cut_rect(&decoded.level(), Rect { x: 6, y: 0, w: 6, h: 8 }, Some(&ids(&["pillar"])), "Top").unwrap();
     assert_eq!(asset.materials.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["wood", "metal"]);
     let mut bare = pack(12, 8, 1, None);
-    let placed = place_in_pack(&mut bare, &asset, (0, 0)).unwrap();
-    assert!(placed.materials.added_look && !placed.groups.added_look);
-    assert_eq!(placed.materials.added, ids(&["wood", "metal"]));
+    let placed = place(&mut bare, &asset, (0, 0));
+    assert!(placed.added_look && placed.groups_added.is_empty());
+    assert_eq!(placed.materials_added, ids(&["wood", "metal"]));
     // Baked, the pack checks as a save would.
-    let l = baked(&bare);
-    bare.source = Source::Level(l);
     olr_edit::pack::check(&olr_edit::pack::files(&bare).unwrap()).unwrap();
 }
 
@@ -547,8 +562,8 @@ fn an_asset_without_materials_is_as_before() {
     assert!(!text.contains("materials") && !text.contains("surface"), "{text}");
     assert!(src.files.keys().all(|f| !f.starts_with("surface/")));
     let mut target = pack(12, 8, 1, None);
-    let placed = place_in_pack(&mut target, &asset, (0, 0)).unwrap();
-    assert!(!placed.materials.changes());
+    let placed = place(&mut target, &asset, (0, 0));
+    assert!(placed.materials_added.is_empty() && !placed.added_look);
     assert_eq!(level(&target).look, None);
 }
 
@@ -961,7 +976,7 @@ fn asset_sound_limit_is_the_mods() {
 }
 
 #[test]
-fn landing_a_stated_asset_lands_its_start() {
+fn a_copy_of_a_stated_asset_bakes_its_start() {
     // Off (dark, unlit) first; the start, On, owns nothing.
     let mut a = lamp();
     let mut off = state("Off", vec![(P::GlowStrength("lamp".into()), V::Int(0))]);
@@ -971,23 +986,15 @@ fn landing_a_stated_asset_lands_its_start() {
     let a = through_folder(&a);
     assert_eq!(a.start, 1);
     let mut p = pack(12, 8, 2, None);
-    let placed = place_in_pack(&mut p, &a, (3, 2)).unwrap();
-    assert!(
-        placed
-            .note
-            .as_deref()
-            .is_some_and(|n| n.contains("Lamp's states") && n.contains("stay in the asset"))
-    );
-    let l = baked(&p);
+    let placed = place(&mut p, &a, (3, 2));
+    // The copy's asset keeps its states (issue #75: nothing stays behind).
+    assert_eq!(p.placed.as_ref().unwrap().assets[&placed.key].file.states.len(), 2);
+    let l = level(&p).clone();
     // The lamp's start, blue and glowing, not Off's red.
     let (_, front, _) = cell(&l, 4, 4);
     assert!(front.iter().all(|c| *c == BLUE), "{front:?}");
-    let src = p.composition.as_ref().unwrap();
-    let landed = src.composition.elements.iter().find(|e| e.name.ends_with("lamp")).unwrap();
-    assert_eq!(landed.glow.as_ref().map(|g| g.strength), Some(80));
-    // A stateless asset says nothing.
-    let mut p = pack(12, 8, 2, None);
-    assert_eq!(place_in_pack(&mut p, &lamp(), (0, 0)).unwrap().note, None);
+    let glow = l.glow.expect("the start glows");
+    assert!(glow.back[(4 * 2 * 24 + 4 * 2) as usize] > 0);
 }
 
 // Issue #72: the operations that edit states, pictures, values, exposed

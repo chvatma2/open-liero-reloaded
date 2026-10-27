@@ -113,7 +113,7 @@ impl Document {
     /// it (new ids and names, resampled to the level's art scale, masks
     /// kept), with its surfaces and painted maps (`land_surfaces`); two
     /// pieces or more then go into a new folder named after the asset
-    /// (issue #60, as `olr_edit::asset::place_in_pack`). Issue #71: the
+    /// (issue #60). Issue #71: the
     /// asset lands in its starting state posed with its defaults
     /// (`landed_pieces`); its states, values, sounds and script stay
     /// behind, and the status bar says so (`left_behind`). A refusal undoes

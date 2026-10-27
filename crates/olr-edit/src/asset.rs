@@ -555,7 +555,8 @@ pub struct Landing<'a> {
 /// glow mask fitted to its box there; an original whose name the level
 /// holds with other bytes takes a new name (one with its bytes is shared).
 /// A raster lands only in a level of its size. Its surface materials stay
-/// behind (the level may lack them: [`place_in_pack`] lands them itself).
+/// behind (the level may lack them: the editor's placing lands them itself,
+/// `land_surfaces`).
 pub fn land(
     to: &Landing,
     piece: PieceRef,
@@ -569,7 +570,7 @@ pub fn land(
     // Its surface materials stay behind (issue #37: their painted maps are
     // not a piece's, and the level landed in may lack the materials).
     let mut e = piece.element.clone().without_surfaces();
-    // It lands in no folder: `place_in_pack` groups an asset's pieces.
+    // It lands in no folder: the editor's placing groups an asset's pieces.
     e.folder = None;
     let names = to.elements.iter().map(|x| if x.name.is_empty() { x.id.as_str() } else { x.name.as_str() });
     let wanted = name
@@ -1286,133 +1287,6 @@ impl DecodedLevel {
             look: self.look.as_ref(),
         }
     }
-}
-
-/// What a placing did: the new elements' ids (bottom to top) and the
-/// look's changes (its glow groups, then its materials).
-#[derive(Clone, Debug, PartialEq)]
-pub struct Placement {
-    pub ids: Vec<String>,
-    /// The folder holding the pieces, named after the asset (issue #59);
-    /// none for a single piece.
-    pub folder: Option<String>,
-    pub groups: GroupChange,
-    pub materials: MaterialChange,
-    /// What the asset left behind ([`left_behind`]): its states, values,
-    /// sounds and script, when it had any.
-    pub note: Option<String>,
-}
-
-/// Places `asset` in level pack `pack` with its top-left at world pixel
-/// `at` (`olr-cli asset place`, as the editor's placing): its glow groups
-/// first ([`with_groups`]: joined or added, the default look when the
-/// level has none), then its surface materials ([`with_materials`], issue
-/// #38: the same), then each piece on top ([`land`]: new ids and names,
-/// resampled to the level's art scale, masks kept; its surfaces kept and
-/// its painted maps' values re-numbered to the level's materials), their
-/// files written
-/// into the composition, two pieces or more in a new folder named after
-/// the asset (issue #59) (a level without one gets its raster base first,
-/// `element::ensure_composed`). Issue #71: the asset lands in its starting
-/// state posed with its defaults ([`landed_pieces`]), its own folders
-/// flattened; its states, values, sounds, health and script stay behind
-/// (`Placement::note` says so). Checked whole; the pack is unchanged on a
-/// refusal. Not baked: the caller bakes and saves.
-pub fn place_in_pack(
-    pack: &mut crate::pack::Pack,
-    asset: &Asset,
-    at: (i32, i32),
-) -> Result<Placement, AssetError> {
-    let mut copy = pack.clone();
-    crate::element::ensure_composed(&mut copy).map_err(|e| AssetError::Bad(e.to_string()))?;
-    let stray: BTreeSet<String> = copy.other.keys().map(|p| p.as_str().to_string()).collect();
-    let crate::pack::Source::Level(level) = &mut copy.source else {
-        return Err(AssetError::Bad("not a level pack".into()));
-    };
-    let (size, s) = (level.size, level.art_scale);
-    let (pieces, posed_groups) = landed_pieces(asset)?;
-    let groups = with_groups(level.look.as_ref(), &posed_groups);
-    if groups.changes() {
-        level.look = Some(groups.look.clone());
-    }
-    let materials = with_materials(level.look.as_ref(), &asset.materials);
-    if materials.changes() {
-        level.look = Some(materials.look.clone());
-    }
-    let Some(src) = copy.composition.as_mut() else { return Err(AssetError::Bad("no composition".into())) };
-    let dir = olr_format::levels::image_file("");
-    let mut originals: BTreeMap<String, Arc<Vec<u8>>> = src
-        .files
-        .iter()
-        .filter_map(|(k, v)| Some((k.strip_prefix(dir.as_str())?.to_string(), Arc::new(v.clone()))))
-        .collect();
-    let mut ids = Vec::new();
-    for piece in &pieces {
-        let taken: BTreeSet<String> = src.files.keys().chain(&stray).cloned().collect();
-        let landing = Landing {
-            elements: &src.composition.elements,
-            folders: &src.composition.folders,
-            stray: &taken,
-            originals: &originals,
-            size,
-            art_scale: s,
-        };
-        let name = piece_name(asset, piece);
-        let mut landed = land(&landing, piece.as_ref(), asset.art_scale, at, Some(&name))?;
-        if let Some((source, bytes)) = &landed.original {
-            src.files.entry(olr_format::levels::image_file(source)).or_insert_with(|| bytes.as_ref().clone());
-            originals.insert(source.clone(), bytes.clone());
-        }
-        for (path, bytes) in encode_decoded(&landed.element, &landed.decoded, size) {
-            src.files.insert(path, bytes);
-        }
-        let e = &mut landed.element;
-        let (front, back) = land_surfaces(piece.as_ref(), e, &materials, &asset.materials, size);
-        let (w, h) = surface_map_size(&e.kind, size);
-        for (file, m) in [(surface_file(&e.id), front), (surface_back_file(&e.id), back)] {
-            if let Some(m) = m {
-                src.files.insert(file, olr_format::image_io::encode_grey(w, h, &m));
-            }
-        }
-        if let Some(g) = e.glow.as_mut() {
-            let b = element_box(&e.kind, size).map(|(_, b)| (b.0 * s, b.1 * s));
-            match (landed.glow_mask.as_ref(), b) {
-                (Some(m), Some((w, h))) if g.mask && m.len() as u64 == u64::from(w) * u64::from(h) => {
-                    src.files.insert(
-                        olr_format::levels::glow_file(&e.id),
-                        olr_format::image_io::encode_grey(w, h, m),
-                    );
-                }
-                _ => g.mask = false,
-            }
-        }
-        if src.composition.elements.len() >= olr_format::levels::MAX_ELEMENTS {
-            return Err(AssetError::Bad(format!(
-                "a level holds at most {} elements",
-                olr_format::levels::MAX_ELEMENTS
-            )));
-        }
-        ids.push(e.id.clone());
-        src.composition.elements.push(landed.element);
-    }
-    // A multi-piece asset lands as one folder named after it (issue #59);
-    // one piece stays plain.
-    let folder = if ids.len() > 1 {
-        Some(
-            crate::folders::group(&mut src.composition, &ids, &asset.name)
-                .map_err(|e| AssetError::Bad(e.to_string()))?,
-        )
-    } else {
-        None
-    };
-    olr_format::levels::check_composition(src, size, s)?;
-    olr_format::levels::check_glow_groups(&src.composition, level.look.as_ref())?;
-    olr_format::levels::check_surfaces(&src.composition, level.look.as_ref())?;
-    let n = level.look.as_ref().map_or(0, |l| l.materials.len());
-    olr_format::levels::check_surface_maps(src, size, n)?;
-    olr_format::levels::compile_look(level)?;
-    *pack = copy;
-    Ok(Placement { ids, folder, groups, materials, note: left_behind(asset) })
 }
 
 // The asset library (the editor's host and its tests): a folder of asset

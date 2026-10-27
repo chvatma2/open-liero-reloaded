@@ -976,3 +976,404 @@ fn hostile_placed_levels_never_panic() {
     assert!(olr_edit::placed::from_composition(&mut p).is_err());
     assert!(p == loaded);
 }
+
+// Issue #75: the operations on a level's placed copies.
+
+use olr_edit::placed::{
+    CopyProperty as C, Size, add_copy, duplicate_copy, keep_aspect, lower_copy, move_copy, raise_copy,
+    remove_copy, resize_copy, set_copies, set_copy, set_copy_script, set_level_script,
+};
+
+/// A composed 32 × 16 level (its plain bake the ground's raster base,
+/// placed alone and locked).
+fn composed() -> Pack {
+    let mut p = pack(blank((32, 16), 1, None));
+    ensure_composed(&mut p).unwrap();
+    p
+}
+
+fn placed_of(p: &Pack) -> &PlacedSource {
+    p.placed.as_ref().unwrap()
+}
+
+fn yours(id: &str) -> AssetOrigin {
+    AssetOrigin::Yours(id.into())
+}
+
+fn add(p: &mut Pack, a: &AssetSource, at: (i32, i32)) -> olr_edit::placed::Added {
+    add_copy(p, a, yours("lamp"), at, None, None).unwrap()
+}
+
+/// A rock box of `size`, red, named `name`.
+fn boxed(name: &str, size: (u32, u32)) -> Asset {
+    let p = piece("body", ElementMaterial::Rock, (0, 0), size, 1, |_, _| RED);
+    Asset::new(name, 1, size, vec![p], vec![], vec![])
+}
+
+/// `edit` refused on `p`: the pack unchanged; the error's text.
+fn refused<T: std::fmt::Debug>(
+    p: &mut Pack,
+    edit: impl FnOnce(&mut Pack) -> Result<T, PlacedError>,
+) -> String {
+    let before = p.clone();
+    let e = edit(p).expect_err("refused");
+    assert!(*p == before, "a refusal changed the pack: {e}");
+    e.to_string()
+}
+
+#[test]
+fn adding_the_same_asset_twice_reuses_it() {
+    let mut p = composed();
+    let lamp = encode(&lamp("Wood")).unwrap();
+    let one = add(&mut p, &lamp, (2, 2));
+    assert_eq!((one.id.as_str(), one.key.as_str(), one.new_asset), ("lamp", "a", true));
+    assert_eq!(one.groups_added, ["lamps"]);
+    assert_eq!(one.materials_added, ["wood"]);
+    assert!(one.added_look);
+    let two = add(&mut p, &lamp, (5, 2));
+    assert_eq!((two.id.as_str(), two.key.as_str(), two.new_asset), ("lamp-2", "a", false));
+    assert_eq!(placed_of(&p).file.assets.len(), 2, "the ground and the lamp");
+    // Another thumbnail is the same asset.
+    let mut thumb = lamp.clone();
+    thumb.thumb = Some(png(2, 2, |_, _| BLUE));
+    assert_eq!(add(&mut p, &thumb, (8, 2)).key, "a");
+    // Another layer file is not.
+    let mut changed = lamp.clone();
+    changed.files.insert("layers/body.png".into(), png(1, 1, |_, _| GREEN));
+    let three = add(&mut p, &changed, (11, 2));
+    assert_eq!((three.key.as_str(), three.new_asset), ("b", true));
+    // Nor is the same files from elsewhere.
+    let builtin = add_copy(&mut p, &lamp, AssetOrigin::Builtin("lamp".into()), (14, 2), None, None).unwrap();
+    assert_eq!(builtin.key, "c");
+    // A lamp placed again after the bake brings no group.
+    olr_edit::placed::bake_pack(&mut p, &tile()).unwrap();
+    let again = add(&mut p, &lamp, (17, 2));
+    assert!(again.groups_added.is_empty() && again.materials_added.is_empty() && !again.added_look);
+}
+
+#[test]
+fn keys_are_generated_short_and_chosen_keys_are_checked() {
+    let mut p = composed();
+    let a = |n: &str| encode(&boxed(n, (2, 2))).unwrap();
+    assert_eq!(add(&mut p, &a("Crate"), (0, 0)).key, "a");
+    let chosen = add_copy(&mut p, &a("Barrel"), yours("barrel"), (0, 0), None, Some("b")).unwrap();
+    assert_eq!(chosen.key, "b");
+    assert_eq!(add_copy(&mut p, &a("Box"), yours("box"), (0, 0), None, Some("bx")).unwrap().key, "bx");
+    // The first free: b is taken.
+    assert_eq!(add(&mut p, &a("Drum"), (0, 0)).key, "c");
+    for key in ["a", "layers", "ground", "Bad!", "-x", "seventeen-bytes-x"] {
+        let e = refused(&mut p, |p| add_copy(p, &a("Other"), yours("other"), (0, 0), None, Some(key)));
+        assert!(e.contains(key), "{key}: {e}");
+    }
+    // A reused asset takes no key.
+    let e = refused(&mut p, |p| add_copy(p, &a("Crate"), yours("lamp"), (0, 0), None, Some("z")));
+    assert!(e.contains("in the level already"), "{e}");
+    // Ids number from the asset's name.
+    assert_eq!(add(&mut p, &a("Crate"), (0, 0)).id, "crate-2");
+    assert_eq!(add(&mut p, &a("Crate 2"), (0, 0)).id, "crate-2-2");
+    assert_eq!(add(&mut p, &a("3D box"), (0, 0)).id, "copy-3d-box");
+    let id = add(&mut p, &a("A very long name of a crate that goes on and on"), (0, 0)).id;
+    assert!(id.len() <= 32 && id.starts_with("a-very-long"), "{id}");
+    let e = refused(&mut p, |p| add_copy(p, &a("Crate"), yours("lamp"), (0, 0), Some("crate"), None));
+    assert!(e.contains("taken"), "{e}");
+    let e = refused(&mut p, |p| add_copy(p, &a("Crate"), yours("lamp"), (0, 0), Some("Crate"), None));
+    assert!(e.contains("not an id"), "{e}");
+    assert_eq!(add_copy(&mut p, &a("Crate"), yours("lamp"), (0, 0), Some("mine"), None).unwrap().id, "mine");
+}
+
+#[test]
+fn keep_aspect_rounds_and_never_reaches_zero() {
+    assert_eq!(keep_aspect((14, 16), Size::Width(7)), Some((7, 8)));
+    assert_eq!(keep_aspect((14, 16), Size::Height(8)), Some((7, 8)));
+    // 1.5 rounds up, 0.01 becomes 1.
+    assert_eq!(keep_aspect((2, 1), Size::Width(3)), Some((3, 2)));
+    assert_eq!(keep_aspect((100, 1), Size::Width(1)), Some((1, 1)));
+    assert_eq!(keep_aspect((1, 100), Size::Height(1)), Some((1, 1)));
+    assert_eq!(keep_aspect((3, 7), Size::Width(4096)), Some((4096, 9557)));
+    assert_eq!(keep_aspect((3, 7), Size::Natural), None);
+    assert_eq!(keep_aspect((3, 7), Size::Free(5, 9)), Some((5, 9)));
+}
+
+#[test]
+fn free_aspect_off_snaps_the_height() {
+    let mut p = composed();
+    let id = add(&mut p, &encode(&boxed("Crate", (4, 2))).unwrap(), (1, 1)).id;
+    let copy = |p: &Pack| placed_of(p).file.copies.iter().find(|c| c.id == id).unwrap().clone();
+    assert_eq!(resize_copy(&mut p, &id, Size::Free(8, 8)).unwrap(), (8, 8));
+    assert!(copy(&p).free_aspect);
+    set_copy(&mut p, &id, C::FreeAspect(false)).unwrap();
+    assert_eq!((copy(&p).size, copy(&p).free_aspect), (Some((8, 4)), false));
+    assert_eq!(resize_copy(&mut p, &id, Size::Height(3)).unwrap(), (6, 3));
+    assert_eq!(resize_copy(&mut p, &id, Size::Natural).unwrap(), (4, 2));
+    assert_eq!(copy(&p).size, None);
+    // Beyond the bound: refused, unchanged.
+    let e = refused(&mut p, |p| resize_copy(p, &id, Size::Free(5000, 1)));
+    assert!(e.contains(&id), "{e}");
+}
+
+#[test]
+fn live_is_refused_with_the_reason() {
+    let mut p = composed();
+    // Two states and a Dirt layer.
+    let mut dirt = boxed("Mud", (2, 1));
+    dirt.pieces[0].element.kind = ElementKind::Drawn {
+        material: ElementMaterial::Dirt,
+        at: (0, 0),
+        size: Some((2, 1)),
+        mixed: false,
+        back: false,
+    };
+    dirt.states.push(State::new("Wet"));
+    let id = add(&mut p, &encode(&dirt).unwrap(), (0, 0)).id;
+    let e = refused(&mut p, |p| set_copy(p, &id, C::Live(true)));
+    assert!(e.contains(&id) && e.contains("it holds dirt"), "{e}");
+    // A mixed layer with a dirt cell.
+    let mut mixed = boxed("Crate", (2, 1));
+    mixed.pieces[0].element.kind = ElementKind::Drawn {
+        material: ElementMaterial::Rock,
+        at: (0, 0),
+        size: Some((2, 1)),
+        mixed: true,
+        back: false,
+    };
+    mixed.pieces[0].decoded = Decoded::Drawn {
+        art: png_image(2, 1, RED),
+        cells: Some(vec![Material::Rock, Material::Dirt]),
+        back: None,
+    };
+    mixed.states.push(State::new("Open"));
+    let id = add(&mut p, &encode(&mixed).unwrap(), (0, 0)).id;
+    let e = refused(&mut p, |p| set_copy(p, &id, C::Live(true)));
+    assert!(e.contains("it holds dirt"), "{e}");
+    // The one-state ground (a raster too): nothing to drive, said first.
+    let e = refused(&mut p, |p| set_copies(p, GROUND_KEY, &[C::Locked(false), C::Live(true)]));
+    assert!(e.contains(&olr_edit::asset::LiveRefusal::NothingToDrive.to_string()), "{e}");
+    // A lamp drives its colour, holds rock: Live.
+    let id = add(&mut p, &encode(&lamp("Wood")).unwrap(), (0, 0)).id;
+    set_copy(&mut p, &id, C::Live(true)).unwrap();
+    assert!(placed_of(&p).file.copies.iter().any(|c| c.id == id && c.live));
+}
+
+fn png_image(w: u32, h: u32, c: Rgba) -> RgbaImage {
+    let mut i = RgbaImage::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            i.set(x, y, c);
+        }
+    }
+    i
+}
+
+#[test]
+fn renaming_a_copy_moves_its_script() {
+    let mut p = composed();
+    let id = add(&mut p, &encode(&lamp("Wood")).unwrap(), (0, 0)).id;
+    set_copy_script(&mut p, &id, Some("print(\"lamp\");\n".into())).unwrap();
+    set_copy(&mut p, &id, C::Id("porch".into())).unwrap();
+    let src = placed_of(&p);
+    assert_eq!(src.scripts.keys().collect::<Vec<_>>(), ["porch"]);
+    assert!(src.file.copies.iter().any(|c| c.id == "porch" && c.script));
+    let files = olr_edit::pack::files(&p).unwrap();
+    assert!(files.keys().any(|k| k.as_str() == "editor/scripts/porch.rhai"));
+    assert!(!files.keys().any(|k| k.as_str() == "editor/scripts/lamp.rhai"));
+    // Taken or not an id: refused.
+    let e = refused(&mut p, |p| set_copy(p, "porch", C::Id(GROUND_KEY.into())));
+    assert!(e.contains("taken"), "{e}");
+    let e = refused(&mut p, |p| set_copy(p, "porch", C::Id("9lives".into())));
+    assert!(e.contains("not an id"), "{e}");
+    // Scripts: bounded, cleared; the level's too.
+    let big = "x".repeat(olr_format::assets::MAX_SCRIPT_BYTES as usize + 1);
+    refused(&mut p, |p| set_copy_script(p, "porch", Some(big.clone())));
+    refused(&mut p, |p| set_level_script(p, Some(big.clone())));
+    set_level_script(&mut p, Some("// level\n".into())).unwrap();
+    assert!(placed_of(&p).file.script);
+    set_copy_script(&mut p, "porch", None).unwrap();
+    assert!(placed_of(&p).scripts.is_empty());
+}
+
+#[test]
+fn removing_the_last_copy_removes_its_asset() {
+    let mut p = composed();
+    let lamp = encode(&lamp("Wood")).unwrap();
+    let one = add(&mut p, &lamp, (0, 0)).id;
+    let two = add(&mut p, &lamp, (3, 0)).id;
+    set_copy_script(&mut p, &two, Some("// two\n".into())).unwrap();
+    assert!(p.composition.is_none(), "more than the ground");
+    let r = remove_copy(&mut p, &two).unwrap();
+    assert_eq!(
+        (r.copy.id.as_str(), r.index, r.script.as_deref(), r.asset.is_none()),
+        (two.as_str(), 2, Some("// two\n"), true)
+    );
+    let r = remove_copy(&mut p, &one).unwrap();
+    assert_eq!(r.asset.as_ref().map(|(a, _)| a.key.as_str()), Some("a"));
+    let src = placed_of(&p);
+    assert!(!src.assets.contains_key("a") && src.file.assets.len() == 1);
+    // The ground alone again: edited as a composition, the look the
+    // ground's.
+    assert!(p.composition.is_some());
+    // The ground, once unlocked, goes with its only copy.
+    let e = refused(&mut p, |p| remove_copy(p, GROUND_KEY));
+    assert!(e.contains("locked"), "{e}");
+    set_copy(&mut p, GROUND_KEY, C::Locked(false)).unwrap();
+    let r = remove_copy(&mut p, GROUND_KEY).unwrap();
+    assert_eq!(r.asset.map(|(a, _)| a.key), Some(GROUND_KEY.to_string()));
+    let src = placed_of(&p);
+    assert!(src.file.copies.is_empty() && src.file.assets.is_empty() && src.assets.is_empty());
+    check_placed(src, (32, 16), 1).unwrap();
+}
+
+#[test]
+fn a_locked_copy_refuses_moves_resizes_sets_and_removal() {
+    let mut p = composed();
+    let id = add(&mut p, &encode(&lamp("Wood")).unwrap(), (0, 0)).id;
+    set_copy(&mut p, &id, C::Locked(true)).unwrap();
+    for e in [
+        refused(&mut p, |p| move_copy(p, &id, (4, 4))),
+        refused(&mut p, |p| resize_copy(p, &id, Size::Width(3))),
+        refused(&mut p, |p| set_copy(p, &id, C::Live(true))),
+        refused(&mut p, |p| set_copy(p, &id, C::Id("other".into()))),
+        refused(&mut p, |p| set_copy(p, &id, C::Distant(Some(50)))),
+        refused(&mut p, |p| set_copy_script(p, &id, Some(String::new()))),
+        refused(&mut p, |p| remove_copy(p, &id)),
+    ] {
+        assert!(e.contains("locked") && e.contains(&id), "{e}");
+    }
+    // Its order is not its content.
+    lower_copy(&mut p, &id).unwrap();
+    raise_copy(&mut p, &id).unwrap();
+    // Unlocked first, locked last, in one set.
+    set_copies(&mut p, &id, &[C::Locked(true), C::Id("porch".into()), C::Locked(false)]).unwrap();
+    set_copies(&mut p, "porch", &[C::Locked(true), C::Live(true), C::Locked(false)]).unwrap();
+    let c = placed_of(&p).file.copies.iter().find(|c| c.id == "porch").unwrap();
+    assert!(c.live && c.locked);
+}
+
+#[test]
+fn duplicate_copy_lands_above_with_a_new_id() {
+    let mut p = composed();
+    let lamp = add(&mut p, &encode(&lamp("Wood")).unwrap(), (2, 3)).id;
+    add(&mut p, &encode(&stripes()).unwrap(), (0, 0));
+    let red = ValueSource::Colour(Colour::parse("#ff2020").unwrap());
+    set_copies(
+        &mut p,
+        &lamp,
+        &[C::Value("colour".into(), Some(red.clone())), C::Live(true), C::Locked(true)],
+    )
+    .unwrap();
+    set_copies(&mut p, &lamp, &[C::Locked(false)]).unwrap();
+    set_copy_script(&mut p, &lamp, Some("// mine\n".into())).unwrap();
+    resize_copy(&mut p, &lamp, Size::Free(3, 2)).unwrap();
+    let new = duplicate_copy(&mut p, &lamp, (4, -1)).unwrap();
+    assert_eq!(new, "lamp-2");
+    let src = placed_of(&p);
+    let ids: Vec<&str> = src.file.copies.iter().map(|c| c.id.as_str()).collect();
+    assert_eq!(ids, [GROUND_KEY, "lamp", "lamp-2", "stripes"]);
+    let (a, b) = (&src.file.copies[1], &src.file.copies[2]);
+    assert_eq!(b.at, (6, 2));
+    assert_eq!(PlacedCopy { id: a.id.clone(), at: a.at, ..b.clone() }, *a);
+    assert_eq!(src.scripts.get("lamp-2").map(String::as_str), Some("// mine\n"));
+    assert_eq!(duplicate_copy(&mut p, "lamp-2", (0, 0)).unwrap(), "lamp-3");
+    // The ground's raster stays at the origin: refused.
+    set_copy(&mut p, GROUND_KEY, C::Locked(false)).unwrap();
+    refused(&mut p, |p| duplicate_copy(p, GROUND_KEY, (1, 0)));
+}
+
+/// One operation of the property test, on a copy picked by index.
+#[derive(Clone, Debug)]
+enum Op {
+    Add(usize, (i32, i32), Option<&'static str>),
+    Move(usize, (i32, i32)),
+    Resize(usize, Size),
+    Set(usize, C),
+    Script(usize, bool),
+    Duplicate(usize, (i32, i32)),
+    Raise(usize),
+    Lower(usize),
+    Remove(usize),
+    LevelScript(bool),
+}
+
+fn op() -> impl proptest::strategy::Strategy<Value = Op> {
+    use proptest::prelude::*;
+    let at = (-20000i32..20000, -20000i32..20000).prop_map(|(x, y)| (x / 16, y / 16));
+    let far = prop_oneof![at.clone(), Just((20000, 0))];
+    let side = prop_oneof![0u32..12, Just(5000u32)];
+    let size = prop_oneof![
+        Just(Size::Natural),
+        side.clone().prop_map(Size::Width),
+        side.clone().prop_map(Size::Height),
+        (side.clone(), side).prop_map(|(w, h)| Size::Free(w, h)),
+    ];
+    let names = prop_oneof![Just("porch"), Just("ground"), Just("Bad"), Just("lamp")];
+    let property = prop_oneof![
+        names.prop_map(|n: &str| C::Id(n.into())),
+        any::<bool>().prop_map(C::Live),
+        prop_oneof![Just(None), Just(Some("Wet".to_string())), Just(Some("Nope".to_string()))]
+            .prop_map(C::State),
+        prop_oneof![
+            Just(C::Value("colour".into(), Some(ValueSource::Colour(Colour::parse("#ff0000").unwrap())))),
+            Just(C::Value("colour".into(), Some(ValueSource::Int(3)))),
+            Just(C::Value("nothing".into(), Some(ValueSource::Bool(true)))),
+            Just(C::Value("colour".into(), None)),
+        ],
+        any::<bool>().prop_map(C::DefaultScript),
+        prop_oneof![Just(None), Just(Some(0u8)), Just(Some(40u8)), Just(Some(120u8))].prop_map(C::Distant),
+        any::<bool>().prop_map(C::FreeAspect),
+        any::<bool>().prop_map(C::Locked),
+    ];
+    let key = prop_oneof![Just(None), Just(Some("k")), Just(Some("layers"))];
+    prop_oneof![
+        (0usize..4, far.clone(), key).prop_map(|(a, at, k)| Op::Add(a, at, k)),
+        (0usize..8, far.clone()).prop_map(|(i, at)| Op::Move(i, at)),
+        (0usize..8, size).prop_map(|(i, s)| Op::Resize(i, s)),
+        (0usize..8, property).prop_map(|(i, p)| Op::Set(i, p)),
+        (0usize..8, any::<bool>()).prop_map(|(i, s)| Op::Script(i, s)),
+        (0usize..8, at).prop_map(|(i, o)| Op::Duplicate(i, o)),
+        (0usize..8).prop_map(Op::Raise),
+        (0usize..8).prop_map(Op::Lower),
+        (0usize..8).prop_map(Op::Remove),
+        any::<bool>().prop_map(Op::LevelScript),
+    ]
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(48))]
+    /// Every operation leaves a placement that checks, or changes nothing.
+    #[test]
+    fn every_operation_leaves_a_checked_placement(ops in proptest::collection::vec(op(), 1..16)) {
+        let mut wet = boxed("Mud", (3, 2));
+        wet.states.push(State::new("Wet"));
+        let assets = [
+            encode(&lamp("Wood")).unwrap(),
+            encode(&stripes()).unwrap(),
+            encode(&wet).unwrap(),
+            encode(&lamp("Dark wood")).unwrap(),
+        ];
+        let mut p = composed();
+        for op in ops {
+            let ids: Vec<String> = p.placed.as_ref().map(|s| s.file.copies.iter().map(|c| c.id.clone()).collect()).unwrap_or_default();
+            let id = |i: usize| ids.get(i % ids.len().max(1)).cloned().unwrap_or_else(|| "none".into());
+            let before = p.clone();
+            let ok = match op.clone() {
+                Op::Add(a, at, key) => add_copy(&mut p, &assets[a], yours("x"), at, None, key).map(drop),
+                Op::Move(i, at) => move_copy(&mut p, &id(i), at),
+                Op::Resize(i, s) => resize_copy(&mut p, &id(i), s).map(drop),
+                Op::Set(i, c) => set_copy(&mut p, &id(i), c),
+                Op::Script(i, on) => set_copy_script(&mut p, &id(i), on.then(|| "// s\n".to_string())),
+                Op::Duplicate(i, o) => duplicate_copy(&mut p, &id(i), o).map(drop),
+                Op::Raise(i) => raise_copy(&mut p, &id(i)),
+                Op::Lower(i) => lower_copy(&mut p, &id(i)),
+                Op::Remove(i) => remove_copy(&mut p, &id(i)).map(drop),
+                Op::LevelScript(on) => set_level_script(&mut p, on.then(|| "// l\n".to_string())),
+            };
+            match ok {
+                Ok(()) => {
+                    let src = olr_edit::pack::placement(&p).unwrap();
+                    proptest::prop_assert!(check_placed(&src, (32, 16), 1).is_ok(), "{op:?}");
+                    proptest::prop_assert!(olr_edit::pack::files(&p).is_ok(), "{op:?}");
+                }
+                Err(e) => proptest::prop_assert!(p == before, "{op:?} refused ({e}) but changed the pack"),
+            }
+        }
+    }
+}

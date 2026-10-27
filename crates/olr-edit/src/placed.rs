@@ -10,7 +10,9 @@
 //! lists the baked files that differ from it, [`from_composition`]
 //! converts a level of OLR 0.2, and [`edit_ground`] scopes the look's
 //! group and material edits to the ground. Live copies bake as static for
-//! now (#85 takes them out).
+//! now (#85 takes them out). Issue #75: the operations on the copies
+//! (`ops`: [`add_copy`], [`move_copy`], [`resize_copy`], [`set_copy`],
+//! [`remove_copy`], …), shared by the level tab and `olr-cli level copy`.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -33,6 +35,10 @@ use crate::asset::{
 };
 use crate::compose::{Decoded, GlowMasks, PaintedSurfaces, Rect, bake_elements_with_opacity};
 use crate::level::{refresh_thumb, rescale_art};
+mod ops;
+
+pub use ops::*;
+
 use crate::pack::{
     Pack, Source, UNCONVERTED, ground_composition, ground_placement, placement, placement_with,
 };

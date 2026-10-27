@@ -485,8 +485,8 @@ pub fn live_refusal(asset: &Asset) -> Option<LiveRefusal> {
     None
 }
 
-/// What a landing (`land`, `place_in_pack`, the editor's placing; until
-/// copies replace it) says of an asset whose states, values, sounds,
+/// What a landing (`land`, the editor's placing; until #82 makes it a
+/// copy, `placed::add_copy`) says of an asset whose states, values, sounds,
 /// health or script it leaves behind; none for an asset without them.
 pub fn left_behind(asset: &Asset) -> Option<String> {
     (drives(asset) || asset.health.is_some())
