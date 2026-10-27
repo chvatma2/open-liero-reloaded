@@ -1,11 +1,12 @@
 //! The tool rail (issue #8): one column of buttons, each an icon over a
-//! short label: Import, set apart at the top, then Select, Draw ▸,
-//! Pixels ▸, Glow, Surface and Spawn. A group's button (its corner mark) shows the
-//! icon of its tool chosen last, and one click chooses that tool again; a
-//! second click, a click on the corner mark or a right click opens its
-//! flyout, which lists the group's tools with their shortcuts. A pick, a
-//! click elsewhere or Escape closes it. The asset tab lays the same
-//! buttons out in rows across its tools panel (issue #78, `grid`).
+//! short label. Issue #81: the level tab's holds Select, the Haze brush and
+//! Spawn; the layer tools moved to the asset tab, which lays them out in
+//! rows across its tools panel (issue #78, `grid`): Select, Draw ▸,
+//! Pixels ▸, Glow, Surface and Import. A group's button (its corner mark)
+//! shows the icon of its tool chosen last, and one click chooses that tool
+//! again; a second click, a click on the corner mark or a right click
+//! opens its flyout, which lists the group's tools with their shortcuts. A
+//! pick, a click elsewhere or Escape closes it.
 
 use egui::{Align2, Rect, Response, Sense, Stroke, StrokeKind, Ui, WidgetType, pos2, vec2};
 
@@ -28,9 +29,9 @@ const CORNER: f32 = 14.0;
 /// A button's width in the asset tab's rows (points).
 const GRID_BUTTON: f32 = 54.0;
 
+/// The level tab's rail (issue #81): Select, the Haze brush and Spawn;
+/// the layer tools are the asset tab's.
 pub(super) fn show(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
-    import(ui, None, out);
-    ui.separator();
     tools(ui, state, None, out);
 }
 
@@ -56,17 +57,19 @@ fn import(ui: &mut Ui, width: Option<f32>, out: &mut Vec<EditorAction>) {
 /// The tools' buttons, `width` points wide (else the rail's).
 fn tools(ui: &mut Ui, state: &EditorState, width: Option<f32>, out: &mut Vec<EditorAction>) {
     single(ui, state, Tool::Select, "Select", width, out);
+    // The level's own (issue #77: not the asset tab's); issue #81: its
+    // only others.
+    if state.doc_tab() == DocTab::Level {
+        single(ui, state, Tool::Haze, "Haze", width, out);
+        single(ui, state, Tool::Spawn, "Spawn", width, out);
+        return;
+    }
     for group in ToolGroup::ALL {
         grouped(ui, state, group, width, out);
     }
     // Its label is the brush's, never the element's Glow checkbox's.
     single(ui, state, Tool::Glow, "Glow", width, out);
     single(ui, state, Tool::Surface, "Surface", width, out);
-    // The level's own (issue #77: not the asset tab's).
-    if state.doc_tab() == DocTab::Level {
-        single(ui, state, Tool::Haze, "Haze", width, out);
-        single(ui, state, Tool::Spawn, "Spawn", width, out);
-    }
 }
 
 /// A button of one tool.

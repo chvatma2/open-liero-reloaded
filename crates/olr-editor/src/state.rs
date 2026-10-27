@@ -46,6 +46,9 @@ pub enum Selection {
     /// 14e R8; a folder by where its run starts, issue #61); none inside
     /// another.
     Many(Vec<String>),
+    /// A placed copy in the level tab, by its id (issue #81: the ground,
+    /// `ground::GROUND_COPY`, locked).
+    Copy(String),
 }
 
 impl Selection {
@@ -182,6 +185,9 @@ pub enum Pending {
     NewAsset(NewAsset),
     /// Close asks for the asset tab's changes first, then the level's.
     CloseAsset,
+    /// Issue #81: the asset tab opens the level's ground (Edit in level) in
+    /// place of the asset open there.
+    EditGround,
 }
 
 /// The editor's two documents (issue #77): the level and the asset tab's
@@ -563,6 +569,9 @@ pub enum EditorAction {
     NewAssetDialog,
     /// The New asset dialog's Create.
     MakeAsset(NewAsset),
+    /// Edit in level (issue #81): the level's ground opens in the asset tab
+    /// (asking first when the asset there has unsaved changes).
+    EditGround,
     // The states panel (issue #79).
     /// Shows the asset's state `index` on the canvas and in the previews
     /// (not a step).
@@ -835,6 +844,11 @@ pub struct EditorState {
     /// Counts the states added (issue #79): the states panel's Name field
     /// takes the keyboard when it moved.
     pub(crate) state_named: u64,
+    /// Issue #81: while the asset tab holds the level's ground, its change
+    /// count when its edits were last applied to the level (or it was
+    /// opened): more changes are applied by a switch to the level tab,
+    /// Play or Save.
+    pub(crate) ground: Option<u64>,
 }
 
 impl EditorState {
@@ -932,6 +946,7 @@ impl EditorState {
             pending_tab: None,
             shown_generation: 0,
             state_named: 0,
+            ground: None,
         }
     }
 
@@ -1065,9 +1080,29 @@ impl EditorState {
     }
 
     /// Whether the shown tab offers `tool`: the Spawn tool and the Haze
-    /// brush are the level's.
+    /// brush are the level's; issue #81: the level tab has Select, Spawn
+    /// and the Haze brush only (layers are painted in the asset tab).
     pub fn offers(&self, tool: Tool) -> bool {
-        self.shown == DocTab::Level || !matches!(tool, Tool::Spawn | Tool::Haze)
+        match self.shown {
+            DocTab::Level => matches!(tool, Tool::Select | Tool::Spawn | Tool::Haze),
+            DocTab::Asset => !matches!(tool, Tool::Spawn | Tool::Haze),
+        }
+    }
+
+    /// Whether the asset tab holds the level's ground (issue #81).
+    pub fn ground_open(&self) -> bool {
+        self.ground.is_some() && self.asset_document().is_some()
+    }
+
+    /// The asset tab's title: "Ground in <level>" for the level's ground
+    /// (issue #81), else "Asset: <name>".
+    pub fn asset_title(&self) -> String {
+        if self.ground_open() {
+            let level = self.document().map(|d| d.level().name.clone()).unwrap_or_default();
+            format!("Ground in {level}")
+        } else {
+            format!("Asset: {}", self.asset_document().map(|d| d.meta().name).unwrap_or_default())
+        }
     }
 
     pub fn settings(&self) -> &EditorSettings {
@@ -1168,6 +1203,14 @@ impl EditorState {
 
     pub fn can_redo(&self) -> bool {
         self.history.can_redo()
+    }
+
+    /// The shown tab's step Undo reverts, when it has a name: the level
+    /// tab's "Edit Ground" (issue #81: the asset tab's edits of the
+    /// ground, applied as one step).
+    pub fn undo_name(&self) -> Option<&'static str> {
+        let step = self.history.last()?;
+        step.iter().any(|e| matches!(e, Edit::Ground { .. })).then_some(crate::ground::EDIT_GROUND)
     }
 
     pub fn update(&mut self, action: EditorAction) -> Vec<EditorCommand> {
@@ -1287,6 +1330,11 @@ impl EditorState {
             (self.history.pushes(), self.dirty, self.changes, before.clone(), self.focus.clone(), shown)
         });
         let mut cmds = if view_only { Vec::new() } else { self.release() };
+        // Issue #81: layers are painted in the asset tab.
+        if self.shown == DocTab::Level && self.level_refuses(&action) {
+            self.status.message = Some(crate::ground::LAYERS_IN_ASSET_TAB.into());
+            return cmds;
+        }
         cmds.extend(self.act(action));
         if let Some(g) = guard
             && self.shown == DocTab::Asset
@@ -1300,7 +1348,7 @@ impl EditorState {
         if selects || self.selection != before {
             match self.selection {
                 Selection::Object(_) => self.tab = PanelTab::Spawns,
-                Selection::Element(_) | Selection::Folder(_) | Selection::Many(_) => {
+                Selection::Element(_) | Selection::Folder(_) | Selection::Many(_) | Selection::Copy(_) => {
                     self.tab = PanelTab::Elements
                 }
                 Selection::None => {}
@@ -1331,10 +1379,12 @@ impl EditorState {
     fn act(&mut self, action: EditorAction) -> Vec<EditorCommand> {
         match action {
             EditorAction::Opened(doc) => {
+                self.drop_ground();
                 self.switch_tab(DocTab::Level);
                 self.opened(doc)
             }
             EditorAction::Recovered(doc) => {
+                self.drop_ground();
                 self.switch_tab(DocTab::Level);
                 let cmds = self.opened(doc);
                 self.dirty = true;
@@ -1421,6 +1471,14 @@ impl EditorState {
             EditorAction::ShowTab(tab) if tab == self.shown => Vec::new(),
             EditorAction::ShowTab(DocTab::Asset) if self.asset_document().is_none() => Vec::new(),
             EditorAction::ShowTab(tab) => {
+                // Issue #81: the ground's edits reach the level on the way
+                // there; the ground follows the level on the way back.
+                match tab {
+                    DocTab::Level => {
+                        self.apply_ground();
+                    }
+                    DocTab::Asset => self.sync_ground(),
+                }
                 self.switch_tab(tab);
                 vec![EditorCommand::Upload(
                     self.doc.as_ref().map_or(Rect { x: 0, y: 0, w: 0, h: 0 }, Document::all),
@@ -1437,6 +1495,22 @@ impl EditorState {
                     Vec::new()
                 }
             },
+            EditorAction::EditGround => {
+                if self.document().is_none() {
+                    return Vec::new();
+                }
+                if self.ground_open() {
+                    return self.act(EditorAction::ShowTab(DocTab::Asset));
+                }
+                self.leave(Pending::EditGround)
+            }
+            EditorAction::DoubleClick { world } if self.shown == DocTab::Level => {
+                // Issue #81: a double click on the ground is Edit in level.
+                if self.tool == Tool::Select && self.ground_at(world) {
+                    return self.act(EditorAction::EditGround);
+                }
+                Vec::new()
+            }
             EditorAction::NewAssetDialog => {
                 let art_scale = self.document().map_or(1, |d| d.level().art_scale);
                 self.dialog =
@@ -1595,7 +1669,11 @@ impl EditorState {
                 self.dialog = Some(Dialog::Error(why));
                 Vec::new()
             }
-            EditorAction::Saved(result) => self.on_tab(DocTab::Level, |s| s.saved(result)),
+            EditorAction::Saved(result) => {
+                let cmds = self.on_tab(DocTab::Level, |s| s.saved(result));
+                self.ground_saved();
+                cmds
+            }
             EditorAction::PlayEnded => Vec::new(),
             EditorAction::Open(dir) => self.leave(Pending::Open(dir)),
             EditorAction::New(n) => self.leave(Pending::New(n)),
@@ -1747,6 +1825,10 @@ impl EditorState {
             EditorAction::Remove => match self.selection.clone() {
                 Selection::Element(id) => self.removed(|d| d.remove(&id)),
                 Selection::Object(i) => self.removed(|d| d.remove_object(i)),
+                Selection::Copy(_) => {
+                    self.status.message = Some(crate::ground::GROUND_LOCKED.into());
+                    Vec::new()
+                }
                 Selection::Folder(_) | Selection::Many(_) => {
                     let ids = self.selection.ids();
                     let cmds = self.group_edit(|d| d.remove_items(&ids));
@@ -1760,6 +1842,12 @@ impl EditorState {
             EditorAction::MoveElement { id, to } => self.edit(|d| d.move_to(&id, to)),
             EditorAction::Split(id) => self.restack(&id, false),
             EditorAction::MergeDown(id) => self.restack(&id, true),
+            EditorAction::Meta(_) | EditorAction::Resize { .. }
+                if self.shown == DocTab::Asset && self.ground_open() =>
+            {
+                self.status.message = Some(crate::ground::GROUND_IS_THE_LEVELS.into());
+                Vec::new()
+            }
             EditorAction::Meta(mut meta) => {
                 // The asset tab's name only: its theme is the level's.
                 if let (DocTab::Asset, Some(d)) = (self.shown, &self.doc) {
@@ -1784,21 +1872,15 @@ impl EditorState {
             }
             EditorAction::Undo => self.step(true),
             EditorAction::Redo => self.step(false),
-            EditorAction::Play if self.shown == DocTab::Asset => {
+            EditorAction::Play if self.shown == DocTab::Asset && !self.ground_open() => {
                 self.status.message = Some("Play is the level tab's".into());
                 Vec::new()
             }
-            EditorAction::Play => match &self.doc {
-                Some(d) => {
-                    self.playing = true;
-                    vec![EditorCommand::Play {
-                        level: Box::new(d.level().clone()),
-                        mod_id: self.settings.play_mod.clone(),
-                        bots: self.settings.play_bots,
-                    }]
-                }
-                None => Vec::new(),
-            },
+            EditorAction::Play => {
+                // Issue #81: the ground's edits first (paint, then Play).
+                self.apply_ground();
+                self.play()
+            }
             EditorAction::PlayMod(m) => {
                 self.settings.play_mod = m;
                 vec![EditorCommand::SaveSettings(self.settings.clone())]
@@ -1821,7 +1903,14 @@ impl EditorState {
                 vec![EditorCommand::SaveSettings(self.settings.clone())]
             }
             EditorAction::Tool(tool) if !self.offers(tool) => {
-                self.status.message = Some(format!("the {} is the level tab's", tool.name()));
+                self.status.message = Some(match self.shown {
+                    DocTab::Level => format!(
+                        "the {} is the asset tab's: {}",
+                        tool.name(),
+                        crate::ground::EDIT_IN_LEVEL_HINT
+                    ),
+                    DocTab::Asset => format!("the {} is the level tab's", tool.name()),
+                });
                 Vec::new()
             }
             EditorAction::Tool(tool) => {
@@ -2383,8 +2472,10 @@ impl EditorState {
             Ok(placed) => {
                 let dirty = doc.all();
                 self.history.push(placed.edits);
-                // Two pieces or more are a folder, selected (issue #61).
+                // Two pieces or more are a folder, selected (issue #61); in
+                // the level tab, the ground they landed in (issue #81).
                 self.selection = match placed.folder {
+                    _ if self.in_place == DocTab::Level => Selection::Copy(crate::ground::GROUND_COPY.into()),
                     Some(f) => Selection::Folder(f),
                     None => self.group(placed.ids),
                 };
@@ -2555,6 +2646,7 @@ impl EditorState {
             }
         }
         let whole = step.iter().any(|e| matches!(e, Edit::Whole { .. }));
+        let ground = step.iter().any(|e| matches!(e, Edit::Ground { .. }));
         // A selection the step removed goes.
         match &self.selection {
             Selection::Element(id) if doc.index_of(id).is_none() => self.selection = Selection::None,
@@ -2566,7 +2658,13 @@ impl EditorState {
         if whole {
             self.drop_pixels();
         }
-        self.committed(dirty.unwrap_or(Rect { x: 0, y: 0, w: 0, h: 0 }))
+        let cmds = self.committed(dirty.unwrap_or(Rect { x: 0, y: 0, w: 0, h: 0 }));
+        // Issue #81: the asset tab showing the ground shows it as the level
+        // now has it.
+        if ground && self.in_place == DocTab::Level && self.ground_open() {
+            self.reopen_ground(crate::ground::GROUND_WENT_BACK);
+        }
+        cmds
     }
 
     /// A whole change (art scale, resize, crop) moves every layer's pixels:
@@ -2587,15 +2685,19 @@ impl EditorState {
     /// when the document it leaves has unsaved changes; Close asks for the
     /// asset tab's, then the level's.
     fn leave(&mut self, then: Pending) -> Vec<EditorCommand> {
+        // Issue #81: the ground's edits go to the level first (whose own
+        // unsaved mark then asks for them).
+        self.apply_ground();
+        let asset_dirty = self.asset_dirty() && self.ground.is_none();
         match then {
-            Pending::EditAsset { .. } | Pending::NewAsset(_) | Pending::CloseAsset => {
-                if self.asset_dirty() {
+            Pending::EditAsset { .. } | Pending::NewAsset(_) | Pending::CloseAsset | Pending::EditGround => {
+                if asset_dirty {
                     self.dialog = Some(Dialog::Unsaved { then });
                     return Vec::new();
                 }
                 self.carry_out(then)
             }
-            Pending::Close if self.asset_dirty() => {
+            Pending::Close if asset_dirty => {
                 self.dialog = Some(Dialog::Unsaved { then: Pending::CloseAsset });
                 Vec::new()
             }
@@ -2616,6 +2718,7 @@ impl EditorState {
         let level = match then {
             Pending::EditAsset { key, asset } => return self.open_asset_tab(Some(key), &asset),
             Pending::NewAsset(n) => return self.open_asset_tab(None, &n.asset()),
+            Pending::EditGround => return self.open_ground_tab(),
             Pending::CloseAsset => {
                 self.close_asset_tab();
                 return self.leave(Pending::Close);
@@ -2700,8 +2803,162 @@ impl EditorState {
         });
         self.asset_key = None;
         self.tab_save = None;
+        self.ground = None;
         if self.shown == DocTab::Asset {
             self.switch_tab(DocTab::Level);
+        }
+    }
+
+    /// Issue #81: the asset tab's ground goes with the level it is of
+    /// (another level opened).
+    fn drop_ground(&mut self) {
+        if self.ground.is_some() {
+            self.close_asset_tab();
+        }
+    }
+
+    /// Edit in level (issue #81): the asset tab with the level's ground
+    /// open (`Document::ground_of`), a fresh session, shown.
+    fn open_ground_tab(&mut self) -> Vec<EditorCommand> {
+        let Some(level) = self.document() else { return Vec::new() };
+        let doc = Document::ground_of(level);
+        let all = doc.all();
+        self.close_asset_tab();
+        self.switch_tab(DocTab::Asset);
+        self.shown_generation += 1;
+        self.doc = Some(doc);
+        self.dirty = false;
+        self.ground = Some(self.changes);
+        self.fit_pending = true;
+        self.fit();
+        self.refresh_problems();
+        vec![EditorCommand::Upload(all)]
+    }
+
+    /// The level's document and the asset tab's, whichever is in place.
+    fn both_docs(&mut self) -> (Option<&Document>, Option<&mut Document>) {
+        match self.in_place {
+            DocTab::Level => (self.doc.as_ref(), self.other.doc.as_mut()),
+            DocTab::Asset => (self.other.doc.as_ref(), self.doc.as_mut()),
+        }
+    }
+
+    /// Issue #81: applies the asset tab's edits of the ground to the level
+    /// as one level step, "Edit Ground" (`Edit::Ground`), marking the
+    /// level unsaved; nothing when it holds none since the last time.
+    fn apply_ground(&mut self) {
+        let Some(applied) = self.ground else { return };
+        let changes = self.on_tab(DocTab::Asset, |s| s.changes);
+        if changes == applied {
+            return;
+        }
+        self.ground = Some(changes);
+        let (level, ground) = self.both_docs();
+        let (Some(level), Some(ground)) = (level, ground) else { return };
+        let Some(edit) = level.ground_edit(ground) else { return };
+        self.on_tab(DocTab::Level, |s| {
+            let Some(doc) = s.doc.as_mut() else { return };
+            let all = doc.apply(&edit, true);
+            s.history.push(vec![edit]);
+            s.committed(all);
+        });
+    }
+
+    /// Issue #81: on the way to the asset tab, its ground follows the
+    /// level: made again from it when the level changed the ground (a
+    /// resize, an undone "Edit Ground"), else given the level's look.
+    fn sync_ground(&mut self) {
+        if !self.ground_open() {
+            return;
+        }
+        let (Some(level), Some(ground)) = self.both_docs() else { return };
+        if level.same_ground(ground) {
+            ground.follow_level(level);
+        } else {
+            self.reopen_ground(crate::ground::GROUND_FOLLOWED);
+        }
+    }
+
+    /// Issue #81: the asset tab's ground made again from the level, its
+    /// history cleared (so the two never disagree), its status `why`.
+    fn reopen_ground(&mut self, why: &str) {
+        let Some(level) = self.document() else { return };
+        let doc = Document::ground_of(level);
+        let changes = self.on_tab(DocTab::Asset, |s| {
+            s.doc = Some(doc);
+            s.history = History::new();
+            s.dirty = false;
+            // What is still there stays selected.
+            s.selection = s.group(s.selection.ids());
+            s.focus = s.focus.take().filter(|f| s.doc.as_ref().is_some_and(|d| d.is_folder(f)));
+            s.drag = None;
+            s.pixel_rect = None;
+            s.pixel_region = None;
+            s.pixel_world = None;
+            s.distant_sent = None;
+            s.changes += 1;
+            s.status.message = Some(why.to_string());
+            s.refresh_problems();
+            s.changes
+        });
+        self.ground = Some(changes);
+        self.shown_generation += 1;
+    }
+
+    /// Issue #81: a level saved with every edit of the ground applied
+    /// clears the asset tab's unsaved mark too.
+    fn ground_saved(&mut self) {
+        if !self.ground_open() || self.dirty() {
+            return;
+        }
+        let changes = self.on_tab(DocTab::Asset, |s| s.changes);
+        if self.ground == Some(changes) {
+            self.on_tab(DocTab::Asset, |s| s.dirty = false);
+        }
+    }
+
+    /// Play: a sandbox match on the level's bake.
+    fn play(&mut self) -> Vec<EditorCommand> {
+        let Some(d) = self.document() else { return Vec::new() };
+        let level = Box::new(d.level().clone());
+        self.playing = true;
+        vec![EditorCommand::Play {
+            level,
+            mod_id: self.settings.play_mod.clone(),
+            bots: self.settings.play_bots,
+        }]
+    }
+
+    /// Issue #81: whether the level tab refuses `action`: a layer edit (the
+    /// asset tab's, on the ground) or a selection of layers.
+    fn level_refuses(&self, action: &EditorAction) -> bool {
+        match action {
+            EditorAction::ImportImage { .. }
+            | EditorAction::AddLayer
+            | EditorAction::Set(..)
+            | EditorAction::SetMany(..)
+            | EditorAction::SelectToggle(_)
+            | EditorAction::SelectRange(_)
+            | EditorAction::GroupSelection
+            | EditorAction::Ungroup
+            | EditorAction::SetFolder(..)
+            | EditorAction::DropRow { .. }
+            | EditorAction::Split(_)
+            | EditorAction::MoveElement { .. }
+            | EditorAction::MergeDown(_)
+            | EditorAction::SetGlow { .. }
+            | EditorAction::AddGroup(_)
+            | EditorAction::SetGroup { .. }
+            | EditorAction::RemoveGroup(_)
+            | EditorAction::GlowSelection(_)
+            | EditorAction::AddMaterial { .. }
+            | EditorAction::RemoveMaterial(_)
+            | EditorAction::SaveAsAsset => true,
+            EditorAction::Select(s) => {
+                matches!(s, Selection::Element(_) | Selection::Folder(_) | Selection::Many(_))
+            }
+            EditorAction::Paste => !matches!(self.clipboard, None | Some(Clipboard::Objects { .. })),
+            _ => false,
         }
     }
 
@@ -2710,6 +2967,12 @@ impl EditorState {
     /// or new one as a new asset of the user's, a name the user has asking
     /// Replace or Keep both first. A built-in folder is never written.
     fn save_asset(&mut self, then: Option<Pending>) -> Vec<EditorCommand> {
+        // Issue #81: the ground's Save applies it and saves the level: one
+        // Save for both.
+        if self.ground_open() {
+            self.apply_ground();
+            return self.on_tab(DocTab::Level, |s| s.save(then));
+        }
         let made = self.on_tab(DocTab::Asset, |s| s.doc.as_ref().map(|d| (d.to_asset(), s.changes)));
         let Some((asset, changes)) = made else { return Vec::new() };
         match self.asset_key.clone().filter(|k| !k.builtin) {
@@ -2836,9 +3099,10 @@ impl EditorState {
         let Some(dialog) = self.dialog.take() else { return Vec::new() };
         match (dialog, choice) {
             (Dialog::Unsaved { then }, Choice::Save) => match then {
-                Pending::EditAsset { .. } | Pending::NewAsset(_) | Pending::CloseAsset => {
-                    self.save_asset(Some(then))
-                }
+                Pending::EditAsset { .. }
+                | Pending::NewAsset(_)
+                | Pending::CloseAsset
+                | Pending::EditGround => self.save_asset(Some(then)),
                 then => self.on_tab(DocTab::Level, |s| s.save(Some(then))),
             },
             (Dialog::Unsaved { then }, Choice::Discard) => self.carry_out(then),

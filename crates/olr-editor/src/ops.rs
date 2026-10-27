@@ -1777,6 +1777,17 @@ impl Document {
                 self.keep_from_level();
                 self.all()
             }
+            Edit::Ground { before, after } => {
+                // Issue #81: the asset tab's ground applied whole.
+                let g = if forward { after } else { before };
+                self.items = g.items.clone();
+                self.folders = g.folders.clone();
+                self.originals = g.originals.clone();
+                self.glow_masks = g.masks.clone();
+                self.surface_maps = g.surfaces.clone();
+                self.level.look = g.look.clone();
+                self.all()
+            }
             Edit::Look { before, after } => {
                 let (from, to) = if forward { (before, after) } else { (after, before) };
                 self.level.look = to.as_deref().cloned();

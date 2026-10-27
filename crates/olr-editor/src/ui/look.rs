@@ -183,19 +183,36 @@ pub(super) fn animation(
     }
 }
 
+/// What a Lighting section shows (issue #81): the level tab's the
+/// level's own settings, the ground's its glow groups (the asset's own),
+/// a library asset's both.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum LookScope {
+    Level,
+    Ground,
+    Asset,
+}
+
 /// The level panel's Lighting section: Add or Remove look, the ambient
 /// light, "Fine tuning" (folded by default, `EditorSettings::
 /// fine_tuning_open`: max light, steps, softness, soak, solid floor and the
-/// grade), then the glow groups.
+/// grade), then the glow groups. Issue #81: the level tab's has no glow
+/// groups (they are the ground's, in the asset tab), the ground's only
+/// its glow groups.
 pub(super) fn level_look(
     ui: &mut Ui,
     state: &EditorState,
     data: &mut EditorData,
+    scope: LookScope,
     out: &mut Vec<EditorAction>,
 ) {
     let Some(doc) = state.active_document() else { return };
     ui.separator();
     ui.heading(labels::LOOK);
+    if scope == LookScope::Ground {
+        glow_groups(ui, data, doc.level().look.as_ref(), out);
+        return;
+    }
     let Some(look) = doc.level().look.clone() else {
         if ui.button(labels::ADD_LOOK).on_hover_text("darkness, light, glow and a grade").clicked() {
             out.push(EditorAction::SetLook(Some(LookSource::default())));
@@ -220,9 +237,18 @@ pub(super) fn level_look(
     if let Some(v) = number(ui, data, "look/haze", labels::HAZE, look.haze.into(), 0..=100) {
         set(out, &|l| l.haze = v as u8);
     }
+    if scope == LookScope::Asset {
+        glow_groups(ui, data, Some(&look), out);
+    }
+    fine_tuning(ui, state, data, &look, out);
+}
+
+/// The glow groups, each with its fields and Remove, then Add glow group.
+fn glow_groups(ui: &mut Ui, data: &mut EditorData, look: Option<&LookSource>, out: &mut Vec<EditorAction>) {
+    let groups = look.map_or(&[][..], |l| &l.glow_groups[..]);
     ui.separator();
     ui.label(egui::RichText::new("Glow groups").strong());
-    for group in &look.glow_groups {
+    for group in groups {
         egui::CollapsingHeader::new(&group.id)
             .id_salt(format!("group/{}", group.id))
             .default_open(true)
@@ -236,7 +262,7 @@ pub(super) fn level_look(
             });
     }
     if ui.button(labels::ADD_GROUP).clicked() {
-        let taken: Vec<&str> = look.glow_groups.iter().map(|g| g.id.as_str()).collect();
+        let taken: Vec<&str> = groups.iter().map(|g| g.id.as_str()).collect();
         let id = (1..).map(|n| format!("group-{n}")).find(|id| !taken.contains(&id.as_str())).unwrap();
         out.push(EditorAction::AddGroup(GlowGroupSource {
             id,
@@ -247,6 +273,21 @@ pub(super) fn level_look(
             phase_ms: None,
         }));
     }
+}
+
+/// "Fine tuning" and Remove look.
+fn fine_tuning(
+    ui: &mut Ui,
+    state: &EditorState,
+    data: &mut EditorData,
+    look: &LookSource,
+    out: &mut Vec<EditorAction>,
+) {
+    let set = |out: &mut Vec<EditorAction>, f: &dyn Fn(&mut LookSource)| {
+        let mut l = look.clone();
+        f(&mut l);
+        out.push(EditorAction::SetLook(Some(l)));
+    };
     ui.separator();
     let open = state.settings().fine_tuning_open;
     let r = egui::CollapsingHeader::new(labels::FINE_TUNING)

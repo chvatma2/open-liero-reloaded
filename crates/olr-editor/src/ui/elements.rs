@@ -25,8 +25,10 @@ const THUMB: egui::Vec2 = egui::vec2(80.0, 48.0);
 pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
     ui.horizontal(|ui| {
         let asset = state.doc_tab() == DocTab::Asset;
+        // Issue #81: the level tab lists its copies (the ground).
+        let first = if asset { labels::ELEMENTS } else { labels::COPIES };
         for (tab, label) in [
-            (PanelTab::Elements, labels::ELEMENTS),
+            (PanelTab::Elements, first),
             (PanelTab::Assets, labels::ASSETS),
             (PanelTab::Spawns, labels::SPAWNS),
         ] {
@@ -41,10 +43,29 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
     });
     ui.separator();
     match state.tab() {
+        PanelTab::Elements if state.doc_tab() == DocTab::Level => copies(ui, state, out),
         PanelTab::Elements => elements(ui, state, out),
         PanelTab::Assets => assets(ui, state, data, out),
         PanelTab::Spawns => spawns(ui, state, out),
     }
+}
+
+/// The level tab's Copies (issue #81): the ground alone, locked (#82 lists
+/// every copy); a click selects it, a double click opens it in the asset
+/// tab.
+fn copies(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
+    let Some(doc) = state.document() else { return };
+    let id = crate::ground::GROUND_COPY;
+    let selected = matches!(state.selection(), Selection::Copy(c) if c == id);
+    ui.horizontal(|ui| {
+        let r = ui.selectable_label(selected, doc.ground_name());
+        ui.weak("🔒").on_hover_text("the level's own ground: locked");
+        if r.double_clicked() {
+            out.push(EditorAction::EditGround);
+        } else if r.clicked() {
+            out.push(EditorAction::Select(Selection::Copy(id.into())));
+        }
+    });
 }
 
 /// One folder level's indent in the list, points.

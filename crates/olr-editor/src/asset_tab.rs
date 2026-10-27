@@ -302,6 +302,7 @@ impl Document {
             holes: 0,
             asset: Some(Box::new(parts)),
             canvas_look: None,
+            ground: false,
         };
         doc.rebake(doc.all());
         Ok(doc)

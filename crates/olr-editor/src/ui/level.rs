@@ -6,6 +6,7 @@ use olr_data::image::Rgba;
 use olr_data::level::Material;
 use olr_format::levels::{MAX_ART_SCALE, MAX_SIDE};
 
+use super::look::LookScope;
 use super::{EditorData, labels, number, text};
 use crate::history::LevelMeta;
 use crate::state::{EditorAction, EditorState};
@@ -74,8 +75,9 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
         });
         data.resize = None;
     }
-    super::look::level_look(ui, state, data, out);
-    super::look::level_materials(ui, state, out);
+    // Issue #81: the glow groups and materials are the ground's (Edit in
+    // level).
+    super::look::level_look(ui, state, data, LookScope::Level, out);
 }
 
 /// The asset tab's asset, shown when nothing is selected (issue #77): its
@@ -84,6 +86,15 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
 pub(super) fn asset(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
     let Some(doc) = state.active_document() else { return };
     let l = doc.level();
+    if doc.is_ground() {
+        // Issue #81: the level's ground, its size and name the level's.
+        ui.heading(state.asset_title());
+        ui.label(format!("{}: {} × {}", labels::ASSET_SIZE, l.size.0, l.size.1));
+        ui.label(format!("{}: {}", labels::ART_SCALE, l.art_scale));
+        super::look::level_look(ui, state, data, LookScope::Ground, out);
+        super::look::level_materials(ui, state, out);
+        return;
+    }
     ui.heading("Asset");
     let meta = doc.meta();
     if let Some(name) = text(ui, data, "asset/name", labels::NAME, &meta.name, false) {
@@ -104,6 +115,6 @@ pub(super) fn asset(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out
         });
     }
     ui.label(format!("{}: {}", labels::ART_SCALE, l.art_scale));
-    super::look::level_look(ui, state, data, out);
+    super::look::level_look(ui, state, data, LookScope::Asset, out);
     super::look::level_materials(ui, state, out);
 }

@@ -56,6 +56,11 @@ pub mod labels {
     pub const BACK_TILE: &str = "Back tile";
     // The right panel's tabs and properties.
     pub const ELEMENTS: &str = "Elements";
+    /// Issue #81: the level tab's list of its placed copies (the ground).
+    pub const COPIES: &str = "Copies";
+    /// The ground's panel's button: it opens in the asset tab (apart from
+    /// the Assets tab's `EDIT_LIBRARY_ASSET`, both may show at once).
+    pub const EDIT_IN_LEVEL: &str = "Edit in level";
     pub const ASSETS: &str = "Assets";
     pub const SPAWNS: &str = "Spawns";
     pub const WHAT_IS_IT: &str = "What is it?";

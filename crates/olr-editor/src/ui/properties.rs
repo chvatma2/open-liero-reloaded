@@ -39,7 +39,23 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
         Selection::Element(id) => element(ui, state, data, id, out),
         Selection::Folder(id) => folder(ui, state, data, id, out),
         Selection::Many(_) => group(ui, state, out),
+        Selection::Copy(_) => ground(ui, state, out),
         Selection::None => {}
+    }
+}
+
+/// The ground's panel in the level tab (issue #81): its name, its size and
+/// Edit in level (it opens in the asset tab; a double click does too).
+fn ground(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
+    let Some(doc) = state.document() else { return };
+    ui.heading(doc.ground_name());
+    let (w, h) = doc.level().size;
+    ui.label(format!("{w} × {h}, locked: the level's own ground"));
+    let r = ui
+        .button(labels::EDIT_IN_LEVEL)
+        .on_hover_text("paint its layers in the asset tab (or double-click it)");
+    if r.clicked() {
+        out.push(EditorAction::EditGround);
     }
 }
 

@@ -137,6 +137,46 @@ pub enum Edit {
         before: Box<PartsSnap>,
         after: Box<PartsSnap>,
     },
+    /// Issue #81: the asset tab's edits of the level's ground applied to
+    /// the level ("Edit Ground"): its layers, folders, originals, glow
+    /// masks, surface maps and look, before and after (one level step).
+    Ground {
+        before: Box<GroundSnap>,
+        after: Box<GroundSnap>,
+    },
+}
+
+/// The level's ground as the level holds it (issue #81): what the asset
+/// tab edits of it and "Edit Ground" swaps whole. The look is the level's
+/// whole look with the ground's glow groups and materials.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GroundSnap {
+    pub items: Vec<Item>,
+    pub folders: Vec<Folder>,
+    pub originals: BTreeMap<String, Arc<Vec<u8>>>,
+    pub masks: olr_edit::compose::GlowMasks,
+    pub surfaces: olr_edit::compose::PaintedSurfaces,
+    pub look: Option<LookSource>,
+}
+
+impl GroundSnap {
+    /// The bytes it holds besides its grids, masks, maps and originals
+    /// (counted once each, by address).
+    fn bytes(&self) -> usize {
+        self.items.iter().map(item).sum::<usize>()
+            + self.folders.iter().map(folder).sum::<usize>()
+            + std::mem::size_of::<LookSource>()
+    }
+
+    /// Its image grids, masks, maps and originals, by address, with their
+    /// bytes.
+    fn shared(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        let arc = |m: &Arc<Vec<u8>>| (Arc::as_ptr(m) as usize, m.len());
+        grids(self.items.iter())
+            .chain(self.masks.values().map(arc))
+            .chain(self.surfaces.values().map(arc))
+            .chain(self.originals.values().map(arc))
+    }
 }
 
 /// What the asset tab keeps of an asset besides its layers, look and
@@ -323,6 +363,7 @@ impl Edit {
             Edit::Show { before, after } => before == after,
             Edit::States { before, after } => before == after,
             Edit::Parts { before, after } => before == after,
+            Edit::Ground { before, after } => before == after,
             Edit::Look { before, after } => before == after,
             Edit::Haze { before, after, .. } => before == after,
             Edit::GlowMask { before, after, .. } | Edit::SurfaceMap { before, after, .. } => before == after,
@@ -361,6 +402,8 @@ impl Edit {
             Edit::States { before, after } => before.bytes() + after.bytes(),
             // Sounds count once each, by address (`grids`).
             Edit::Parts { before, after } => before.bytes() + after.bytes(),
+            // Grids, masks, maps and originals count once each (`grids`).
+            Edit::Ground { before, after } => before.bytes() + after.bytes(),
         }
     }
 
@@ -378,6 +421,7 @@ impl Edit {
                 .collect(),
             Edit::States { before, after } => before.pictures().chain(after.pictures()).collect(),
             Edit::Parts { before, after } => before.sounds().chain(after.sounds()).collect(),
+            Edit::Ground { before, after } => before.shared().chain(after.shared()).collect(),
             Edit::Layer { before, after, .. } => grids([&**before, &**after].into_iter()).collect(),
             Edit::GlowMask { before, after, .. } | Edit::SurfaceMap { before, after, .. } => {
                 before.iter().chain(after).map(mask).collect()

@@ -34,6 +34,9 @@ pub(super) fn show(
                         (format!("the asset {:?}", name(state.asset_document())), "making a new asset")
                     }
                     Pending::CloseAsset => (format!("the asset {:?}", name(state.asset_document())), "closing"),
+                    Pending::EditGround => {
+                        (format!("the asset {:?}", name(state.asset_document())), "editing the level's ground")
+                    }
                 };
                 ui.label(format!("Save the changes to {of} before {before}?"));
                 ui.horizontal(|ui| {

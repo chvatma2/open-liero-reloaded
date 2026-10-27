@@ -120,7 +120,8 @@ pub(super) fn file_menu(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAc
 
 /// Undo and Redo.
 pub(super) fn undo_redo(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
-    if ui.add_enabled(state.can_undo(), egui::Button::new(labels::UNDO)).on_hover_text("Ctrl+Z").clicked() {
+    let hint = state.undo_name().map_or_else(|| "Ctrl+Z".to_string(), |n| format!("Undo {n} (Ctrl+Z)"));
+    if ui.add_enabled(state.can_undo(), egui::Button::new(labels::UNDO)).on_hover_text(hint).clicked() {
         out.push(EditorAction::Undo);
     }
     if ui.add_enabled(state.can_redo(), egui::Button::new(labels::REDO)).on_hover_text("Ctrl+Y").clicked() {
@@ -209,9 +210,11 @@ pub(super) fn view_menu(
         if ui.checkbox(&mut grid, labels::GRID).changed() {
             out.push(EditorAction::Grid(grid));
         }
-        // An asset has no distant layers (issue #78).
+        // An asset has no distant layers (issue #78); the level's ground
+        // has (issue #81).
         let mut parallax = state.preview_parallax();
-        if state.doc_tab() == DocTab::Level && ui.checkbox(&mut parallax, labels::PREVIEW_PARALLAX).changed()
+        if (state.doc_tab() == DocTab::Level || state.ground_open())
+            && ui.checkbox(&mut parallax, labels::PREVIEW_PARALLAX).changed()
         {
             out.push(EditorAction::PreviewParallax(parallax));
         }

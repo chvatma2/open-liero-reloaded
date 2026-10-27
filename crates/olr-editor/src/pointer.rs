@@ -13,7 +13,7 @@ use olr_format::levels::{Element, ElementKind, LevelObject, MAX_SIDE, drawn_box}
 use crate::document::Document;
 use crate::history::Edit;
 use crate::ops::{NOTHING, Stroke, StrokeBefore};
-use crate::state::{EditorCommand, EditorState, Selection};
+use crate::state::{DocTab, EditorCommand, EditorState, Selection};
 use crate::tools::{BrushShape, Overlay, PaintChoice, PointerKind, Tool};
 
 /// A spawn is grabbed within this many world pixels.
@@ -517,6 +517,8 @@ impl EditorState {
 
     fn press(&mut self, world: (i32, i32), toggle: bool, deep: bool) -> Vec<EditorCommand> {
         match self.tool {
+            // Issue #81: the level tab selects its copies: the ground.
+            Tool::Select if self.in_place == DocTab::Level => self.select_copy(world),
             Tool::Select if deep => self.select_down(world, true),
             Tool::Select if toggle => {
                 // Ctrl+click: what a plain click would pick in or out of the
@@ -729,6 +731,50 @@ impl EditorState {
         }
     }
 
+    /// The level tab's Select press (issue #81): a spawn, else the ground
+    /// on any pixel of the level (locked: it never drags), else nothing.
+    fn select_copy(&mut self, world: (i32, i32)) -> Vec<EditorCommand> {
+        if self.press_spawn(world) {
+            return Vec::new();
+        }
+        self.focus = None;
+        self.selection = match self.ground_at(world) {
+            true => Selection::Copy(crate::ground::GROUND_COPY.into()),
+            false => Selection::None,
+        };
+        Vec::new()
+    }
+
+    /// Whether world pixel `world` is on the ground: in the level, with no
+    /// spawn under it (issue #81).
+    pub(crate) fn ground_at(&self, world: (i32, i32)) -> bool {
+        let Some(doc) = &self.doc else { return false };
+        let (w, h) = doc.level().size;
+        let inside = (0..i64::from(w)).contains(&i64::from(world.0))
+            && (0..i64::from(h)).contains(&i64::from(world.1));
+        inside && self.spawn_at(world).is_none()
+    }
+
+    /// The spawn under world pixel `world`, by index.
+    fn spawn_at(&self, world: (i32, i32)) -> Option<usize> {
+        let doc = self.doc.as_ref()?;
+        doc.level().objects.iter().position(|o| match o {
+            LevelObject::Spawn { at, .. } => {
+                let (dx, dy) = sub(world, *at);
+                dx.abs() <= SPAWN_REACH && dy.abs() <= SPAWN_REACH
+            }
+        })
+    }
+
+    /// A press on a spawn selects it and drags it; whether there was one.
+    fn press_spawn(&mut self, world: (i32, i32)) -> bool {
+        let (Some(index), Some(doc)) = (self.spawn_at(world), self.doc.as_ref()) else { return false };
+        let grab = sub(world, doc.level().objects[index].at());
+        self.selection = Selection::Object(index);
+        self.drag = Some(Drag::Spawn { index, before: doc.level().objects.clone(), grab });
+        true
+    }
+
     /// Select's press: a handle, a spawn, else what the click picks (issue
     /// #61: a selected item under the pointer stays selected and drags;
     /// else `click_pick`'s, or with `deep` (Alt) the element itself).
@@ -755,18 +801,10 @@ impl EditorState {
             }
         }
         // A spawn (drawn over the boxes).
-        let spawn = doc.level().objects.iter().position(|o| match o {
-            LevelObject::Spawn { at, .. } => {
-                let (dx, dy) = sub(world, *at);
-                dx.abs() <= SPAWN_REACH && dy.abs() <= SPAWN_REACH
-            }
-        });
-        if let Some(index) = spawn {
-            let grab = sub(world, doc.level().objects[index].at());
-            self.selection = Selection::Object(index);
-            self.drag = Some(Drag::Spawn { index, before: doc.level().objects.clone(), grab });
+        if self.press_spawn(world) {
             return Vec::new();
         }
+        let Some(doc) = &self.doc else { return Vec::new() };
         let Some(hit) = self.hit(world) else {
             self.selection = Selection::None;
             self.focus = None;
@@ -1178,7 +1216,13 @@ impl EditorState {
             }
             _ => (0, 0),
         };
-        for (i, item) in doc.items().iter().enumerate() {
+        // Issue #81: the level tab shows the ground as one copy: its box
+        // when selected, without handles (it is locked).
+        let level_tab = self.in_place == DocTab::Level;
+        if level_tab && matches!(self.selection, Selection::Copy(_)) {
+            out.push(Overlay::Box { rect: doc.all(), selected: true, locked: true });
+        }
+        for (i, item) in doc.items().iter().enumerate().filter(|_| !level_tab) {
             let e = &item.element;
             // Images' boxes, and the selected drawn layer's (plan 14d R9);
             // shown and locked as their folders make them (issue #60).

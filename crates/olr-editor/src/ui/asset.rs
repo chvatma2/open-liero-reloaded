@@ -84,12 +84,19 @@ pub(super) fn show(
     if !narrow || data.side == Side::Layers {
         egui::Panel::right("olr-editor-asset-layers").exact_size(layers_w).resizable(false).show(ui, |ui| {
             egui::ScrollArea::vertical().id_salt("olr-editor-asset-layers").show(ui, |ui| {
-                // Issue #79: the states panel first, above the layers.
-                states::show(ui, state, data, fields);
-                ui.separator();
-                // Issue #80: the column's tabs.
-                parts::tabs(ui, data);
-                ui.separator();
+                // Issue #81: the level's ground has its layers only (no
+                // states, properties, sounds or script; no previews).
+                let ground = state.ground_open();
+                if ground {
+                    data.column = Column::Layers;
+                } else {
+                    // Issue #79: the states panel first, above the layers.
+                    states::show(ui, state, data, fields);
+                    ui.separator();
+                    // Issue #80: the column's tabs.
+                    parts::tabs(ui, data);
+                    ui.separator();
+                }
                 match data.column {
                     Column::Layers => {
                         elements::tree(ui, state, list);
@@ -103,8 +110,10 @@ pub(super) fn show(
                     Column::Sounds => parts::sounds(ui, state, fields),
                     Column::Script => parts::script_column(ui, state, data, fields),
                 }
-                ui.separator();
-                previews::show(ui, state, data);
+                if !ground {
+                    ui.separator();
+                    previews::show(ui, state, data);
+                }
                 follow_focus(ui, follow);
             });
         });
@@ -151,8 +160,8 @@ fn session(
         toolbar::file_menu(ui, state, out);
         toolbar::undo_redo(ui, state, out);
         ui.separator();
-        let name = state.active_document().map(|d| d.meta().name).unwrap_or_default();
-        let text = format!("Asset: {name}");
+        // Issue #81: "Ground in <level>" for the level's ground.
+        let text = state.asset_title();
         // A name too long for the row's rest starts the next row.
         if super::text_width(ui, &text, egui::TextStyle::Body) > ui.available_width() {
             ui.end_row();
@@ -165,6 +174,13 @@ fn session(
             mark.on_hover_text(labels::UNSAVED);
         }
         toolbar::view_menu(ui, state, data, out);
+        // Issue #81: the ground plays with the level (its edits applied).
+        if state.ground_open() {
+            ui.separator();
+            if ui.button(labels::PLAY).on_hover_text("play a test match on the level").clicked() {
+                out.push(EditorAction::Play);
+            }
+        }
     });
 }
 

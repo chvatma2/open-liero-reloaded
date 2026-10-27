@@ -137,6 +137,9 @@ pub struct Document {
     /// Issue #79: the look the canvas is lit by when the shown state's
     /// values change its glow groups (`canvas_look`).
     pub(crate) canvas_look: Option<olr_format::look::LookSource>,
+    /// Issue #81: the asset tab's copy of a level's ground
+    /// (`Document::ground_of`), painted there and applied to the level.
+    pub(crate) ground: bool,
 }
 
 /// What a plain level brought that its layers cannot bake.
@@ -419,6 +422,7 @@ impl Document {
             holes: 0,
             asset: None,
             canvas_look: None,
+            ground: false,
         };
         doc.rebake(doc.all());
         doc.rebaked = (&doc.level.material, &doc.level.front, &doc.level.back)

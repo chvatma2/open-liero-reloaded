@@ -11,6 +11,7 @@ pub mod catalog;
 pub mod clipboard;
 pub mod document;
 pub mod folder_ops;
+pub mod ground;
 pub mod history;
 pub mod look_ops;
 pub mod ops;
@@ -25,7 +26,7 @@ pub mod view;
 
 pub use catalog::{AssetEntry, AssetKey, Catalog, EditorSettings, ModEntry, ThemeEntry};
 pub use document::{DocError, Document, Item, PackSnapshot, Problem};
-pub use history::{Edit, History, LevelMeta};
+pub use history::{Edit, GroundSnap, History, LevelMeta};
 pub use olr_pack::Severity;
 pub use ops::Change;
 pub use state::{
