@@ -942,7 +942,7 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `files::list_assets` (`olr_edit::asset::list_library`: each folder's
   summary, the user's capped at `MAX_USER_ASSETS`, a folder that does not
   read a warning) into `Catalog::assets`, built-in first. `ReadAsset`
-  answers `AssetRead` (`load_dir`, a valid folder id only); `SaveAsset`
+  answers `AssetRead` (issue #82: the files, `read_dir`, a valid folder id only); `SaveAsset`
   (`add_to_library`), `ImportAsset` (`import_into_library`) and
   `RemoveAsset` (`remove_from_library`) answer `AssetsChanged` and, for a
   folder written, `AssetSaved`, or `Failed` (`EditorHost::assets`). The

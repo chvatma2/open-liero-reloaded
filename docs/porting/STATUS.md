@@ -6617,11 +6617,9 @@ The plain OLX levels stay plain.
   a level from OLR 0.2: run olr-cli level convert <pack>"; `pack check`
   and `validate` warn. A `composition.ron` left beside a placement is
   not read, a warning too.
-- **The editor's interim scope** (until issue #82's level tab): the level
-  editor opens a level whose ground is placed alone (an OLR 0.2 level
-  converted on opening, unsaved: "Converted from OLR 0.2: save to keep
-  it") and refuses one placing other assets: "This level has placed
-  assets: the level tab opens it (issue #82)".
+- **The editor opens a level whole** (issue #82's level tab; until
+  then it refused one placing other assets): an OLR 0.2 level converts
+  on opening, unsaved ("Converted from OLR 0.2: save to keep it").
 
 Issue #75 brings the operations on copies (`olr_edit::placed`'s
 `add_copy`, `duplicate_copy`, `move_copy`, `resize_copy`, `set_copy`/
@@ -6902,7 +6900,8 @@ No OLX counterpart. The design
 `docs/superpowers/specs/2026-10-26-asset-based-levels-design.md` ("The
 level tab", call 16); the code is `olr-editor`'s `ground.rs` and
 `state.rs`. Part 1 (#81) moves layer painting to the asset tab: the
-level tab shows the ground as one copy.
+level tab shows the ground as one copy. Part 2 (#82, `copies.rs`,
+`level_tab.rs`) makes it a placement editor of copies.
 
 - **The level tab shows one locked copy, the ground (#81).** The right
   panel's first tab is Copies (`labels::COPIES`), listing the ground
@@ -6950,10 +6949,48 @@ level tab shows the ground as one copy.
   with `LAYERS_IN_ASSET_TAB`, a tool with how to reach it. The level
   panel keeps its Lighting without glow groups, the size fields and
   Play.
-- **Placing still lands in the ground until #82 (#81).** A library asset
-  placed in the level tab still lands its pieces as layers of the
-  ground, as in 0.2 (the ground copy selected after), until #82 places
-  copies.
+- **A level of placed copies opens whole (#82).** Every copy is posed,
+  laid and kept; the editor bakes the placement as `olr_edit::placed::
+  bake` does, byte for byte, so an unchanged open and save writes the
+  same files. A moved copy rebakes its old and new boxes; a change to
+  the gathered look (a new group or material) the whole level.
+- **Place makes a copy (#82).** The Assets tab's Place (at the view's
+  centre), a press with an asset picked, or a thumbnail dropped add a
+  copy of the library asset (`add_copy`, its origin Built-in or Yours)
+  on top, selected, one step; the asset tab places none. 0.2's landing
+  of pieces into the ground is gone.
+- **Click by covered pixel (#82).** Select picks the topmost copy with a
+  covered pixel there, a transparent pixel falling through to what is
+  behind, else the topmost copy whose box holds the point; Ctrl+click
+  toggles, Escape selects none. A drag moves the selection live, one
+  step on release; the arrows nudge by 1.
+- **Handles, and Shift to snap (#82).** One selected unlocked copy has
+  eight handles: a corner resizes from the opposite corner, an edge from
+  the opposite edge (the other side centred while the aspect is kept);
+  the aspect is kept unless Keep aspect is off (`free_aspect`), the side
+  changed more leading. Shift snaps to whole multiples of the asset's
+  size, the nearest, never below 1× (each side its own when free). The
+  resize is previewed and applied on release as one step, the status
+  line saying "58 × 4, 2×". A small copy's middle stays its own, so it
+  can be dragged: a handle reaches at most a quarter of a side into it.
+- **The ground stays locked (#82).** Its copy never moves, resizes, goes,
+  duplicates or goes above another's place under it; a level resize
+  moves every other copy, locked ones too, with the level in one step,
+  and the ground grows with the level.
+- **Delete, copy and paste (#82).** Delete removes the selection in one
+  step, an asset no copy uses going too (the status says so; undo brings
+  both back). Ctrl+C and Ctrl+V paste copies (8, 8) further each paste,
+  Ctrl+D duplicates; elements paste only in the asset tab and copies only
+  in the level tab, each refusal saying so; Cut is refused there.
+- **The Copies list and the copy panel (#82).** Every copy, top first:
+  its asset's name, its id, a lock toggle and a mark: 🔗 for a library
+  copy, the weak word "own" for the level's own assets (never ★, the
+  starting state's mark); a row dragged onto another takes its place
+  (raise and lower, one step a drop). The panel: Position X/Y,
+  Width/Height, Keep aspect, Locked, and Edit in level (an own asset:
+  the ground as #81, another own asset in the asset tab, its edits one
+  level step on the way back) or **Edit library asset** (as the Assets
+  tab's Edit asset); a double click on a copy does the same.
 - **A plain level is one locked ground (#81).** It opens split into its
   three layers as before; its `Kept` glow, beams and clear flags stay
   while no layer glows or is clear, an Edit Ground included.

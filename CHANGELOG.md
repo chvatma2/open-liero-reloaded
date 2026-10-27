@@ -167,6 +167,18 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
 
 ### Changed
 
+- The level editor places assets as copies. Place (or a click with an
+  asset picked) adds a copy of a library asset to the level instead of
+  pasting its pieces into the ground; the Copies list shows every copy,
+  top first, with a lock and a mark (🔗 a library copy, "own" the level's
+  own), and rows dragged reorder them. Click a copy to select it (its
+  transparent pixels let the click through), Ctrl+click for several,
+  drag to move, the arrows to nudge, its eight handles to resize (the
+  aspect kept unless Keep aspect is off; Shift snaps to whole multiples
+  of the asset's size), Delete to remove, Ctrl+C/Ctrl+V and Ctrl+D to
+  copy. Edit library asset opens a copy's asset; Edit in level edits the
+  level's own. A level of placed copies made with `olr-cli` now opens in
+  the editor.
 - Layers are painted in the asset tab; the level tab places. The level
   editor's level tab shows a level's ground as one locked copy (the right
   panel's Copies): select it and press **Edit in level** (or double-click

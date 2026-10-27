@@ -79,19 +79,17 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   user's note 2026-10-19, `a_look_shows_in_the_saved_thumbnail`); a layer file whose pixels did not change is
   saved as opened (another program's encoding kept); stray files in
   `editor/` are never overwritten by a new element's (ids and names skip
-  them); `diagnostics` are R6's cheap checks. Issue #74 (until issue
-  #82's level tab): the editor's scope is the ground placed alone, its
-  layers the items; `open` refuses a level placing other assets
-  (`PLACED_ASSETS`, "This level has placed assets: the level tab opens
-  it (issue #82)") and converts an OLR 0.2 level
+  them); `diagnostics` are R6's cheap checks. Issue #74: the items are
+  the ground's layers; issue #82 opens a level placing other assets
+  whole (below, "The level tab (issue #82)"); `open` converts an OLR 0.2 level
   (`olr_edit::placed::from_composition`; `converted()`): `opened` then
   leaves it unsaved with the status bar's `CONVERTED` ("Converted from
   OLR 0.2: save to keep it"), and saving writes the placement
   (`placed.ron`, the ground's `asset.ron`) without `composition.ron`.
   The document keeps the placement and the other assets' files as
   opened (`placed`, `verbatim`) for `to_pack`. Tests: `document.rs`'
-  `opening_a_02_level_converts_it_unsaved`,
-  `a_level_with_placed_assets_is_refused_with_the_reason`.
+  `opening_a_02_level_converts_it_unsaved`, `level_tab.rs`'
+  `a_placed_level_opens_whole`.
 - **Edits** (`ops.rs`, `history.rs`): every operation checks first, then
   builds an `Edit` and runs it through `Document::apply`, the one path
   undo and redo take (a refusal changes nothing; an edit of no change,
@@ -302,19 +300,12 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     places it there (`placing()`; Escape, `CancelPlacing`, or a tool
     change stops); one dragged onto the canvas (egui's drag and drop, an
     `AssetKey` payload) lands where let go; both outline its size at the
-    pointer. `PlaceAsset { key, at }` asks `ReadAsset`; `AssetRead`
-    places it with `Document::place_asset`: one step, its glow groups
-    first (`olr_edit::asset::with_groups`: joined by id, the level's
-    settings kept; missing ones added with the asset's; a level without a
-    look gets `LookSource::default()` and the status bar says
-    `ADDED_LIGHTING`), then each piece on top as a paste lands it (`land`,
-    shared with `paste_one`: new ids and names, the asset's name for one
-    piece, "<asset> <piece>" for several, resampled to the level's art
-    scale, masks kept); the new elements are selected. A placed asset is
-    ordinary elements. Issue #71: the pieces are the asset's starting
-    state posed with its defaults (`olr_edit::asset::landed_pieces`); its
-    states, values, sounds and script stay behind, and the status bar
-    says so (`left_behind`, after `ADDED_LIGHTING` when both).
+    pointer. `PlaceAsset { key, at }` (and the Place button's
+    `PlaceAssetCentred`) asks `ReadAsset`; `AssetRead` (the asset's files)
+    adds a copy of it (issue #82, `level_tab::place_copy`,
+    `Document::add_copy`: one step, the copy selected; a level without a
+    look gets one and the status bar says `ADDED_LIGHTING`). The asset tab
+    places none (`PLACED_IN_THE_LEVEL`).
   - **The tab** (`ui/elements.rs`): thumbnails grouped `BUILT_IN` and
     `YOURS`, each button named by the asset (`relabel`), its name and tag
     under it ("rock, background, glows"); Import asset… (`Browse(
@@ -382,13 +373,9 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   step); split and merge down drop surfaces as they drop glow; saving
   drops a map flag whose map no longer fits. Test: `tests/surface.rs`. Issue #38: Save as asset
   hands `olr_edit::asset` the elements' painted maps (`pieces`), so the
-  asset carries the materials they name; `place_asset` joins or adds the
-  asset's materials with its glow groups (`with_materials`, one look
-  edit) and gives each landed element its surfaces and re-numbered maps
-  (`Document::land_surfaces`: `Edit::SurfaceMap`s, then an
-  `Edit::Element`; the same step). A paste still lands no surfaces.
-  Test: `asset.rs`'s
-  `placing_joins_or_adds_materials_and_lands_painted_maps`.
+  asset carries the materials they name; a placed copy's materials are
+  gathered with the level's (issue #82, `olr_edit::placed`). A paste
+  lands no surfaces.
 - **The level editor's materials** (issue #43; STATUS.md "Level editor
   materials (issue #43)"; spec
   `2026-10-22-materials-and-heat-design.md` §Editors):
@@ -738,14 +725,12 @@ whose column tab is `LAYERS`);
   - **The level tab**: `offers` Select, Spawn and the Haze brush only;
     `update` refuses the layer actions there (`level_refuses`:
     `LAYERS_IN_ASSET_TAB`; a tool `EDIT_IN_LEVEL_HINT`). The right panel's
-    first tab is `labels::COPIES`, the ground's row alone (🔒; a click
-    `Select(Selection::Copy(GROUND_COPY))`, a double click `EditGround`);
-    Select on any pixel of the level selects it (`pointer::select_copy`),
-    drawn as `Overlay::Box { locked: true }` without handles; Remove says
-    `GROUND_LOCKED`. Its panel (`ui::properties`): `ground_name`, the size,
+    first tab is `labels::COPIES` (#82: every copy, below); the ground's
+    copy is locked (`GROUND_LOCKED`: it never moves, resizes, goes or is
+    duplicated) and drawn as `Overlay::Box { locked: true }` without
+    handles. Its panel (`ui::properties`): `ground_name`, the size,
     `labels::EDIT_IN_LEVEL`. The level panel's Lighting has no glow groups
-    (`ui::look::LookScope::Level`) and no Materials. Placing an asset
-    there still lands into the ground (until #82).
+    (`ui::look::LookScope::Level`) and no Materials.
   - **Edit in level** (`EditorAction::EditGround`, `Pending::EditGround`,
     asking first when the asset tab is unsaved): `Document::ground_of(level)`
     (`is_ground`; no spawns, `asset: None`, so no asset refusals: distant
@@ -780,9 +765,80 @@ whose column tab is `LAYERS`);
     `tests/level_tab.rs` (#81's acceptance tests, also
     `every_shipped_level_saves_byte_identical`) and `flows.rs`'
     `paint_the_ground_from_the_level`.
+- **The level tab (issue #82)** (STATUS.md "Level tab (issues #81, #82,
+  #83)"; the document's side `copies.rs`, the state's `level_tab.rs`):
+  - **The document**: `placed` holds the whole placement; the items stay
+    the ground's layers and `level.look` the own look (the level's
+    settings, the ground's groups and materials). `CopyCache` keeps each
+    copy laid (`olr_edit::placed::lay_copy`: posed, laid, folded, ids
+    `<copy>.<id>`) by its unlocked `PlacedCopy` and the ground's
+    generation (`copy_cache.ground`, bumped by every non-placement edit
+    in `apply`), the decoded assets by key. A plain ground (at (0, 0),
+    natural, not distant, no state or values) bakes the items directly.
+    `rebake_placed(rect)` flattens as `olr_edit::placed::bake` does
+    (`gather_copy` in copy order, distant pieces first) under the
+    gathered look, the whole level when the gathered ids or see-through
+    changed; it sets `canvas_look` and `placed_look`, which `playable()`
+    (Play), the bake and `to_pack` use (the ground asset's groups and
+    materials are the own look's). An unchanged open and save is byte
+    identical (`a_placed_level_opens_whole`,
+    `every_shipped_level_saves_byte_identical`).
+  - **Operations** run `olr_edit::placed`'s on a light pack
+    (`placement_op`: the ground's asset a one-pixel stand-in with the
+    own look's groups and materials, a `LevelSource` of sizes and look
+    only): `add_copy`, `move_copies`, `resize_copy`, `set_copy`,
+    `remove_copies`, `duplicate_copies`, `restack_copy` (nothing under
+    the ground: `GROUND_AT_THE_BOTTOM`), `file_change` (a level resize's
+    shift), `set_own_asset`; each gives `Edit::Placement { before, after }`
+    (`PlacementSnap`: the file, the scripts, each side's assets the other
+    lacks or holds otherwise, Arc'ed; `placement_edit`). `set_placement`
+    applies a side, rebaking each changed copy's old and new extent (a
+    lock none). A drag moves live (`live_move`) and ends in one
+    `move_copy` step from the drag's start (`end_move`).
+  - **The state** (`level_tab.rs`): `Selection::Copy`/`Copies`
+    (`copy_selection`, stack order). Select (`level_press`): a spawn,
+    then a handle of the one selected unlocked copy (reach
+    `HANDLE_REACH`, at most a quarter of a side: a small copy's middle
+    moves it), then `Document::copy_at` (the topmost copy with a covered
+    pixel, a transparent one falling through, else the topmost box);
+    Ctrl toggles; a press on the selection drags it (`Drag::MoveCopies`),
+    on a locked copy `Drag::LockedCopy` ("<id> is locked"). Handles
+    (`Drag::ResizeCopy`, from the press point): `copy_resized` (a corner
+    from the opposite corner, an edge from the opposite edge, the other
+    side centred while the aspect is kept; the leader the side changed
+    more, the other `keep_aspect`'s; Shift snaps with `snapped`, never
+    below 1×; 1 to `MAX_SIDE`; the natural size `Size::Natural`), the
+    outline previewed, the status `size_note` ("58 × 4, 2×"), one
+    `resize_copy` step on release. Arrows `nudge_copies`; Delete
+    `remove_copies` (the status names an asset that went); Ctrl+C
+    `Clipboard::Copies`, Ctrl+V `paste_copies` (`COPY_PASTE_STEP` further
+    each paste), Ctrl+D `Duplicate`; cut is refused (`NO_CUT`), elements
+    paste in the asset tab only and copies in the level tab only
+    (`ELEMENTS_PASTE_IN_ASSET_TAB`, `COPIES_PASTE_IN_LEVEL_TAB`). Place
+    (`PlaceAsset`, `PlaceAssetCentred`) reads the asset's files
+    (`AssetRead { key, at, asset: AssetSource }`, the hosts'
+    `olr_edit::asset::read_dir`) and `place_copy` adds it (refused in the
+    asset tab: `PLACED_IN_THE_LEVEL`). A level resize shifts every copy
+    but the ground in the same step (`shifted_copies`). `edit_copy` (the
+    panel's button, a double click): the ground `EditGround`, a library
+    copy `EditAsset`, another own asset `Pending::EditOwn` →
+    `open_own_tab` (`decode_own`; `EditorState::own`, `OwnOpen`), whose
+    edits reach the level as one placement step on the way back, Play,
+    Save or `leave` (`apply_own`), followed on the way there (`sync_own`).
+  - **The UI**: the Copies list (`ui::elements::copies`): rows top first,
+    a lock toggle, the asset's name, the id, `LIBRARY_MARK` 🔗 or the
+    weak `OWN_MARK` "own"; a click selects (Ctrl toggles), a double click
+    `EditCopy`, a row dropped on another `RestackCopy`. The copy panel
+    (`ui::properties::copy`): name, id, Position X/Y, Width/Height, the
+    multiple, `KEEP_ASPECT`, Locked, `EDIT_IN_LEVEL` or
+    `EDIT_LIBRARY_COPY`, Delete. The Assets tab's `PLACE` button.
+  - **Tests**: `tests/level_tab.rs` (`placed_level`: the fixture with a
+    lamp, a stretched torch and an own strip light; the issue's
+    acceptance tests and the flow `move_and_resize_a_copy_through_the_canvas`),
+    `asset.rs`' `placing_is_one_step_that_selects_the_new_copy_and_adds_lighting`.
 - **Tests** (`tests/`, one binary): `asset.rs` (issue #9: save, the name
-  clash, the rectangle unclipped and hidden layers left out, placing as one
-  step with lighting added, join and add, Remove, Import, and the
+  clash, the rectangle unclipped and hidden layers left out, placing a
+  copy as one step with lighting added, Remove, Import, and the
   `egui_kittest` flow `save_and_place_through_the_panels`; the test host
   keeps a library, `common::set_library`; `common::catalog` lists
   `content/materials`), `materials.rs` (issue #43: the library, users

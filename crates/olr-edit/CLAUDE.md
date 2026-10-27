@@ -406,10 +406,10 @@ operations.
   first, then `Dirt`: a plain Dirt layer or a mixed layer's dirt cell in
   any state, then `RasterOrDistant`; `Display` texts). `Summary` gains
   `states` and `may_be_live` (from `asset.ron` and whether `script.rhai`
-  exists). Landing until #82: `landed_pieces` (the start posed with
-  its defaults; the editor's `place_asset` and the thumbnail use it) and
-  `left_behind` (the editor's status bar: "<name>'s states, values,
-  sounds and script stay in the asset"). `plain` keeps
+  exists). `landed_pieces` (the start posed with its defaults; the
+  thumbnail uses it; the editor's landing went with #82, which places
+  copies) and `left_behind` ("<name>'s states, values, sounds and
+  script stay in the asset"). `plain` keeps
   glass. Tests: `asset.rs`' `decode_and_encode_round_trip_states`,
   `posed_takes_the_state_then_the_copy_then_the_default`,
   `a_state_is_a_complete_look`, `posed_mirrors_offsets_hides_and_tints`,
@@ -497,6 +497,11 @@ operations.
   everything is baked with `compose::bake_elements_with_opacity` (the
   full rect) and `refresh_thumb`. Nothing is written. Errors are
   `PlacedError` (`Format`, `Asset { key }`, `Copy { copy }`, `Level`).
+  Issue #82: `bake` runs on two public steps the level editor caches per
+  copy: `lay_copy(copy, asset, s)` (`LaidCopy`: its `LaidPiece`s posed,
+  laid and folded, ids `<copy>.<id>`, with the copy's groups and
+  materials) and `gather_copy(groups, materials, copy, …)` (`CopyIds`:
+  the gathered names, `name` and `renumbered` applying them to a piece).
   Opacity (`compose`): `bake_elements_with_opacity` takes one percent per
   non-distant item (missing: 100); a Background piece below 100 mixes
   its back pixels over the back below as glass does (straight alpha,
@@ -743,8 +748,8 @@ operations.
     the flags follow the maps. `land` still strips surfaces (the editor's
     paste); `with_materials` (`MaterialChange`: joined by id, the level's
     settings kept, or added; `renumbering`) and `land_surfaces` give a
-    landed element its surfaces and re-numbered maps: the editor's
-    `place_asset` uses them. `encode`/`decode` write and read
+    landed element its surfaces and re-numbered maps (`olr-cli`'s
+    landing; the editor places copies since #82). `encode`/`decode` write and read
     `surface/<id>.png` and `.back.png`; an asset without materials is
     byte for byte as before.
   - **`element`**: `Property::Surface`/`BackSurface` (an id the look
@@ -804,8 +809,7 @@ operations.
     the element's own flags (a folder's visibility rebakes, never
     re-decodes); `asset::DecodedLevel::of_pack` folds too; `asset::plain`
     and `land` clear `folder` (`Landing::folders` keeps landed ids off
-    the folders'); the editor's `place_asset` groups two pieces or more
-    in a folder named after the asset.
+    the folders').
   - Tests: `tests/folders.rs` (group contiguous, scattered and nested,
     ungroup, move in and out, raise and lower at folder edges, distant
     layers, remove, `tidy`, equal trees writing alike, cycle-safe walks,
