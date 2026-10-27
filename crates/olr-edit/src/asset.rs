@@ -403,6 +403,23 @@ fn carried_materials(
     all.iter().zip(&used).filter(|(_, u)| **u).map(|(m, _)| m.clone()).take(255).collect()
 }
 
+/// The glow groups and surface materials of `look` that `pieces` (of an
+/// asset or level of `size`) name, as an asset carries them: the groups
+/// their glows name, a glow naming none of them gone; the materials they
+/// name, their maps' values re-numbered to index them (issue #77: the
+/// editor's asset tab saves its document so, a group or material no
+/// layer uses any more left out, as `check_asset` asks).
+pub fn carried_look(
+    pieces: &mut [Piece],
+    look: Option<&LookSource>,
+    size: (u32, u32),
+) -> (Vec<GlowGroupSource>, Vec<MaterialSource>) {
+    let groups = named_groups(pieces, look);
+    drop_dangling(pieces, &groups);
+    let materials = carried_materials(pieces, look, size);
+    (groups, materials)
+}
+
 /// An image piece as it is, its glow mask and surface maps kept (none
 /// when all zero), in a level of `size`.
 fn whole_image(piece: PieceRef, size: (u32, u32)) -> Option<Piece> {
