@@ -14,7 +14,9 @@
 //! - a rock part is front art: where its rock mask is solid it hides the
 //!   ground, glows as its own glow and groups, and is solid for the light;
 //! - a background part is back art: it shows only where the ground is
-//!   background and no rock part covers, its alpha (glass included) times
+//!   background, in the stack's order (a rock part above it covers it; it
+//!   lays over a rock part below it, which is then open for the light, as
+//!   a static background element above rock is), its alpha (glass included) times
 //!   its opacity laid over what is there as the static bake lays a
 //!   translucent background (straight alpha, never over a see-through
 //!   pixel unless it is glass), its glow and groups over the ground's.
@@ -322,7 +324,7 @@ impl Live {
                         continue;
                     }
                     self.solid[cell] = 1;
-                } else if g.cells[cell] != Material::Background as u8 || self.solid[cell] != 0 {
+                } else if g.cells[cell] != Material::Background as u8 {
                     continue;
                 }
                 let mut centre = false;
@@ -363,6 +365,12 @@ impl Live {
                             glow[dst_i] = mask.map_or(0, |m| live_glow(p.glow, m[src_row + ax]));
                         }
                     }
+                }
+                // A background part over a rock part below it is the
+                // topmost there, background as in the static bake: the
+                // light passes where its centre art pixel shows.
+                if !p.rock && centre {
+                    self.solid[cell] = 0;
                 }
                 // A world pixel's group follows its centre art pixel (a
                 // rock part's every solid pixel).

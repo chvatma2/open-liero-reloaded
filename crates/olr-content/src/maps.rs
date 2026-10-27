@@ -88,6 +88,10 @@ impl LoadedLevel {
         let Extras { look, glow, clear, glass, glow_beams, haze, distant, surface, distant_surface, live } =
             extras;
         check_art_size(l.material.width(), l.material.height(), l.def.art_scale)?;
+        let level_groups = look.as_ref().map_or(0, |l| l.groups.len());
+        let live = live.map(|src| crate::LoadedLive::new(src, level_groups));
+        let mut warnings = warnings;
+        warnings.extend(live.iter().flat_map(|l| l.warnings.iter().cloned()));
         Ok(LoadedLevel {
             name: l.def.name,
             material: l.material,
@@ -105,7 +109,7 @@ impl LoadedLevel {
             distant,
             surface,
             distant_surface,
-            live: live.map(crate::LoadedLive::new),
+            live,
             warnings,
         })
     }
@@ -120,6 +124,12 @@ impl LoadedLevel {
     /// every world of a match; `None` without any.
     pub fn live_sim(&self) -> Option<std::sync::Arc<olr_sim::LiveLevel>> {
         self.live.as_ref().map(|l| l.sim.clone())
+    }
+
+    /// Its live copies' pictures as the colour map draws them (issue #87,
+    /// `ColorMap::set_live_art`); `None` without any.
+    pub fn live_art(&self) -> Option<std::sync::Arc<olr_terrain::LiveArt>> {
+        self.live.as_ref().map(|l| l.art.clone())
     }
 
     /// The first spawn point when it is a good spawn point, else `None` (a

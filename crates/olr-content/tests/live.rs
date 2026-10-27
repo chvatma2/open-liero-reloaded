@@ -173,3 +173,90 @@ fn a_live_levels_world_holds_its_copies() {
         content.new_world(&olr_content::SandboxSetup { level_id: "test-level".into(), ..setup }).unwrap();
     assert!(plain.live().is_none());
 }
+
+/// The fixture on the synthetic packs' theme, its world (one worm) and
+/// its level and colour map with the live copies drawn as the world
+/// starts them (issue #87).
+fn drawn() -> (tempfile::TempDir, LoadedLevel, olr_terrain::ColorMap) {
+    let (tmp, content) = content(|dir| {
+        let path = dir.join("level.ron");
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, text.replace("olx-theme-dirt", "test-theme")).unwrap();
+    });
+    let setup = olr_content::SandboxSetup {
+        mod_id: "broken-mod".into(),
+        level_id: ID.into(),
+        seed: 3,
+        settings: olr_sim::SimSettings::lx56(),
+        worms: vec![olr_content::SpawnSpec::default()],
+        restrictions: olr_content::DEFAULT_PRESET.into(),
+    };
+    let world = content.new_world(&setup).unwrap();
+    let level = content.load_level(ID).unwrap();
+    let theme = content.load_theme(&level.theme).unwrap();
+    let mut map = level.color_map(&theme);
+    map.set_live_art(level.live_art());
+    let mut frame = olr_terrain::LiveFrame::default();
+    olr_content::live_frame(world.live().unwrap(), &mut frame);
+    map.set_live(&frame);
+    (tmp, level, map)
+}
+
+/// Issue #87: a live part glows its unscaled mask × its `GlowStrength`
+/// value, as the static bake computes it: every copy (the dim lamp at 30
+/// %, the consoles' screens over their cases) shows the glow the same
+/// copies baked static show, and its colours.
+#[test]
+fn glow_strength_is_mask_times_value() {
+    let (_tmp, live, map) = drawn();
+    let mut pack = olr_edit::pack::load(&fixture()).unwrap();
+    let sim = live.live_sim().unwrap();
+    for c in &sim.copies {
+        olr_edit::placed::set_copy(&mut pack, &c.id, olr_edit::placed::CopyProperty::Live(false)).unwrap();
+    }
+    olr_edit::placed::bake_pack(&mut pack, &RgbaImage::new(1, 1)).unwrap();
+    let olr_edit::pack::Source::Level(src) = &pack.source else { panic!("a level") };
+    let fixed = LoadedLevel::from_source(src).unwrap();
+    let static_glow = &fixed.glow.as_ref().expect("the static copies glow").front;
+    let (s, w) = (live.art_scale, map.width());
+    let mut lit = 0;
+    for c in &sim.copies {
+        let (x0, y0) = (c.at.0 as u32 * s, c.at.1 as u32 * s);
+        for y in y0..y0 + c.size.1 * s {
+            for x in x0..x0 + c.size.0 * s {
+                let i = (y * w + x) as usize;
+                assert_eq!(map.glow().unwrap()[i], static_glow[i], "{}: art pixel ({x}, {y})", c.id);
+                let shown = &map.pixels()[i * 4..i * 4 + 4];
+                let baked = fixed.front.get(x, y);
+                assert_eq!(shown, [baked.r, baked.g, baked.b, baked.a], "{}: art pixel ({x}, {y})", c.id);
+                lit += usize::from(static_glow[i] != 0);
+            }
+        }
+    }
+    assert!(lit > 0, "the bulb and the screens glow");
+    assert_eq!(olr_terrain::live_glow(30, 255), olr_format::levels::glow_value(30, 255));
+}
+
+/// Issue #87: the fixture has no glow maps of its own (#85's bake gave it
+/// the default look): its live copies give the colour map a glow
+/// channel, their own groups after the level's (none), in copy order.
+#[test]
+fn a_level_lit_only_by_live_copies_draws_lit() {
+    let (_tmp, level, map) = drawn();
+    assert!(level.glow.is_none() && level.has_look());
+    let groups = map.glow_groups().expect("a glow channel for the live copies");
+    let live = level.live.as_ref().unwrap();
+    let ids: Vec<&str> = live.groups.iter().flatten().map(|g| g.id.as_str()).collect();
+    assert_eq!(ids, ["lamp", "screen", "screen"], "the lamp's, then each console's");
+    let at = |id: &str| live.sim.copy_by_id(id).unwrap().at;
+    let shown = |id: &str| {
+        let (x, y) = at(id);
+        let w = level.material.width();
+        let c = live.sim.copy_by_id(id).unwrap();
+        (0..c.size.1).flat_map(|dy| (0..c.size.0).map(move |dx| (dx, dy))).find_map(|(dx, dy)| {
+            Some(groups[((y as u32 + dy) * w + x as u32 + dx) as usize]).filter(|&v| v != 0)
+        })
+    };
+    assert_eq!((shown("lamp"), shown("console-a"), shown("console-b")), (Some(1), Some(2), Some(3)));
+    assert!(map.glow().unwrap().iter().any(|&g| g != 0));
+}

@@ -162,11 +162,17 @@ fn a_background_part_shows_only_where_the_ground_is_air() {
     assert_eq!(at(&m, 18, 3), GREEN, "on air");
     assert_eq!(at(&m, 21, 3), FRONT, "dirt hides it");
     assert_eq!(at(&m, 18, 0), FRONT, "rock hides it");
-    // A rock part, even one below it, covers it too.
-    m.set_live(&frame(&[&[part(0, true, (16, 2)), part(1, false, (18, 0))], &[]]));
+    // In the stack's order: a rock part above it covers it, one below it
+    // is covered (and open for the light there, as the static bake's
+    // background element above rock).
+    m.set_live(&frame(&[&[part(1, false, (18, 0)), part(0, true, (16, 2))], &[]]));
     assert_eq!(at(&m, 18, 3), RED);
-    assert_eq!(at(&m, 19, 3), RED);
     assert_eq!(at(&m, 18, 1), GREEN, "beside the rock part");
+    m.set_live(&frame(&[&[part(0, true, (16, 2)), part(1, false, (18, 0))], &[]]));
+    assert_eq!(at(&m, 18, 3), GREEN);
+    assert_eq!(at(&m, 16, 3), RED, "where the panel is not");
+    assert_eq!(m.live_solid().unwrap()[3 * 32 + 18], 0);
+    assert_eq!(m.live_solid().unwrap()[3 * 32 + 16], 1);
 }
 
 #[test]

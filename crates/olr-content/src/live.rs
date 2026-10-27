@@ -1,30 +1,131 @@
 //! A level's live copies as a match loads them (issue #85): the played
 //! form as read (`olr_format::levels::LiveSource`: pictures, masks,
 //! scripts and sounds, for presentation) and the simulation's data made
-//! from it once ([`olr_sim::LiveLevel`], shared by an `Arc`).
+//! from it once ([`olr_sim::LiveLevel`], shared by an `Arc`); issue #87:
+//! each copy's glow groups compiled and its pictures as the colour map
+//! draws them ([`olr_terrain::LiveArt`]), the copy's groups numbered after
+//! the level's.
 
 use std::sync::Arc;
 
-use olr_format::levels::{LiveFile, LiveSource, PartKind, Target};
+use olr_format::levels::{LIVE_FILE, LiveFile, LiveSource, PartKind, Target};
+use olr_format::look::{LookSource, compile_look_source};
+use olr_look::GlowGroup;
 use olr_sim::{
     LiveCopy, LiveCopySetup, LiveHealth, LiveLevel, LivePart, LivePartKind, LiveProp, LiveSolid, LiveState,
-    LiveTarget,
+    LiveTarget, LiveView,
 };
+use olr_terrain::{LiveArt, LiveFrame, LivePicture, LivePlaced};
 
-/// A level's live copies: the played form and the simulation's data.
+/// A level's live copies: the played form, the simulation's data and
+/// what presentation draws.
 #[derive(Clone, Debug)]
 pub struct LoadedLive {
     /// `live.ron` and `live/` as read (checked: `check_live`).
     pub source: LiveSource,
     /// The simulation's data, made from `source`.
     pub sim: Arc<LiveLevel>,
+    /// Each copy's own glow groups, compiled (issue #87); a copy whose
+    /// groups pass the 255 group map values has none.
+    pub groups: Vec<Vec<GlowGroup>>,
+    /// Every copy's pictures as the colour map draws them (issue #87),
+    /// their groups numbered after the level's.
+    pub art: Arc<LiveArt>,
+    /// What loading left out (a copy drawn without glow), to log once.
+    pub warnings: Vec<String>,
 }
 
 impl LoadedLive {
-    /// The live copies of a checked played form.
-    pub fn new(source: LiveSource) -> LoadedLive {
+    /// The live copies of a checked played form in a level of
+    /// `level_groups` glow groups (its look's).
+    ///
+    /// The group map is one byte: the level's groups keep `1..=n`, then
+    /// copy `c`'s group `g` is `n + offset(c) + g`, copies in order (the
+    /// design's call 13). The bake refuses more than 255 together; a copy
+    /// past them all the same is drawn without glow, with a warning, never
+    /// a panic.
+    pub fn new(source: LiveSource, level_groups: usize) -> LoadedLive {
         let sim = Arc::new(live_level(&source));
-        LoadedLive { source, sim }
+        let mut warnings = Vec::new();
+        let mut next = level_groups;
+        let mut groups = Vec::with_capacity(source.file.copies.len());
+        let mut art = LiveArt { copies: Vec::with_capacity(source.file.copies.len()) };
+        for (i, c) in source.file.copies.iter().enumerate() {
+            let look = LookSource { glow_groups: c.groups.clone(), ..LookSource::default() };
+            let own = compile_look_source(&look, LIVE_FILE).map(|l| l.groups).unwrap_or_default();
+            let base = next;
+            next += c.groups.len();
+            let fits = next <= usize::from(u8::MAX) && own.len() == c.groups.len();
+            if !fits {
+                warnings.push(format!(
+                    "live copy {}: its glow groups pass the level's 255: drawn without glow",
+                    c.id
+                ));
+            }
+            let pictures = source.pictures.get(i).map_or(&[][..], Vec::as_slice);
+            art.copies.push(
+                c.pictures
+                    .iter()
+                    .enumerate()
+                    .map(|(k, entry)| {
+                        let Some(p) = pictures.get(k) else { return LivePicture::default() };
+                        LivePicture {
+                            size: entry.size,
+                            art: p.art.as_raw().to_vec(),
+                            rock: p.rock.clone(),
+                            glow: p.glow.clone().filter(|_| fits),
+                            groups: p.groups.as_ref().filter(|_| fits).map(|g| {
+                                let value = |v: u8| match usize::from(v) {
+                                    0 => 0,
+                                    v if v <= c.groups.len() => (base + v) as u8,
+                                    _ => 0,
+                                };
+                                g.iter().map(|&v| value(v)).collect()
+                            }),
+                        }
+                    })
+                    .collect(),
+            );
+            groups.push(if fits { own } else { Vec::new() });
+        }
+        LoadedLive { source, sim, groups, art: Arc::new(art), warnings }
+    }
+}
+
+/// Fills `frame` with the parts `live` shows now (issue #87), copy by
+/// copy, for `ColorMap::set_live`: each visible part at its whole-pixel
+/// place, mirrored within its copy's rectangle when the copy's `Facing` is
+/// not 0, a background part at its layer's `Opacity` (percent, as the
+/// bake rounds it to an alpha), each at its layer's `GlowStrength`, else
+/// its strength as authored. Allocates nothing once `frame` is warm.
+pub fn live_frame(live: LiveView<'_>, frame: &mut LiveFrame) {
+    frame.clear();
+    for c in live.copies() {
+        let (rx, _, w, _) = c.rect();
+        let flip = c.target(LiveTarget::Facing).is_some_and(|v| v != 0);
+        let pictures = &c.setup().pictures;
+        for (p, (x, y)) in c.visible_parts() {
+            let layer = |t: fn(u16) -> LiveTarget| p.layer.and_then(|l| c.target(t(l)));
+            let x = if flip {
+                let pw = pictures.get(usize::from(p.picture)).map_or(0, |s| i64::from(s.size.0));
+                let m = 2 * i64::from(rx) + i64::from(w) - i64::from(x) - pw;
+                m.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
+            } else {
+                x
+            };
+            let rock = p.kind == LivePartKind::Rock;
+            let opacity = if rock { 100 } else { layer(LiveTarget::Opacity).unwrap_or(100).clamp(0, 100) };
+            let glow = layer(LiveTarget::GlowStrength).unwrap_or(i64::from(p.glow_strength)).clamp(0, 100);
+            frame.push(LivePlaced {
+                picture: p.picture,
+                rock,
+                at: (x, y),
+                flip,
+                alpha: ((opacity as u32 * 255 + 50) / 100) as u8,
+                glow: glow as u8,
+            });
+        }
+        frame.end_copy();
     }
 }
 

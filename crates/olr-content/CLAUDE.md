@@ -84,6 +84,21 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   `replay_assets_from` (so `world_for_replay`) pass `live_sim()` as
   `MatchSetup::live`/`Assets::live`, so a match's world holds its copies'
   state (`a_live_levels_world_holds_its_copies`).
+  Issue #87 (drawing them): `LoadedLive::new(source, level_groups)`
+  also compiles each copy's glow groups (`groups`, through
+  `compile_look_source`) and makes `art` (`olr_terrain::LiveArt`, each
+  picture's art and masks, its groups numbered after the level's: copy
+  `c`'s group `g` is `n + offset(c) + g`; a copy past the 255 values
+  drawn without glow, with a warning in `LoadedLevel::warnings`);
+  `LoadedLevel::live_art()` is its `Arc` for `ColorMap::set_live_art`.
+  `live_frame(world.live(), &mut LiveFrame)` fills a frame with the
+  parts the world shows (whole-pixel places, mirrored within the copy's
+  rectangle by `Facing`, a background part's `Opacity` rounded to an
+  alpha as the bake does, `GlowStrength` else the part's own; no
+  allocation once warm), shared by `olr-present` and the tests.
+  Tests: `glow_strength_is_mask_times_value` (every copy of the fixture
+  drawn live shows the glow and the colours of the same copies baked
+  static), `a_level_lit_only_by_live_copies_draws_lit`.
 - **Hostile levels:** `load_level` refuses an art scale above
   `MAX_ART_SCALE` (8) or a colour image above `MAX_COLOR_MAP_BYTES`
   (256 MiB), so a pack cannot make the colour map allocate gigabytes.
