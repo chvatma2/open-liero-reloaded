@@ -1,6 +1,7 @@
 //! `olr-cli`: headless tools for OLR. Run `olr-cli --help`.
 
 mod asset_cmd;
+mod copy_cmd;
 mod element_cmd;
 mod frame_hashes_cmd;
 mod gpu_bench_cmd;
@@ -59,8 +60,8 @@ enum Command {
     Render(render::Args),
     /// Draw a level with its look (no match) to a PNG, offscreen.
     LookPreview(look_preview::Args),
-    /// The level editor's assets: save one from a level pack, place one in a level pack,
-    /// check asset folders.
+    /// The level editor's assets: save one from a level pack, check and edit asset folders
+    /// (a level places them: `olr-cli level copy add`).
     Asset(asset_cmd::Args),
     /// The surface material library (built-in and the user's): list it, check
     /// material files. A level's own: `olr-cli level material`.

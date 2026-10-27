@@ -16,6 +16,7 @@ mod common;
 
 mod asset;
 mod cli;
+mod copy;
 mod corpus;
 mod deaths;
 mod digest;

@@ -842,7 +842,7 @@ fn a_new_haze_map_starts_full() {
 /// The composed pack at `pack` turned into a level of OLR 0.2: its
 /// ground's elements as `editor/composition.ron`, the placement gone (the
 /// bake is the same: a ground alone bakes as its composition).
-fn make_02(pack: &Path) {
+pub(crate) fn make_02(pack: &Path) {
     let fs = olr_vfs::DirFs::new(pack);
     let placed = olr_format::levels::read_placed_files(&fs).unwrap().unwrap();
     let ground = &placed.assets[olr_format::levels::GROUND_KEY];

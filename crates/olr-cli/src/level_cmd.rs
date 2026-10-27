@@ -91,6 +91,20 @@ enum LevelCommand {
         #[command(subcommand)]
         command: ElementCommand,
     },
+    /// A level's placed copies of assets (issue #75): add, list, move,
+    /// resize, set, script, raise, lower, remove.
+    Copy {
+        #[command(subcommand)]
+        command: crate::copy_cmd::CopyCommand,
+    },
+    /// Set or clear the level script (`editor/level.rhai`, Rhai, not run).
+    Script {
+        pack: PathBuf,
+        #[command(flatten)]
+        script: crate::copy_cmd::ScriptArgs,
+        #[command(flatten)]
+        content: ContentArg,
+    },
     /// Rebake a composed level's material, front, back and thumbnail.
     Bake {
         pack: PathBuf,
@@ -359,6 +373,10 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
             element_cmd::save_and_print(pack, &p, &messages)
         }
         LevelCommand::Element { command } => element_cmd::run(command),
+        LevelCommand::Copy { command } => crate::copy_cmd::run(command),
+        LevelCommand::Script { pack, script, content } => {
+            crate::copy_cmd::level_script(pack, script, content)
+        }
         LevelCommand::Look(a) => crate::look_cmd::look_cmd(a),
         LevelCommand::Group { command } => crate::look_cmd::group_cmd(command),
         LevelCommand::Haze { command } => crate::look_cmd::haze_cmd(command),

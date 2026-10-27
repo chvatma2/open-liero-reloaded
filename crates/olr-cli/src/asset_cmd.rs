@@ -1,12 +1,11 @@
-//! `olr-cli asset save|place|check` (issue #9): the level editor's asset
+//! `olr-cli asset save|check` (issue #9): the level editor's asset
 //! library for agents. `save` cuts an asset out of a level pack (its
 //! elements, or a world rectangle of every visible layer) and writes its
-//! folder; `place` puts one into a level pack (one save, baked, as `level
-//! element …`); `check` reads asset folders whole. The cut and the placing
-//! are `olr_edit::asset`'s, shared with the editor. An asset carries the
-//! glow groups and surface materials (issue #38) its elements name;
-//! placing joins those the level has (by id, its own settings kept) and
-//! adds the others. Issue #72: `state`, `expose`, `unexpose`, `sound`,
+//! folder; `check` reads asset folders whole. The cut is `olr_edit::
+//! asset`'s, shared with the editor. An asset carries the glow groups and
+//! surface materials (issue #38) its elements name. Issue #75: `place` is
+//! gone; a level places an asset as a copy (`olr-cli level copy add`,
+//! `copy_cmd.rs`). Issue #72: `state`, `expose`, `unexpose`, `sound`,
 //! `script` and `health` edit an asset folder in place (read whole, one
 //! `olr_edit::asset` operation, encoded with its thumbnail and written
 //! through `replace_dir`; a refusal prints `<dir>: <why>`, exits 1 and
@@ -25,8 +24,8 @@ use olr_format::assets::{
 use olr_format::image_io::{self, LEVEL_ART};
 use olr_format::levels::{ElementKind, ElementMaterial, element_box};
 
-use crate::element_cmd::{ContentArg, bake_pack, load_level, save_and_print};
-use crate::level_cmd::{parse_ints, parse_point};
+use crate::element_cmd::load_level;
+use crate::level_cmd::parse_ints;
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -56,18 +55,6 @@ enum AssetCommand {
         /// The asset folder to write (made anew).
         #[arg(long)]
         out: PathBuf,
-    },
-    /// Places an asset in a level pack with its top-left at a world pixel.
-    Place {
-        /// The level pack.
-        pack: PathBuf,
-        /// The asset folder.
-        asset: PathBuf,
-        /// The asset's top-left, world pixels X,Y.
-        #[arg(long, value_parser = parse_point, allow_hyphen_values = true)]
-        at: (i32, i32),
-        #[command(flatten)]
-        content: ContentArg,
     },
     /// Reads asset folders whole; exits with status 1 if any does not.
     Check {
@@ -252,7 +239,6 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         AssetCommand::Save { pack, elements, rect, layers, name, out } => {
             save(pack, elements, *rect, layers, name, out)
         }
-        AssetCommand::Place { pack, asset, at, content } => place(pack, asset, *at, &content.content),
         AssetCommand::Check { assets } => Ok(check(assets)),
         AssetCommand::State { command } => state(command),
         AssetCommand::Expose { dir, name, property, default, min, max } => edit(dir, |a| {
@@ -422,7 +408,7 @@ fn edit(dir: &Path, f: impl FnOnce(&mut Asset) -> Result<Vec<String>, String>) -
 
 /// File `path`'s bytes, at most `max` (more is refused before it is read
 /// whole).
-fn read_bounded(path: &Path, max: u64) -> Result<Vec<u8>, String> {
+pub(crate) fn read_bounded(path: &Path, max: u64) -> Result<Vec<u8>, String> {
     let fail = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
     let f = std::fs::File::open(path).map_err(|e| fail(&e))?;
     let mut out = Vec::new();
@@ -503,7 +489,7 @@ fn seconds(bytes: &[u8]) -> String {
 }
 
 /// "1 line", "18 lines".
-fn lines(s: &str) -> String {
+pub(crate) fn lines(s: &str) -> String {
     match s.lines().count() {
         1 => "1 line".into(),
         n => format!("{n} lines"),
@@ -648,38 +634,6 @@ fn save(
         out.display()
     );
     Ok(true)
-}
-
-fn place(dir: &Path, asset_dir: &Path, at: (i32, i32), content: &Path) -> anyhow::Result<bool> {
-    let a = asset::load_dir(asset_dir).map_err(|e| anyhow::anyhow!("{}: {e}", asset_dir.display()))?;
-    let mut pack = load_level(dir)?;
-    let placed =
-        asset::place_in_pack(&mut pack, &a, at).map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?;
-    bake_pack(dir, &mut pack, content)?;
-    let mut messages: Vec<String> = placed.ids.iter().map(|id| format!("added element {id}")).collect();
-    if let Some(f) = &placed.folder {
-        messages.push(format!("added folder {f}"));
-    }
-    for g in &placed.groups.added {
-        messages.push(format!("added glow group {g}"));
-    }
-    for g in &placed.groups.joined {
-        messages.push(format!("joined glow group {g}"));
-    }
-    for m in &placed.materials.added {
-        messages.push(format!("added material {m}"));
-    }
-    for m in &placed.materials.joined {
-        messages.push(format!("joined material {m}"));
-    }
-    if placed.groups.added_look {
-        messages.push(olr_edit::asset::ADDED_LIGHTING.to_string());
-    }
-    if placed.materials.added_look && !placed.groups.added_look {
-        messages.push("added a look to hold the asset's materials (the level plays lit)".to_string());
-    }
-    messages.extend(placed.note);
-    save_and_print(dir, &pack, &messages)
 }
 
 fn check(dirs: &[PathBuf]) -> bool {

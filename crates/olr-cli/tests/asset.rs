@@ -1,7 +1,7 @@
-//! `olr-cli asset save|place|check` (issue #9) and the built-in assets in
+//! `olr-cli asset save|check` (issue #9) and the built-in assets in
 //! `content/assets/`: each reads whole and is what its command in the
 //! README makes; the torch carries Castle Strike Reloaded's `flames`, not
-//! its `sky`; a saved asset places into a level pack that checks clean.
+//! its `sky`. Placing one is a copy now (issue #75, `copy.rs`).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -46,7 +46,7 @@ fn built_in_assets_check() {
 }
 
 /// Every file under `dir`, by `/`-separated relative path, with its bytes.
-fn tree(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+pub(crate) fn tree(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
     fn go(base: &Path, dir: &Path, out: &mut std::collections::BTreeMap<String, Vec<u8>>) {
         for e in std::fs::read_dir(dir).unwrap() {
             let p = e.unwrap().path();
@@ -134,81 +134,6 @@ fn the_torch_carries_flames_not_sky() {
     assert_eq!(ids, ["background", "background-2"]);
     assert_eq!(wide.pieces[1].element.glow, None);
     assert!(wide.groups.iter().all(|g| g.id != "sky"), "{:?}", wide.groups);
-}
-
-#[test]
-fn cli_saves_and_places_an_asset() {
-    let t = tempfile::tempdir().unwrap();
-    let level = t.path().join("empty");
-    let o =
-        cli(&["pack", "new", "level", "empty-level", "--out", level.to_str().unwrap(), "--size", "120x80"]);
-    assert!(o.status.success(), "{}", text(&o));
-    let level = level.to_str().unwrap();
-    // A level without a look: the asset's lighting is added, and said.
-    let o = cli(&["asset", "place", level, "content/assets/torch", "--at", "10,20"]);
-    let out = text(&o);
-    assert!(o.status.success(), "{out}");
-    assert!(out.contains("added element torch") && out.contains("added glow group flames"), "{out}");
-    assert!(out.contains(olr_edit::asset::ADDED_LIGHTING), "{out}");
-    // Placed again: a new id and name, the group joined.
-    let o = cli(&["asset", "place", level, "content/assets/torch", "--at", "40,20"]);
-    let out = text(&o);
-    assert!(out.contains("added element torch-2") && out.contains("joined glow group flames"), "{out}");
-    let o = cli(&["pack", "check", level]);
-    assert!(o.status.success(), "{}", text(&o));
-    let o = cli(&["level", "element", "list", level]);
-    assert!(text(&o).contains("torch-2 Drawn Background \"Torch 2\""), "{}", text(&o));
-    // Saved back out by its elements, it is the torch moved.
-    let out = t.path().join("again");
-    let o = cli(&[
-        "asset",
-        "save",
-        level,
-        "--elements",
-        "torch",
-        "--name",
-        "Torch",
-        "--out",
-        out.to_str().unwrap(),
-    ]);
-    assert!(o.status.success(), "{}", text(&o));
-    let (a, b) = (
-        olr_edit::asset::load_dir(&out).unwrap(),
-        olr_edit::asset::load_dir(&assets_dir().join("torch")).unwrap(),
-    );
-    assert_eq!((a.size, &a.groups), (b.size, &b.groups));
-    assert_eq!(a.pieces[0].decoded, b.pieces[0].decoded);
-    assert_eq!(a.pieces[0].glow_mask, b.pieces[0].glow_mask);
-}
-
-/// Issue #59: an asset of several pieces lands in a folder named after it.
-#[test]
-fn cli_places_a_multi_piece_asset_in_a_folder() {
-    let t = tempfile::tempdir().unwrap();
-    let level = t.path().join("empty");
-    let o =
-        cli(&["pack", "new", "level", "empty-level", "--out", level.to_str().unwrap(), "--size", "120x80"]);
-    assert!(o.status.success(), "{}", text(&o));
-    let level = level.to_str().unwrap();
-    let o = cli(&["asset", "place", level, "content/assets/ceiling-lamp", "--at", "10,20"]);
-    let out = text(&o);
-    assert!(o.status.success(), "{out}");
-    assert!(
-        out.contains(
-            "added element ceiling-lamp-rock\nadded element ceiling-lamp-lamps\nadded folder ceiling-lamp\n"
-        ),
-        "{out}"
-    );
-    let o = cli(&["level", "element", "list", level]);
-    assert_eq!(
-        text(&o),
-        "0: base Raster - \"Base\"\nfolder ceiling-lamp \"Ceiling lamp\"\n  1: ceiling-lamp-rock Drawn Rock \"Ceiling lamp Rock\" surface stone surface-map\n  2: ceiling-lamp-lamps Drawn Background \"Ceiling lamp Lamps\" glow 100% lamps surface glass\n",
-    );
-    let o = cli(&["pack", "check", level]);
-    assert!(o.status.success(), "{}", text(&o));
-    // One piece stays plain.
-    let o = cli(&["asset", "place", level, "content/assets/torch", "--at", "60,20"]);
-    assert!(!text(&o).contains("folder"), "{}", text(&o));
 }
 
 #[test]
@@ -322,7 +247,7 @@ fn png(path: &Path, w: u32, h: u32, c: olr_data::image::Rgba) {
 /// by its elements, then given states On and Off (Off painting the lamp
 /// dark, unlit and ticking), an exposed glow and a script. Returns the
 /// asset folder.
-fn build_lamp(t: &Path) -> PathBuf {
+pub(crate) fn build_lamp(t: &Path) -> PathBuf {
     let level = t.join("level");
     let l = level.to_str().unwrap();
     ok(&["pack", "new", "level", "lamp-level", "--out", l, "--size", "40x20"]);
