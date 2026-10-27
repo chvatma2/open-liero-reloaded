@@ -37,7 +37,7 @@ impl Director for TestDirector {
             let fired = timers.iter().filter(|t| t.due <= frame).count() as i64;
             timers.retain(|t| t.due > frame || t.period > 0);
             for t in timers.iter_mut().filter(|t| t.due <= frame) {
-                t.due = frame + t.period;
+                t.due = frame.saturating_add(t.period);
             }
             if timers.is_empty() {
                 timers.push(LiveTimer {
@@ -60,7 +60,7 @@ impl Director for TestDirector {
                 .unwrap_or(0);
             let mut mem = Vec::new();
             push_memory(&mut mem, "fired", MemValue::Int(fired));
-            push_memory(&mut mem, "n", MemValue::Int(n + 1 + seen));
+            push_memory(&mut mem, "n", MemValue::Int(n.wrapping_add(1).wrapping_add(seen)));
             push_memory(&mut mem, "odd", MemValue::Bool(n % 2 == 1));
             push_memory(&mut mem, "who", MemValue::Str(if i == 0 { "level" } else { "copy" }));
             assert!(ctx.set_memory(i, &mem));
@@ -74,7 +74,7 @@ impl Director for TestDirector {
                 ctx.set_rng(rng);
                 ctx.apply(LiveCommand::SetState { copy, state });
             } else if r == 1 {
-                ctx.apply(LiveCommand::SetValue { copy, prop: 0, value: n * 3 });
+                ctx.apply(LiveCommand::SetValue { copy, prop: 0, value: n.wrapping_mul(3) });
             }
             if frame % 37 == u64::from(i) {
                 ctx.fail(i);
