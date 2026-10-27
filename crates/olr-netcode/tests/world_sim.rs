@@ -133,6 +133,37 @@ fn state_transfer_in_a_real_match() {
     assert_eq!(b.decode_state(&[0, 1, 2]).map_err(|_| ()), Err(()));
 }
 
+/// Issue #86: a live level's world (`fixtures/live/levels/live-test` over
+/// the imported content) transfers its copies' state with the rest.
+#[test]
+fn state_transfer_of_a_live_world() {
+    let Some(dir) = std::env::var("OLR_CONTENT_DIR").ok().filter(|d| std::path::Path::new(d).is_dir()) else {
+        eprintln!("OLR_CONTENT_DIR not set or missing; skipping");
+        return;
+    };
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/live/levels");
+    let c = Content::open_layers(&[std::path::Path::new(&dir), &fixtures]).unwrap();
+    let live_world = || {
+        let o = MatchOptions { level_id: "olr-level-live-test".into(), ..options(4) };
+        c.build_match(&o).unwrap().world
+    };
+    let mut src = live_world();
+    assert_eq!(src.live().map(|l| l.len()), Some(6), "the fixture's live copies");
+    src.set_live_state(1, 1).unwrap();
+    src.set_live_value(3, 0, 5 * olr_sim::LIVE_SUBPIXELS + 3).unwrap();
+    let mut a = WorldSim::new(src);
+    for t in 0..200 {
+        a.tick(&keys(t));
+    }
+    let mut b = WorldSim::new(live_world());
+    assert_ne!(a.world().sync_checksum(), b.world().sync_checksum());
+    b.decode_state(&a.encode_state()).unwrap();
+    assert_eq!(a.world().sync_checksum(), b.world().sync_checksum());
+    assert_eq!(a.world(), b.world());
+    let console = b.world().live().unwrap().copy(1).unwrap();
+    assert_eq!(console.state_name(), "Alarm");
+}
+
 /// Every peer builds the same world; drivers press scripted keys.
 struct Worlds<'a> {
     content: &'a Content,
