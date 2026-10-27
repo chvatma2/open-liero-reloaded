@@ -945,7 +945,10 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   answers `AssetRead` (issue #82: the files, `read_dir`, a valid folder id only); `SaveAsset`
   (`add_to_library`), `ImportAsset` (`import_into_library`) and
   `RemoveAsset` (`remove_from_library`) answer `AssetsChanged` and, for a
-  folder written, `AssetSaved`, or `Failed` (`EditorHost::assets`). The
+  folder written, `AssetSaved` (issue #83: with the folder's source read
+  back), or `Failed` (`EditorHost::assets`). Issue #83: `CompareLibrary
+  { origins }` answers `LibraryCompared` (`olr_edit::library::
+  read_origins` over the built-in and user folders). The
   built-in folder is never written (`tests/editor_host.rs`'s
   `assets_are_listed_saved_placed_and_removed`). Issue #77, the asset
   tab: `ReadAssetToEdit` answers `AssetToEdit` (`read_asset`, as

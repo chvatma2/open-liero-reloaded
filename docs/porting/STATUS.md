@@ -6901,7 +6901,9 @@ No OLX counterpart. The design
 level tab", call 16); the code is `olr-editor`'s `ground.rs` and
 `state.rs`. Part 1 (#81) moves layer painting to the asset tab: the
 level tab shows the ground as one copy. Part 2 (#82, `copies.rs`,
-`level_tab.rs`) makes it a placement editor of copies.
+`level_tab.rs`) makes it a placement editor of copies. Part 3 (#83,
+`links.rs`, `ui/library.rs`, `ui/level_tab.rs`) puts the asset library
+on the left and keeps the copies linked to it.
 
 - **The level tab shows one locked copy, the ground (#81).** The right
   panel's first tab is Copies (`labels::COPIES`), listing the ground
@@ -6991,6 +6993,56 @@ level tab shows the ground as one copy. Part 2 (#82, `copies.rs`,
   the ground as #81, another own asset in the asset tab, its edits one
   level step on the way back) or **Edit library asset** (as the Assets
   tab's Edit asset); a double click on a copy does the same.
+- **The level tab's layout (#83).** As the asset tab's (#78): the
+  session bar wrapped to the window (Level | Asset, File ▾, Undo, Redo,
+  the unsaved mark, View ▾, Play); on the left the tools (Select, Spawn,
+  the Haze brush), the chosen tool's options under them, then the
+  library: Search (by name, case aside), the thumbnails grouped
+  Built-in then Yours in rows of as many as fit, and Place, Edit asset,
+  Remove asset (the user's), New asset…, Import asset…; on the right
+  Copies | Spawns, then the selection's panel or the level's. The
+  options bar and the right panel's Assets tab are gone. Both side
+  panels take a share of the width; below 900 points one shows at a
+  time, switched by the session bar's Library | Copy. `the_level_tab_fits`
+  replaces `the_toolbar_stays_in_the_window_and_in_place`.
+- **Placing again reuses the level's copy of the asset (#83).** A drag or
+  a pick then a click places the library asset; a second placing of the
+  same origin reuses the level's asset (`olr_edit::placed::add_copy`'s
+  `same_asset`). When the library's version differs, the new copy takes
+  it (a new key) and the status offers the older copies the update
+  (`offer_newer`: "Update <asset>", as below).
+- **The host compares the library (#83).** The editor never reads
+  files: whenever the library may have changed (`AssetsChanged`,
+  `AssetSaved`) it sends `CompareLibrary { origins }`, the level's
+  linked origins, and the host answers `LibraryCompared` with each
+  origin's source (`olr_edit::library::read_origins`, `None` for one
+  gone; a built-in origin read only from the built-in assets).
+  `olr_edit::library::compare` sorts them: an unbreaking change is
+  applied as one step named "Update <asset>" (the Undo button's hover;
+  the status "2 copies of Lamp updated"), the copies of one origin
+  merged into one asset again; a breaking change (a copy's values or
+  state no longer fitting the new version) is not applied, the status saying "Lamp
+  changed: 2 copies would break"; a missing asset changes nothing.
+  `AssetSaved` carries the saved asset's source too.
+- **Use your copy in this level (#83).** After an edited built-in asset
+  is saved as the user's, the status line offers `Use your copy in this
+  level`: one step relinking every copy of the built-in to the user's
+  (`olr_edit::library::relink`), named "Use your <asset>".
+- **The copy panel's link (#83).** A library copy shows its origin
+  ("Built-in: Lamp", "Yours: Lamp") and **Unlink**, which makes its asset
+  the level's own (`olr_edit::library::adopt`, one step); an own asset
+  shows **Save to library**, asking its name as Save as asset does, then
+  relinking the copies to the new asset of yours in one step. It is
+  refused with the reason for a distant or raster layer ("… with
+  distant layers stays the level's"), an unused glow group ("remove the
+  unused glow group 2 first") or any other `check_asset` refusal.
+- **Save to library on the ground saves a copy (#83, a deviation).** The
+  ground cannot be linked (`check_placed` keeps it Own), so its Save to
+  library writes its placement as a library asset and the level keeps
+  its own ground; the status says so.
+- **`AssetRead` still carries the source only (#83).** The design's
+  decoded `Asset` beside the source is not sent: `add_copy` decodes the
+  source itself, once.
 - **A plain level is one locked ground (#81).** It opens split into its
   three layers as before; its `Kept` glow, beams and clear flags stay
   while no layer glows or is clear, an Edit Ground included.

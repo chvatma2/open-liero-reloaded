@@ -23,11 +23,11 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   `Play`, `SaveSettings`, `List`, `ReadImage`, `RecoveryDone`, `Close`;
   the libraries' `AddTexture`, `RemoveTexture`, `ReadAsset`, `SaveAsset`,
   `ImportAsset`, `RemoveAsset`; issue #11's `Distant`; issue #77's
-  `ReadAssetToEdit`)
+  `ReadAssetToEdit`; issue #83's `CompareLibrary`)
   and answers (`Opened`, `Recovered`: as `Opened` but unsaved, `OpenFailed`,
   `Saved`, `PlayEnded`, `Listed`, `ImportImage`, `ImportFailed`,
-  `TexturesChanged`, `AssetsChanged`, `AssetSaved`, `AssetRead`,
-  `AssetToEdit`; and
+  `TexturesChanged`, `AssetsChanged`, `AssetSaved` (the key and, issue
+  #83, the saved source), `AssetRead`, `AssetToEdit`, `LibraryCompared`; and
   `Failed(why)`, an error dialog, `Note(text)`, the status bar's message,
   for what the host could not do: a Play that did not start, a recovery
   copy not written).
@@ -109,7 +109,7 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   drawn at every zoom, a line every `grid_step` world pixels (1, or the
   smallest power of two at least 8 points apart).
 - **Panels** (`ui/`; issue #8's layout, STATUS.md "Level editor layout
-  (issue #8)"): on top the session bar (File ▾: Open…, Save, Close; Undo,
+  (issue #8)"); #78 and #83 lay both tabs out anew, below): on top the session bar (File ▾: Open…, Save, Close; Undo,
   Redo, the unsaved mark's kept space; at the right View ▾: Collision
   view (rock, dirt, background; "Material view" before issue #43), Grid,
   Preview parallax (issue #66), the light views, the Materials view and
@@ -126,8 +126,8 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   the right one panel (at least 260 points): the tabs Elements (issue
   #81: `COPIES` in the level tab, the ground's row; the asset tab's
   folder tree, issue #61: drag a name to reorder, eye and lock, Add
-  layer, New folder) | Assets (issue #9, below) |
-  Spawns (`PanelTab`, following the selection), then the selection's
+  layer, New folder) | Assets (issue #9; gone since #83: the library is
+  the level tab's left panel) | Spawns (`PanelTab`, following the selection), then the selection's
   properties (Name, "What is it?", Glow with "Make parts glow…", Place;
   the rest under "More") or the level's (its Lighting's rarer values
   under "Fine tuning"); status bar; canvas (a frame without fill,
@@ -135,8 +135,8 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   name is `labels::CANVAS`; a press closes any popup), dialogs and the
   browser. Controls never move as others change width (pickers in fixed
   slots, the brush in one place for every tool,
-  `the_toolbar_stays_in_the_window_and_in_place`, which also checks
-  1024 points under the game's theme), and every control is as tall as a
+  `the_toolbar_stays_in_the_window_and_in_place`, replaced by #83's
+  `the_level_tab_fits` when the options bar went), and every control is as tall as a
   button, so each bar is one straight line under the host's theme
   (`a_toolbar_row_is_one_straight_line`). Shortcuts work when no text
   field has the keyboard or a widget is dragged; Escape with a popup open
@@ -294,7 +294,7 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     `Dialog::AssetExists` (Replace: `Choice::Confirm`, over its folder;
     Keep both: `Choice::KeepBoth`, renamed `copy_name`); then
     `SaveAsset { asset, replace }`. The host answers `AssetsChanged` and
-    `AssetSaved(key)`, which selects it and shows the Assets tab.
+    `AssetSaved { key, source }`, which picks it in the library.
   - **Placing** (`asset_ops.rs`): a thumbnail clicked is picked
     (`PickAsset`, a second click unpicks) and the next press on the canvas
     places it there (`placing()`; Escape, `CancelPlacing`, or a tool
@@ -306,7 +306,8 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     `Document::add_copy`: one step, the copy selected; a level without a
     look gets one and the status bar says `ADDED_LIGHTING`). The asset tab
     places none (`PLACED_IN_THE_LEVEL`).
-  - **The tab** (`ui/elements.rs`): thumbnails grouped `BUILT_IN` and
+  - **The library** (`ui/library.rs`; the right panel's Assets tab
+    until #83, below): Search, thumbnails grouped `BUILT_IN` and
     `YOURS`, each button named by the asset (`relabel`), its name and tag
     under it ("rock, background, glows"); Import asset… (`Browse(
     Purpose::ImportAsset)`); Remove asset for a picked one of yours,
@@ -553,7 +554,7 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     shortcuts too) or Spawns tab, no Distant switch, and nothing
     selected shows the asset's panel (`ui::level::asset`: `NAME`,
     `ASSET_SIZE` with `WIDTH` and `HEIGHT`: a `Resize` from the top-left,
-    one step; the art scale shown; Lighting; Materials). The Assets tab
+    one step; the art scale shown; Lighting; Materials). The library
     has `NEW_ASSET` and, beside a picked asset, `EDIT_LIBRARY_ASSET`
     ("Edit asset"; #81's "Edit in level" is the level's own copies').
     `EditorData`'s drafts belong to the tab, the directory and the asset
@@ -582,8 +583,8 @@ whose column tab is `LAYERS`);
     field where both do not fit (`beside`), a slider's track shortened;
     "What is it?" and a group's colour kinds wrap their rows in both tabs
     (as before where they fit); an element's Surface pickers, the
-    materials' rows and an animation's keys fit in the asset tab. The
-    level tab is laid out as before (its fit is #83's).
+    materials' rows and an animation's keys fit in the asset tab. #83
+    lays the level tab out the same way (below; `fit` is on in both).
   - **Previews** (`ui/previews.rs`): the asset light (`PREVIEW_LIGHT`,
     full bright) and dark (`PREVIEW_DARK`, under `preview_look`), each
     at game size (3 points a world pixel, shrunk to the panel) and
@@ -831,11 +832,53 @@ whose column tab is `LAYERS`);
     `EditCopy`, a row dropped on another `RestackCopy`. The copy panel
     (`ui::properties::copy`): name, id, Position X/Y, Width/Height, the
     multiple, `KEEP_ASPECT`, Locked, `EDIT_IN_LEVEL` or
-    `EDIT_LIBRARY_COPY`, Delete. The Assets tab's `PLACE` button.
+    `EDIT_LIBRARY_COPY`, Delete. The library's `PLACE` button.
   - **Tests**: `tests/level_tab.rs` (`placed_level`: the fixture with a
     lamp, a stretched torch and an own strip light; the issue's
     acceptance tests and the flow `move_and_resize_a_copy_through_the_canvas`),
     `asset.rs`' `placing_is_one_step_that_selects_the_new_copy_and_adds_lighting`.
+- **The library panel (issue #83)** (STATUS.md "Level tab (issues #81,
+  #82, #83)"; `links.rs`, `ui/library.rs`, `ui/level_tab.rs`):
+  - **Layout** (`ui/level_tab.rs`, the asset tab's of #78): the session
+    bar wrapped (below `NARROW` the `SHOW_LIBRARY` | `SHOW_COPY` switch,
+    `EditorData::side`; Level | Asset, File ▾, Undo, Redo, the unsaved
+    mark, View ▾, `toolbar::play`); on the left
+    (`olr-editor-level-library`, `asset::side_widths`) `rail::grid`
+    (Select, Spawn, Haze), `toolbar::options_panel` and `library::show`
+    (`SEARCH_ASSETS`, kept in `EditorData::asset_search`;
+    `ui::asset_matches`; the cards in rows of as many as fit); on the
+    right (`olr-editor-level-copy`) `elements::show` (Copies | Spawns:
+    `PanelTab` has no Assets) and the selection's panel or the level's.
+    No options bar or rail column: `toolbar::session`, `options_bar` and
+    `rail::show` are gone.
+  - **Linking** (`links.rs`, over `olr_edit::library`'s pure `compare`,
+    `update`, `relink`, `adopt`): `EditorState::compare_library` sends
+    `CompareLibrary { origins }` (the level's linked origins) after
+    `AssetsChanged` and `AssetSaved`; the host answers
+    `LibraryCompared(Libraries)` (`olr_edit::library::read_origins`; the
+    editor reads no files). `take_library`: per origin, an unbreaking
+    change is one step (`update_assets`, the copies' keys then merged,
+    `merge_same`), a breaking one only said, a missing one nothing.
+    `library_links()` keeps the last `Link`s. Placing a newer version
+    (`place_copy`'s `added.new_asset`) offers the update (`offer_newer`).
+  - **Step names**: `Edit::Name(String)` (applied, nothing; `is_noop`)
+    rides in a step (`copy_edit_named`); `undo_name()` reads it: "Update
+    Lamp", "Unlink Lamp", "Save Lamp to library", "Use your Lamp".
+  - **Actions**: `Unlink(id)` (`adopt`), `SaveToLibrary(id)`
+    (`library_refusal` first: distant, raster, an unused glow group,
+    `check_asset`; then `Dialog::AssetName` with `pending_link`; its
+    `AssetSaved` relinks, `link_saved`; the ground saves a copy and stays
+    own), `UseYourCopy` (`use_yours()`, offered by `offer_use_yours`
+    when `tab_saved` made a built-in asset the user's; the status line's
+    `USE_YOUR_COPY`). The copy panel's link (`ui::properties::link`):
+    `labels::origin(builtin, name)` and `UNLINK`, or `SAVE_TO_LIBRARY`
+    (the ground's panel too).
+  - **Tests**: `tests/library_panel.rs` (the issue's acceptance tests),
+    `flows.rs`' `place_two_lamps_and_edit_their_asset`, `fits.rs`'
+    `the_level_tab_fits` (the sizes, both switch positions; nothing
+    selected, the lighting's fine tuning, a library copy, the own strip
+    light, the Spawns tab); the test host answers `CompareLibrary` from
+    its library (`common::run`).
 - **Tests** (`tests/`, one binary): `asset.rs` (issue #9: save, the name
   clash, the rectangle unclipped and hidden layers left out, placing a
   copy as one step with lighting added, Remove, Import, and the
