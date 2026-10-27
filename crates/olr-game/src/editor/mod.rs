@@ -64,6 +64,10 @@ pub enum HostOut {
     Closed,
     /// Something to tell the player (a pack that could not be made).
     Message(String),
+    /// Play these sound bytes (issue #80: ▶ beside an asset's sound in the
+    /// asset tab; the shell's `audio.preview`, as the mod editor's
+    /// `ModOut::PlaySound`).
+    PlaySound(Vec<u8>),
 }
 
 /// The level editor's host.
@@ -497,6 +501,13 @@ impl EditorHost {
             EditorCommand::RemoveAsset(id) => self.assets(queue, |dir| {
                 olr_edit::asset::remove_from_library(dir, &id).map(|()| None).map_err(|e| e.to_string())
             }),
+            EditorCommand::PlaySound(bytes) => out.push(HostOut::PlaySound(bytes)),
+            EditorCommand::ReadSound(path) => {
+                queue.push_back(match files::read_file(&path, olr_format::assets::MAX_ASSET_SOUND_BYTES) {
+                    Ok((name, bytes)) => EditorAction::SoundRead { name, bytes },
+                    Err(why) => EditorAction::ImportFailed(why),
+                })
+            }
             EditorCommand::RecoveryDone => {
                 self.dirty_since = None;
                 // A copy still being written would come back after the removal.

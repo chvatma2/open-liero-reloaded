@@ -137,6 +137,17 @@ impl Shell {
                         h.act(vec![EditorAction::Note(m)]);
                     }
                 }
+                // Issue #80: ▶ beside an asset's sound, as the mod editor's.
+                HostOut::PlaySound(bytes) => {
+                    if let Some(audio) = &mut self.audio
+                        && let Err(why) = audio.preview(&bytes)
+                    {
+                        log::warn!("editor: the sound did not play: {why}");
+                        if let Some(h) = &mut self.editor {
+                            h.act(vec![EditorAction::Note(format!("Not played: {why}"))]);
+                        }
+                    }
+                }
             }
         }
         canvas
