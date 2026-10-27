@@ -7,6 +7,7 @@ mod frame_hashes_cmd;
 mod gpu_bench_cmd;
 mod import;
 mod level_cmd;
+mod library_cmd;
 mod look_cmd;
 mod look_preview;
 mod match_cmd;

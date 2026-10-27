@@ -325,6 +325,41 @@ The headless command-line tool. Its commands:
   `cli_saves_and_places_an_asset`: `asset save`, then `level copy add`,
   the copy's folder the saved one but its thumbnail, and a multi-piece
   asset one copy).
+- `olr-cli level library <pack> [--content DIR] [--user DIR]`, `level
+  library update <pack> (<key>… | --all) [--force]`, `level library
+  restore <pack> <key>`, `level library adopt <pack> <key>`, `level
+  library relink <pack> <key> --yours <folder> [--force]`, `level export
+  <pack> --out <file.olrlevel> [--content DIR]` and `level import
+  <file.olrlevel> [--packs DIR] [--user DIR] [--content DIR]`
+  (`library_cmd.rs`, issue #76; `olr_edit::library`'s path wrappers).
+  The libraries are `material`'s: the built-in assets `assets/` beside
+  `--content` (`olr_content::assets_dir`), the user's `--user` (default
+  `<data>/assets`); `--packs` defaults to `<data>/packs`. `library
+  <pack>` prints `<key>: same|changed|missing (<own|built-in F|yours
+  F>)` a linked asset, each break indented (`  lamp: value lamps_glow:
+  no exposed property lamps_glow`), and exits 0 whatever changed.
+  `update` prints `updated <key>`, `<key>: the library's already` for one
+  unchanged and, forced, each resolution (`lamp: dropped value
+  lamps_glow`, `… starts in the asset's start (no state "Open")`, `…
+  static now`, `… not distant now`); a breaking change without
+  `--force` is refused naming the break; `--all` takes every changed
+  one. `restore` prints `restored <key> as yours <folder>`, `adopt`
+  `<key> is the level's own now`, `relink` `<key> now follows yours
+  <folder>` and its resolutions. Each change bakes and saves as `level
+  copy` does; a refusal writes nothing and exits 1. `export` prints
+  `exported <pack> to <file>: <bytes> bytes, <n> assets` (refusing a
+  stale, unchecked or unconverted level and an `--out` inside the pack);
+  `import` reads the file bounded (`MAX_ARCHIVE`), never takes a bundled
+  id (every `olr_content::bundled_roots` folder's name and manifest id),
+  and prints `imported <id> ("<name>") into <dir>`, then a line an
+  asset: `own ground`, `reused built-in strip-light`, `reused yours
+  console`, `added "Console 2" as yours console-2`. Tests:
+  `tests/library.rs`' `cli_reports_updates_restores_adopts_and_relinks`
+  (a new level with copies of temporary library assets, `pack check`
+  clean after each step) and `cli_exports_and_imports_a_level` (a
+  built-in copy, a user copy and an own asset exported, imported into an
+  empty data folder, checking clean, linked `same`, imported again as
+  `lvl-2`, and playing a 200-tick bot match).
 - `olr-cli skin new <out-dir> [--from <skin>] [--double] --name <name>
   [--id ID]`, `skin double <skin> --out <dir> [--name N] [--id ID]`,
   `skin check <dir>…` and `skin preview <skin> --colour RRGGBB --out

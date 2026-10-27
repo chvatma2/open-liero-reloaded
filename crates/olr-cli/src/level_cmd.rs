@@ -97,6 +97,16 @@ enum LevelCommand {
         #[command(subcommand)]
         command: crate::copy_cmd::CopyCommand,
     },
+    /// The level's library links (issue #76): with a pack, how each linked
+    /// asset stands against its library; update, restore, adopt, relink.
+    Library(crate::library_cmd::LibraryArgs),
+    /// Write the level with its scripts and assets as one `.olrlevel`
+    /// archive (issue #76); prints the file, its size and its assets.
+    Export(crate::library_cmd::ExportArgs),
+    /// Read an `.olrlevel` archive: the level among your packs, its
+    /// assets into your library (an identical one reused, never written
+    /// over); prints its id and a line an asset.
+    Import(crate::library_cmd::ImportArgs),
     /// Set or clear the level script (`editor/level.rhai`, Rhai, not run).
     Script {
         pack: PathBuf,
@@ -374,6 +384,9 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         }
         LevelCommand::Element { command } => element_cmd::run(command),
         LevelCommand::Copy { command } => crate::copy_cmd::run(command),
+        LevelCommand::Library(a) => crate::library_cmd::library(a),
+        LevelCommand::Export(a) => crate::library_cmd::export(a),
+        LevelCommand::Import(a) => crate::library_cmd::import(a),
         LevelCommand::Script { pack, script, content } => {
             crate::copy_cmd::level_script(pack, script, content)
         }

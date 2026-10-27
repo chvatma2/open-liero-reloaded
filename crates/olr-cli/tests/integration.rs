@@ -24,6 +24,7 @@ mod element;
 mod feel;
 mod hits;
 mod level;
+mod library;
 mod look_preview;
 mod matches;
 mod material;
