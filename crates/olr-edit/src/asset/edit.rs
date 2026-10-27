@@ -480,6 +480,122 @@ pub fn rename_exposed(asset: &mut Asset, name: &str, new: &str) -> Result<(), As
     })
 }
 
+/// A change of an exposed entry (issue #80, the asset tab's exposed row):
+/// its default, or an `Int`'s `min` or `max`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExposedChange {
+    Default(ValueSource),
+    Min(i32),
+    Max(i32),
+}
+
+/// Changes exposed `name`'s default, `min` or `max` (`ExposedChange`): the
+/// default of the property's type within `min` to `max`; `min` and `max`
+/// within the property's range, `min` at most `max`, and never narrowed
+/// past the default or a state's value (the refusal names it: "Alarm sets
+/// claw_x to 40: change it first"). An exposed `Health`'s default is its
+/// points ([`set_health`]).
+pub fn set_exposed(asset: &mut Asset, name: &str, change: ExposedChange) -> Result<(), AssetError> {
+    let i = asset
+        .exposed
+        .iter()
+        .position(|x| x.name == name)
+        .ok_or_else(|| bad(format!("nothing is exposed as {name:?}")))?;
+    let file = header(asset);
+    let x = asset.exposed[i].clone();
+    let label = property_label(&x.property);
+    let t = property_type(&file, &x.property).map_err(|m| bad(format!("{name} ({label}): {m}")))?;
+    let mut new = x.clone();
+    match change {
+        ExposedChange::Default(v) => {
+            if x.property == PropertySource::Health {
+                return Err(bad(format!("{name}'s default is the health's points: change them instead")));
+            }
+            of_kind(t.kind, &v).map_err(|m| bad(format!("{name}'s default: {m}")))?;
+            if let (ValueSource::Int(n), Some((lo, hi))) = (&v, t.range) {
+                let (min, max) = (x.min.unwrap_or(lo), x.max.unwrap_or(hi));
+                if !(min..=max).contains(n) {
+                    return Err(bad(format!(
+                        "{name}'s default {n} is outside its min and max, {min} to {max}"
+                    )));
+                }
+            }
+            new.default = Some(v);
+        }
+        ExposedChange::Min(m) | ExposedChange::Max(m) => {
+            let Some((lo, hi)) = t.range else {
+                return Err(bad(format!("{name} ({label}) has no min or max: it is not a whole number")));
+            };
+            if !(lo..=hi).contains(&m) {
+                return Err(bad(format!("{name}: its min and max are {lo} to {hi}")));
+            }
+            match change {
+                ExposedChange::Min(_) => new.min = Some(m),
+                _ => new.max = Some(m),
+            }
+            let (min, max) = (new.min.unwrap_or(lo), new.max.unwrap_or(hi));
+            if min > max {
+                return Err(bad(format!("{name}: its min {min} is above its max {max}")));
+            }
+            let outside = |v: &ValueSource| matches!(v, ValueSource::Int(n) if !(min..=max).contains(n));
+            if let Some(v) = new.default.as_ref().filter(|v| outside(v)) {
+                return Err(bad(format!("{name}'s default is {}: change it first", value_label(v))));
+            }
+            let key = property_key(&file, &x.property);
+            for st in &asset.states {
+                for v in st.values.iter().filter(|v| property_key(&file, &v.property) == key) {
+                    if outside(&v.value) {
+                        return Err(bad(format!(
+                            "{} sets {name} to {}: change it first",
+                            st.name,
+                            value_label(&v.value)
+                        )));
+                    }
+                }
+            }
+        }
+    }
+    commit(asset, |a| {
+        a.exposed[i] = new;
+        Ok(())
+    })
+}
+
+/// A name to expose `p` under (issue #80): the layer's id and the
+/// property's name in the CLI's syntax (`screens_glow_colour`, `claw_x`;
+/// the asset's own by the property's: `health`), made of `[a-z0-9_]`, not
+/// starting with a digit, at most `MAX_EXPOSED_NAME` bytes, and unique
+/// among the exposed names (`_2`, `_3`, …).
+pub fn exposed_name(asset: &Asset, p: &PropertySource) -> String {
+    let max = olr_format::assets::MAX_EXPOSED_NAME;
+    let label = property_label(p);
+    let raw = match p.layer() {
+        Some(layer) => {
+            let name = label.rsplit_once('.').map_or(label.as_str(), |(_, n)| n);
+            format!("{layer}_{name}")
+        }
+        None => label.clone(),
+    };
+    let mut base: String =
+        raw.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' }).collect();
+    if base.starts_with(|c: char| c.is_ascii_digit()) || base.is_empty() {
+        base.insert(0, '_');
+    }
+    let cut = |s: &str, n: usize| s[..s.len().min(n)].to_string();
+    let taken = |n: &str| asset.exposed.iter().any(|x| x.name == n);
+    let first = cut(&base, max);
+    if !taken(&first) {
+        return first;
+    }
+    (2..)
+        .map(|k| {
+            let tail = format!("_{k}");
+            format!("{}{tail}", cut(&base, max - tail.len()))
+        })
+        .find(|n| !taken(n))
+        .unwrap_or(first)
+}
+
 /// Adds sound `name` (`[a-z0-9_-]{1,32}` then `.wav` or `.ogg`, a name not
 /// taken case aside), checked as a mod's (`olr_pack::sounds`: WAV or Ogg,
 /// within `MAX_ASSET_SOUND_BYTES` and its length).

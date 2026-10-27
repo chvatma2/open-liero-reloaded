@@ -393,11 +393,16 @@ pub struct Offer {
 /// layer's, bottom to top, in the table's order. Not offered: Dirt layers,
 /// rasters, distant layers, material, scale and rotation.
 pub fn offers(asset: &Asset) -> Vec<Offer> {
+    offers_of(&header(asset))
+}
+
+/// [`offers`] of an asset's `asset.ron` (issue #80: the asset tab reads
+/// it without the pixels).
+pub fn offers_of(file: &AssetFile) -> Vec<Offer> {
     use PropertySource as P;
-    let file = header(asset);
     let mut all = vec![P::X, P::Y, P::Visible, P::Facing, P::Health];
-    for p in &asset.pieces {
-        let id = p.element.id.clone();
+    for e in &file.elements {
+        let id = e.id.clone();
         all.extend([
             P::OffsetX(id.clone()),
             P::OffsetY(id.clone()),
@@ -416,24 +421,49 @@ pub fn offers(asset: &Asset) -> Vec<Offer> {
     }
     all.into_iter()
         .filter_map(|property| {
-            let PropertyType { kind, range } = property_type(&file, &property).ok()?;
-            let sharing = sharing(asset, &property);
+            let PropertyType { kind, range } = property_type(file, &property).ok()?;
+            let sharing = sharing(file, &property);
             Some(Offer { property, kind, range, sharing })
         })
         .collect()
 }
 
 /// The other layers glowing in the group of group property `p`'s layer.
-fn sharing(asset: &Asset, p: &PropertySource) -> Vec<String> {
+fn sharing(file: &AssetFile, p: &PropertySource) -> Vec<String> {
     let Some(id) = p.layer().filter(|_| p.of_group()) else { return Vec::new() };
-    let group = asset.pieces.iter().find(|x| x.element.id == id).and_then(|x| x.element.glow.as_ref());
+    let group = file.elements.iter().find(|e| e.id == id).and_then(|e| e.glow.as_ref());
     let Some(group) = group.map(|g| g.group.as_str()) else { return Vec::new() };
-    asset
-        .pieces
+    file.elements
         .iter()
-        .filter(|x| x.element.id != id && x.element.glow.as_ref().is_some_and(|g| g.group == group))
-        .map(|x| x.element.id.clone())
+        .filter(|e| e.id != id && e.glow.as_ref().is_some_and(|g| g.group == group))
+        .map(|e| e.id.clone())
         .collect()
+}
+
+/// The value state `state` of `file` sets `p` to itself (by
+/// `property_key`: a group's setting through any of its layers), if it
+/// does.
+pub fn state_sets<'a>(file: &'a AssetFile, state: usize, p: &PropertySource) -> Option<&'a StateValue> {
+    let key = property_key(file, p);
+    file.states.get(state)?.values.iter().find(|v| property_key(file, &v.property) == key)
+}
+
+/// The value `p` takes in state `state` of `file` with no copy's values
+/// (issue #80, the asset tab's Properties; [`posed`]'s order): the
+/// state's own value, else the exposed default (by `property_key`), else
+/// the layer's (or the asset's) own setting; none for an `Own` group's
+/// colour nothing sets.
+pub fn value_in_state(file: &AssetFile, state: usize, p: &PropertySource) -> Option<ValueSource> {
+    let key = property_key(file, p);
+    state_sets(file, state, p)
+        .map(|v| v.value.clone())
+        .or_else(|| {
+            file.exposed
+                .iter()
+                .find(|x| property_key(file, &x.property) == key)
+                .and_then(|x| x.default.clone())
+        })
+        .or_else(|| olr_format::assets::own_value(file, p))
 }
 
 /// Why a copy of an asset cannot be Live (the design's call 2; #84's

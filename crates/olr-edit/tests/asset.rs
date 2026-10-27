@@ -1453,3 +1453,60 @@ fn a_big_asset_preview_is_at_most_512() {
     }
     assert_eq!(preview(&a, false).get(100, 100), BLUE, "box-filtered, full bright");
 }
+
+#[test]
+fn exposed_entries_change_within_their_values() {
+    // Issue #80: the asset tab's exposed row.
+    let mut a = lamp();
+    a.states.push(State::new("Alarm"));
+    let mut x = expose_entry("lamp_x", P::OffsetX("lamp".into()));
+    (x.min, x.max, x.default) = (Some(-5), Some(50), Some(V::Int(2)));
+    olr_edit::asset::expose(&mut a, x).unwrap();
+    set_state_value(&mut a, "Alarm", P::OffsetX("lamp".into()), Some(V::Int(40))).unwrap();
+    refused(&a, &["Alarm sets lamp_x to 40: change it first"], |a| {
+        set_exposed(a, "lamp_x", ExposedChange::Max(30))
+    });
+    refused(&a, &["lamp_x's default is 2: change it first"], |a| {
+        set_exposed(a, "lamp_x", ExposedChange::Min(3))
+    });
+    refused(&a, &["min -5 is above its max -6"], |a| set_exposed(a, "lamp_x", ExposedChange::Max(-6)));
+    refused(&a, &["-4096 to 4096"], |a| set_exposed(a, "lamp_x", ExposedChange::Max(5000)));
+    refused(&a, &["whole number"], |a| set_exposed(a, "lamp_x", ExposedChange::Default(V::Bool(true))));
+    set_exposed(&mut a, "lamp_x", ExposedChange::Max(45)).unwrap();
+    set_exposed(&mut a, "lamp_x", ExposedChange::Default(V::Int(-5))).unwrap();
+    let x = &a.exposed[0];
+    assert_eq!((x.min, x.max, x.default.clone()), (Some(-5), Some(45), Some(V::Int(-5))));
+    refused(&a, &["outside", "-5"], |a| set_exposed(a, "lamp_x", ExposedChange::Default(V::Int(-6))));
+    refused(&a, &["\"nope\""], |a| set_exposed(a, "nope", ExposedChange::Min(0)));
+}
+
+#[test]
+fn exposed_names_are_made_from_the_layer_and_the_property() {
+    let mut a = lamp();
+    assert_eq!(exposed_name(&a, &P::OffsetX("lamp".into())), "lamp_x");
+    assert_eq!(exposed_name(&a, &P::GlowColour("lamp".into())), "lamp_glow_colour");
+    assert_eq!(exposed_name(&a, &P::Health), "health");
+    assert_eq!(exposed_name(&a, &P::GlassTint("9 Odd.Id".into())), "_9_odd_id_glass_tint");
+    let long = "a".repeat(40);
+    assert_eq!(exposed_name(&a, &P::OffsetY(long.clone())).len(), 32);
+    olr_edit::asset::expose(&mut a, expose_entry("lamp_glow", P::GlowStrength("lamp".into()))).unwrap();
+    assert_eq!(exposed_name(&a, &P::GlowStrength("lamp".into())), "lamp_glow_2");
+}
+
+#[test]
+fn a_value_in_a_state_is_its_own_then_the_default_then_the_layers() {
+    let mut a = lamp();
+    a.states.push(State::new("Alarm"));
+    let file = |a: &Asset| encode(a).unwrap().file;
+    let glow = P::GlowStrength("lamp".into());
+    assert_eq!(value_in_state(&file(&a), 1, &glow), Some(V::Int(80)), "the layer's own");
+    let mut x = expose_entry("glow", glow.clone());
+    x.default = Some(V::Int(60));
+    olr_edit::asset::expose(&mut a, x).unwrap();
+    assert_eq!(value_in_state(&file(&a), 1, &glow), Some(V::Int(60)), "the exposed default");
+    set_state_value(&mut a, "Alarm", glow.clone(), Some(V::Int(20))).unwrap();
+    let f = file(&a);
+    assert_eq!(value_in_state(&f, 1, &glow), Some(V::Int(20)), "the state's own");
+    assert!(state_sets(&f, 1, &glow).is_some() && state_sets(&f, 0, &glow).is_none());
+    assert_eq!(offers_of(&f), offers(&a));
+}
