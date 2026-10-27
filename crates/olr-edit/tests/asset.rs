@@ -989,3 +989,386 @@ fn landing_a_stated_asset_lands_its_start() {
     let mut p = pack(12, 8, 2, None);
     assert_eq!(place_in_pack(&mut p, &lamp(), (0, 0)).unwrap().note, None);
 }
+
+// Issue #72: the operations that edit states, pictures, values, exposed
+// properties, sounds, script and health.
+
+/// `f` on `a` is refused with a message holding every one of `words`, and
+/// leaves `a` as it was.
+fn refused(a: &Asset, words: &[&str], f: impl FnOnce(&mut Asset) -> Result<(), AssetError>) {
+    let mut b = a.clone();
+    let e = f(&mut b).expect_err("refused").to_string();
+    for w in words {
+        assert!(e.contains(w), "{w:?} not in {e:?}");
+    }
+    assert_eq!(&b, a, "a refusal leaves the asset unchanged");
+}
+
+#[test]
+fn a_new_state_copies_the_start() {
+    let mut a = alarm_lamp();
+    a.states[0].values = vec![StateValue { property: P::Facing, value: V::Bool(true) }];
+    let i = add_state(&mut a, "Dim", None).unwrap();
+    assert_eq!(i, 3);
+    let dim = &a.states[3];
+    assert_eq!(dim.name, "Dim");
+    assert!(dim.own.is_empty());
+    assert_eq!(dim.values, a.states[0].values);
+    assert_eq!((dim.loop_sound.clone(), dim.enter_sound.clone()), (None, None));
+    // It looks like the start.
+    let none = BTreeMap::new();
+    assert_eq!(posed(&a, 3, &none).unwrap(), posed(&a, 0, &none).unwrap());
+    // From Alarm: its pictures, values and sounds.
+    let i = add_state(&mut a, "Alarm 2", Some("Alarm")).unwrap();
+    let (x, y) = (&a.states[1], &a.states[i]);
+    assert_eq!(
+        (&x.own, &x.values, &x.loop_sound, &x.enter_sound),
+        (&y.own, &y.values, &y.loop_sound, &y.enter_sound)
+    );
+    let a = through_folder(&a);
+    assert_eq!(a.states.len(), 5);
+    // A taken name (case aside), a bad one, an unknown source.
+    refused(&a, &["\"alarm\"", "Alarm"], |a| add_state(a, "alarm", None).map(drop));
+    refused(&a, &["\"Al/arm\""], |a| add_state(a, "Al/arm", None).map(drop));
+    refused(&a, &["no state \"Gone\""], |a| add_state(a, "New", Some("Gone")).map(drop));
+}
+
+/// A small asset of `layers` drawn layers (each glowing, masked), `states`
+/// states, state `k` owning layer `l` when `owns[k][l]`, picture colours
+/// and masks from `seed`.
+fn random_asset(layers: usize, owns: &[Vec<bool>], seed: u8, start: usize) -> Asset {
+    let mut a = Asset::new("R", 2, (4, 3), Vec::new(), vec![group("light", 300)], Vec::new());
+    for l in 0..layers {
+        let c = Rgba::rgb(seed.wrapping_add(l as u8 * 40), 10, 10);
+        a.pieces.push(layer(&format!("l{l}"), ElementMaterial::Background, (0, 0), (4, 3), c, Some("light")));
+    }
+    a.states = (0..owns.len()).map(|k| State::new(&format!("S{k}"))).collect();
+    for (k, row) in owns.iter().enumerate() {
+        for (l, on) in row.iter().enumerate().take(layers) {
+            if *on && k != start {
+                let c = Rgba::rgb(10, seed.wrapping_add(k as u8 * 30 + l as u8), 10);
+                let mask = seed.wrapping_mul(k as u8 + 1);
+                let mut pic = own(&a.pieces[l], c, mask);
+                // Some pictures keep the start's mask.
+                if (k + l) % 3 == 0 {
+                    pic.glow_mask = None;
+                }
+                a.states[k].own.insert(format!("l{l}"), pic);
+            }
+        }
+    }
+    a.states[start].values = vec![StateValue { property: P::GlowStrength("l0".into()), value: V::Int(40) }];
+    a.start = start;
+    a
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(48))]
+    #[test]
+    fn set_start_keeps_every_states_look(
+        layers in 1usize..4,
+        owns in proptest::collection::vec(proptest::collection::vec(proptest::bool::ANY, 3), 2..5),
+        seed in proptest::prelude::any::<u8>(),
+        start in 0usize..4,
+        to in 0usize..4,
+    ) {
+        let n = owns.len();
+        let (start, to) = (start % n, to % n);
+        let mut a = random_asset(layers, &owns, seed, start);
+        let none = BTreeMap::new();
+        let looks: Vec<Posed> = (0..n).map(|s| posed(&a, s, &none).unwrap()).collect();
+        let name = a.states[to].name.clone();
+        set_start(&mut a, &name).unwrap();
+        proptest::prop_assert_eq!(a.start, to);
+        proptest::prop_assert!(a.states[to].own.is_empty());
+        for (s, look) in looks.iter().enumerate() {
+            proptest::prop_assert_eq!(&posed(&a, s, &none).unwrap(), look, "state {}", s);
+        }
+        // And through the folder.
+        let b = decode(&encode(&a).unwrap()).unwrap();
+        for (s, look) in looks.iter().enumerate() {
+            proptest::prop_assert_eq!(&posed(&b, s, &none).unwrap(), look, "state {} read back", s);
+        }
+    }
+}
+
+#[test]
+fn removing_states_is_refused_when_needed() {
+    let a = alarm_lamp();
+    refused(&a, &["\"Normal\"", "make another state the start first"], |a| remove_state(a, "Normal"));
+    refused(&a, &["\"Broken\"", "health"], |a| remove_state(a, "Broken"));
+    refused(&a, &["no state \"Gone\""], |a| remove_state(a, "Gone"));
+    // Another goes, the start's index following.
+    let mut b = a.clone();
+    set_start(&mut b, "Broken").unwrap();
+    b.health = None;
+    remove_state(&mut b, "Alarm").unwrap();
+    assert_eq!(b.states.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["Normal", "Broken"]);
+    assert_eq!(b.states[b.start].name, "Broken");
+    remove_state(&mut b, "Normal").unwrap();
+    assert_eq!((b.states.len(), b.start), (1, 0));
+    // The last state is the start: never removed.
+    refused(&b, &["starting state"], |a| remove_state(a, "Broken"));
+}
+
+#[test]
+fn renaming_a_state_follows_start_and_health() {
+    let mut a = alarm_lamp();
+    set_start(&mut a, "Broken").unwrap();
+    rename_state(&mut a, "Broken", "Wrecked").unwrap();
+    assert_eq!(a.states[a.start].name, "Wrecked");
+    assert_eq!(a.health.as_ref().unwrap().at_zero, "Wrecked");
+    let b = through_folder(&a);
+    assert_eq!((b.states[b.start].name.as_str(), b.health.unwrap().at_zero.as_str()), ("Wrecked", "Wrecked"));
+    // Its own case is free; another's name is not.
+    rename_state(&mut a, "Wrecked", "WRECKED").unwrap();
+    refused(&a, &["\"normal\"", "Normal"], |a| rename_state(a, "Alarm", "normal"));
+    refused(&a, &["no state \"Gone\""], |a| rename_state(a, "Gone", "X"));
+}
+
+#[test]
+fn own_picture_checks_fit_and_kind() {
+    let mut a = alarm_lamp();
+    let fit = own(&a.pieces[1], RED, 0);
+    // A misfit picture names the sizes.
+    let small = OwnPicture {
+        decoded: Decoded::Drawn { art: RgbaImage::new(4, 2), cells: None, back: None },
+        glow_mask: None,
+    };
+    refused(&a, &["\"Alarm\"", "\"shade\"", "4 × 2", "8 × 2"], |a| own_picture(a, "Alarm", "shade", small));
+    // A glow mask on a layer without one.
+    let masked = OwnPicture { glow_mask: Some(std::sync::Arc::new(vec![9; 16])), ..fit.clone() };
+    refused(&a, &["\"shade\"", "no glow mask"], |a| own_picture(a, "Alarm", "shade", masked));
+    let mut wrong = own(&a.pieces[0], RED, 0);
+    wrong.glow_mask = Some(std::sync::Arc::new(vec![9; 5]));
+    refused(&a, &["\"lamp\"", "glow mask", "8 × 6"], |a| own_picture(a, "Alarm", "lamp", wrong));
+    // The start paints the layer itself.
+    refused(&a, &["\"Normal\"", "starting state"], |a| own_picture(a, "Normal", "shade", fit.clone()));
+    refused(&a, &["no layer \"roof\""], |a| own_picture(a, "Alarm", "roof", fit.clone()));
+    // An image is the same in every state.
+    let mut img = a.clone();
+    let decoded = Decoded::Image { grid: Some(std::sync::Arc::new(RgbaImage::new(8, 6))), mask: None };
+    img.pieces.push(Piece {
+        element: olr_format::levels::Element {
+            kind: ElementKind::Image {
+                material: ElementMaterial::Background,
+                source: "logo.png".into(),
+                at: (0, 0),
+                size: (4, 3),
+                pixel_size: 1,
+                colours: None,
+                dither: olr_format::levels::Dither::None,
+                alpha_threshold: 128,
+                mask: false,
+            },
+            glow: None,
+            ..layer("logo", ElementMaterial::Background, (0, 0), (4, 3), RED, None).element
+        },
+        decoded,
+        original: Some((
+            "logo.png".into(),
+            std::sync::Arc::new(olr_format::image_io::encode_rgba(&RgbaImage::new(4, 3))),
+        )),
+        glow_mask: None,
+        surface_map: None,
+        back_surface_map: None,
+    });
+    let pic = own(&a.pieces[0], RED, 0);
+    refused(&img, &["\"logo\"", "image"], |a| own_picture(a, "Alarm", "logo", pic));
+    // A fitting one is kept, and follow_start drops it.
+    own_picture(&mut a, "Alarm", "shade", fit.clone()).unwrap();
+    assert_eq!(a.states[1].own.get("shade"), Some(&fit));
+    let b = through_folder(&a);
+    assert_eq!(b.states[1].own.get("shade"), Some(&fit));
+    follow_start(&mut a, "Alarm", "shade").unwrap();
+    assert!(!a.states[1].own.contains_key("shade"));
+    refused(&a, &["\"Alarm\"", "\"shade\""], |a| follow_start(a, "Alarm", "shade"));
+}
+
+#[test]
+fn state_values_are_set_and_cleared() {
+    let mut a = alarm_lamp();
+    set_state_value(&mut a, "Alarm", P::GlowStrength("lamp".into()), Some(V::Int(30))).unwrap();
+    set_state_value(&mut a, "Alarm", P::GlowColour("lamp".into()), Some(V::Colour(colour("#00ff00"))))
+        .unwrap();
+    // Replaced in place, the new one after.
+    let alarm = &a.states[1].values;
+    assert_eq!(
+        alarm[0],
+        StateValue { property: P::GlowColour("lamp".into()), value: V::Colour(colour("#00ff00")) }
+    );
+    assert_eq!(alarm[1].property, P::GlowStrength("lamp".into()));
+    refused(&a, &["\"Alarm\"", "lamp.glow", "Int"], |a| {
+        set_state_value(a, "Alarm", P::GlowStrength("lamp".into()), Some(V::Bool(true)))
+    });
+    refused(&a, &["lamp.glow", "0 to 100"], |a| {
+        set_state_value(a, "Alarm", P::GlowStrength("lamp".into()), Some(V::Int(101)))
+    });
+    refused(&a, &["ghost.x", "no layer"], |a| {
+        set_state_value(a, "Alarm", P::OffsetX("ghost".into()), Some(V::Int(1)))
+    });
+    set_state_value(&mut a, "Alarm", P::GlowStrength("lamp".into()), None).unwrap();
+    assert_eq!(a.states[1].values.len(), 1);
+    refused(&a, &["\"Alarm\"", "sets no lamp.glow"], |a| {
+        set_state_value(a, "Alarm", P::GlowStrength("lamp".into()), None)
+    });
+}
+
+#[test]
+fn forget_layer_drops_every_reference() {
+    let mut a = alarm_lamp();
+    a.exposed.push(expose("shade_x", P::OffsetX("shade".into()), Some(V::Int(0))));
+    a.exposed[1].min = Some(0);
+    a.exposed[1].max = Some(4);
+    a.states[2].values.push(StateValue { property: P::LayerVisible("shade".into()), value: V::Bool(false) });
+    let before = a.clone();
+    let f = forget_layer(&mut a, "lamp");
+    assert_eq!(f.own.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>(), ["Alarm", "Broken"]);
+    assert_eq!(f.values.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>(), ["Alarm", "Broken"]);
+    assert_eq!(f.exposed.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(), ["glow"]);
+    assert!(
+        a.states
+            .iter()
+            .all(|s| !s.own.contains_key("lamp")
+                && s.values.iter().all(|v| v.property.layer() != Some("lamp")))
+    );
+    // The shade's references stay.
+    assert!(a.states[2].own.contains_key("shade"));
+    assert_eq!(a.exposed[0].name, "shade_x");
+    assert_eq!(a.states[2].values.len(), 1);
+    // Nothing else changed.
+    assert_eq!((&a.pieces, &a.sounds, &a.health), (&before.pieces, &before.sounds, &before.health));
+    assert!(forget_layer(&mut a, "lamp").is_empty());
+}
+
+#[test]
+fn expose_offers_only_what_offers_lists() {
+    let mut a = lamp();
+    a.pieces.push(layer("mud", ElementMaterial::Dirt, (0, 2), (4, 1), RED, None));
+    refused(&a, &["mud.visible", "dirt"], |a| {
+        olr_edit::asset::expose(a, expose_entry("hidden", P::LayerVisible("mud".into())))
+    });
+    // The light's reach on an unlimited group.
+    let mut u = a.clone();
+    u.groups[0].reach = ReachSource::Unlimited;
+    refused(&u, &["lamp.reach", "not Pixels"], |a| {
+        olr_edit::asset::expose(a, expose_entry("reach", P::LightReach("lamp".into())))
+    });
+    // The ranges filled in.
+    olr_edit::asset::expose(&mut a, expose_entry("glow", P::GlowStrength("lamp".into()))).unwrap();
+    olr_edit::asset::expose(&mut a, expose_entry("reach", P::LightReach("lamp".into()))).unwrap();
+    assert_eq!((a.exposed[0].min, a.exposed[0].max), (Some(0), Some(100)));
+    assert_eq!((a.exposed[1].min, a.exposed[1].max), (Some(1), Some(4096)));
+    assert_eq!(a.exposed[0].default, None, "none: the layer's own");
+    // Offsets need their limits.
+    refused(&a, &["shade.x", "min and a max"], |a| {
+        olr_edit::asset::expose(a, expose_entry("shade_x", P::OffsetX("shade".into())))
+    });
+    let mut x = expose_entry("shade_x", P::OffsetX("shade".into()));
+    (x.min, x.max) = (Some(-2), Some(2));
+    olr_edit::asset::expose(&mut a, x).unwrap();
+    // One per glow group: the button shares the lamp's group.
+    a.pieces.push(layer("button", ElementMaterial::Rock, (1, 1), (1, 1), RED, Some("light")));
+    refused(&a, &["button.reach", "\"reach\"", "lamp.reach"], |a| {
+        olr_edit::asset::expose(a, expose_entry("button_reach", P::LightReach("button".into())))
+    });
+    refused(&a, &["lamp.glow", "exposed already as \"glow\""], |a| {
+        olr_edit::asset::expose(a, expose_entry("glow_2", P::GlowStrength("lamp".into())))
+    });
+    refused(&a, &["\"glow\" is exposed already"], |a| {
+        olr_edit::asset::expose(a, expose_entry("glow", P::Visible))
+    });
+    // An Own group's colour needs a default.
+    let mut o = a.clone();
+    o.groups[0].colour = GlowColourSource::Own;
+    refused(&o, &["lamp.glow-colour", "default colour"], |a| {
+        olr_edit::asset::expose(a, expose_entry("tint", P::GlowColour("lamp".into())))
+    });
+    let with_default = ExposedSource {
+        default: Some(V::Colour(colour("#ff8000"))),
+        ..expose_entry("tint", P::GlowColour("lamp".into()))
+    };
+    olr_edit::asset::expose(&mut o, with_default).unwrap();
+    // An exposed health starts at the points.
+    a.health = Some(olr_format::assets::HealthSource { points: 30, at_zero: "Normal".into() });
+    olr_edit::asset::expose(&mut a, expose_entry("hp", P::Health)).unwrap();
+    let hp = a.exposed.last().unwrap();
+    assert_eq!((hp.default.clone(), hp.min, hp.max), (Some(V::Int(30)), Some(0), Some(30)));
+    // Renamed and unexposed.
+    rename_exposed(&mut a, "hp", "health_points").unwrap();
+    refused(&a, &["\"glow\" is exposed already"], |a| rename_exposed(a, "reach", "glow"));
+    unexpose(&mut a, "reach").unwrap();
+    assert!(a.exposed.iter().all(|x| x.name != "reach"));
+    refused(&a, &["\"reach\""], |a| unexpose(a, "reach"));
+    through_folder(&a);
+}
+
+fn expose_entry(name: &str, property: olr_format::assets::PropertySource) -> ExposedSource {
+    expose(name, property, None)
+}
+
+#[test]
+fn sounds_are_checked_and_kept_while_named() {
+    let mut a = lamp();
+    refused(&a, &["\"bad.wav\"", "WAV or Ogg"], |a| add_sound(a, "bad.wav", b"not a sound".to_vec()));
+    refused(&a, &["\"long.wav\"", "s long"], |a| add_sound(a, "long.wav", wav(1, 1000)));
+    refused(&a, &["\"Tick.wav\""], |a| add_sound(a, "Tick.wav", wav(8000, 10)));
+    add_sound(&mut a, "tick.wav", wav(8000, 10)).unwrap();
+    refused(&a, &["\"tick.wav\"", "already"], |a| add_sound(a, "tick.wav", wav(8000, 10)));
+    a.states.push(State::new("Off"));
+    set_state_sounds(&mut a, "Off", None, Some(Some("tick.wav".into()))).unwrap();
+    refused(&a, &["\"Off\"", "\"bell.wav\""], |a| {
+        set_state_sounds(a, "Off", Some(Some("bell.wav".into())), None)
+    });
+    refused(&a, &["\"tick.wav\"", "\"Off\"", "enter"], |a| remove_sound(a, "tick.wav"));
+    let b = through_folder(&a);
+    assert_eq!(b.states[1].enter_sound.as_deref(), Some("tick.wav"));
+    set_state_sounds(&mut a, "Off", None, Some(None)).unwrap();
+    remove_sound(&mut a, "tick.wav").unwrap();
+    assert!(a.sounds.is_empty());
+    refused(&a, &["no sound \"tick.wav\""], |a| remove_sound(a, "tick.wav"));
+    // The script: bounded, not parsed.
+    set_script(&mut a, Some("this is not rhai {".into())).unwrap();
+    refused(&a, &["script", "bytes"], |a| set_script(a, Some(" ".repeat(64 << 10 | 1))));
+    set_script(&mut a, None).unwrap();
+}
+
+#[test]
+fn health_needs_its_state_and_unexposing_first() {
+    use olr_format::assets::HealthSource;
+    let mut a = lamp();
+    refused(&a, &["no state \"Gone\""], |a| {
+        set_health(a, Some(HealthSource { points: 10, at_zero: "Gone".into() }))
+    });
+    refused(&a, &["1 to"], |a| set_health(a, Some(HealthSource { points: 0, at_zero: "Normal".into() })));
+    set_health(&mut a, Some(HealthSource { points: 40, at_zero: "Normal".into() })).unwrap();
+    olr_edit::asset::expose(&mut a, expose_entry("hp", P::Health)).unwrap();
+    refused(&a, &["\"hp\"", "unexpose health first"], |a| set_health(a, None));
+    // New points: the exposed entry follows.
+    set_health(&mut a, Some(HealthSource { points: 20, at_zero: "Normal".into() })).unwrap();
+    assert_eq!((a.exposed[0].default.clone(), a.exposed[0].max), (Some(V::Int(20)), Some(20)));
+    unexpose(&mut a, "hp").unwrap();
+    set_health(&mut a, None).unwrap();
+    assert_eq!(a.health, None);
+}
+
+/// The sum of a picture's channels.
+fn brightness(png: &[u8]) -> u64 {
+    let img = olr_format::image_io::decode_rgba_within(png, olr_format::image_io::IMAGES).unwrap();
+    img.as_raw().iter().map(|v| u64::from(*v)).sum()
+}
+
+#[test]
+fn the_thumbnail_shows_the_starting_state() {
+    let mut a = lamp();
+    let mut off = state("Off", vec![(P::GlowStrength("lamp".into()), V::Int(0))]);
+    off.own.insert("lamp".into(), own(&a.pieces[0], Rgba::rgb(5, 5, 5), 0));
+    a.states.push(off);
+    let lit = brightness(encode(&a).unwrap().thumb.as_ref().unwrap());
+    set_start(&mut a, "Off").unwrap();
+    let dark = brightness(encode(&a).unwrap().thumb.as_ref().unwrap());
+    assert!(dark < lit, "{dark} < {lit}");
+    // Back again: the same thumbnail.
+    set_start(&mut a, "Normal").unwrap();
+    assert_eq!(brightness(encode(&a).unwrap().thumb.as_ref().unwrap()), lit);
+}

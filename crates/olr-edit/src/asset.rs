@@ -33,8 +33,10 @@ use olr_format::look::{AmbientSource, GlowGroupSource, LookSource};
 use olr_format::materials::MaterialSource;
 use olr_vfs::DirFs;
 
+mod edit;
 mod posed;
 
+pub use edit::*;
 pub use posed::*;
 
 use crate::compose::{
@@ -790,6 +792,14 @@ pub fn preview_look(groups: &[GlowGroupSource]) -> LookSource {
 /// thumbnail drawn lit under [`preview_look`]; checked (`check_asset`) and
 /// decoded again, so what is written reads back.
 pub fn encode(asset: &Asset) -> Result<AssetSource, AssetError> {
+    let mut src = unchecked_files(asset)?;
+    let decoded = decode(&src)?;
+    src.thumb = Some(olr_format::image_io::encode_rgba(&thumbnail(&decoded)));
+    Ok(src)
+}
+
+/// [`encode`]'s folder without the thumbnail, not checked.
+fn unchecked_files(asset: &Asset) -> Result<AssetSource, AssetError> {
     let s = asset.art_scale;
     let mut files = BTreeMap::new();
     let mut elements = Vec::new();
@@ -843,14 +853,11 @@ pub fn encode(asset: &Asset) -> Result<AssetSource, AssetError> {
     }
     let mut file = posed::header(asset);
     file.elements = elements;
-    let mut src = AssetSource {
+    Ok(AssetSource {
         sounds: asset.sounds.iter().map(|(k, v)| (k.clone(), v.as_ref().clone())).collect(),
         script: asset.script.clone(),
         ..AssetSource::new(file, files)
-    };
-    let decoded = decode(&src)?;
-    src.thumb = Some(olr_format::image_io::encode_rgba(&thumbnail(&decoded)));
-    Ok(src)
+    })
 }
 
 /// Drawn element `e` as its stacked files hold it: its box `1 + n`
