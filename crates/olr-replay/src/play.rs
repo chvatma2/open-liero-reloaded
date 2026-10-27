@@ -3,7 +3,7 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use olr_sim::{SimMod, TickEvents, World};
+use olr_sim::{LiveLevel, SimMod, TickEvents, World};
 use olr_terrain::{GreenMask, Stamp, Terrain};
 
 use crate::{Mismatch, Replay, ReplayError, SetupCall};
@@ -16,6 +16,8 @@ pub struct Assets {
     pub terrain: Terrain,
     pub holes: Vec<Stamp>,
     pub green_mask: Option<GreenMask>,
+    /// The level's live copies (issue #86), if it has any.
+    pub live: Option<Arc<LiveLevel>>,
 }
 
 /// Makes setup call number `index` on `world`; gives `find_spot`'s position.
@@ -39,6 +41,12 @@ pub(crate) fn apply_call(
         }
         SetupCall::FindSpot => return Ok(Some(world.find_spot())),
         SetupCall::AlignPhysicsClock => world.align_physics_clock(),
+        SetupCall::LiveState { copy, state } => {
+            world.set_live_state(copy, state).map_err(|error| ReplayError::Live { index, error })?;
+        }
+        SetupCall::LiveValue { copy, prop, value } => {
+            world.set_live_value(copy, prop, value).map_err(|error| ReplayError::Live { index, error })?;
+        }
     }
     Ok(None)
 }

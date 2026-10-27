@@ -122,7 +122,53 @@ pub fn holes() -> Vec<Stamp> {
 
 /// What the synthetic match is made of, as `olr-content` would resolve it.
 pub fn assets() -> Assets {
-    Assets { sim_mod: sim_mod(), terrain: arena(), holes: holes(), green_mask: None }
+    Assets { sim_mod: sim_mod(), terrain: arena(), holes: holes(), green_mask: None, live: None }
+}
+
+/// A level's live copies (issue #86): a door, Open or Shut, its `x`
+/// moving it.
+pub fn live_level() -> Arc<olr_sim::LiveLevel> {
+    use olr_sim::{
+        LiveCopy, LiveCopySetup, LivePart, LivePartKind, LiveProp, LiveSolid, LiveState, LiveTarget,
+    };
+    let state = |name: &str, x: i64| LiveState {
+        name: name.into(),
+        values: vec![(0, x)],
+        parts: vec![LivePart {
+            kind: LivePartKind::Rock,
+            layer: None,
+            at: (0, 0),
+            picture: 0,
+            glow_strength: 0,
+        }],
+        enter_sound: None,
+        loop_sound: None,
+    };
+    let door = LiveCopy::new(LiveCopySetup {
+        id: "door".into(),
+        at: (150, 60),
+        size: (4, 20),
+        props: vec![LiveProp {
+            name: Some("x".into()),
+            target: LiveTarget::X,
+            min: -10,
+            max: 10,
+            default: 0,
+        }],
+        states: vec![state("Open", 8), state("Shut", 0)],
+        pictures: vec![LiveSolid::new((4, 20), true, |_, _| true)],
+        start_state: 0,
+        start_values: Vec::new(),
+        health: None,
+        scripts: Vec::new(),
+        sounds: Vec::new(),
+    });
+    Arc::new(olr_sim::LiveLevel::new(vec![door], Vec::new(), None, 0))
+}
+
+/// [`assets`] of a level with [`live_level`]'s copies.
+pub fn live_assets() -> Assets {
+    Assets { live: Some(live_level()), ..assets() }
 }
 
 /// Pack ids and hashes that name the synthetic assets.

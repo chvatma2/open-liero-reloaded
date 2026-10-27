@@ -3,7 +3,7 @@
 use alloc::string::String;
 use core::fmt;
 
-use olr_sim::{PlaceBonusError, SetupError};
+use olr_sim::{LiveError, PlaceBonusError, SetupError};
 
 /// Why [`crate::Replay::decode`] refused its input.
 #[derive(Clone, Debug, PartialEq)]
@@ -81,6 +81,8 @@ pub enum ReplayError {
     Health { index: usize },
     /// Setup call `index`'s bonus was refused.
     Bonus { index: usize, error: PlaceBonusError },
+    /// Setup call `index` names a live copy, state or value the level lacks.
+    Live { index: usize, error: LiveError },
     /// The mode's settings are not numbers or outside OLX's ranges.
     Mode(String),
 }
@@ -97,6 +99,7 @@ impl fmt::Display for ReplayError {
             ReplayError::Bonus { index, error } => {
                 write!(f, "replay setup call {index}: bonus refused: {error}")
             }
+            ReplayError::Live { index, error } => write!(f, "replay setup call {index}: {error}"),
             ReplayError::Mode(m) => write!(f, "replay mode: {m}"),
         }
     }

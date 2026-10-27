@@ -99,5 +99,6 @@ pub fn replay_assets_from(m: &LoadedMod, level: &LoadedLevel, theme: &LoadedThem
         terrain: olr_terrain::Terrain::from_grid(&level.material),
         holes: theme.stamps(),
         green_mask: theme.green_mask(),
+        live: level.live_sim(),
     }
 }

@@ -161,6 +161,8 @@ pub(crate) enum CallW {
     PlaceWeapon { x: i32, y: i32, weapon: i32 },
     FindSpot,
     AlignPhysicsClock,
+    LiveState { copy: u16, state: u16 },
+    LiveValue { copy: u16, prop: u16, value: i64 },
 }
 
 impl From<SetupCall> for CallW {
@@ -173,6 +175,8 @@ impl From<SetupCall> for CallW {
             }
             SetupCall::FindSpot => CallW::FindSpot,
             SetupCall::AlignPhysicsClock => CallW::AlignPhysicsClock,
+            SetupCall::LiveState { copy, state } => CallW::LiveState { copy, state },
+            SetupCall::LiveValue { copy, prop, value } => CallW::LiveValue { copy, prop, value },
         }
     }
 }
@@ -187,6 +191,8 @@ impl From<CallW> for SetupCall {
             }
             CallW::FindSpot => SetupCall::FindSpot,
             CallW::AlignPhysicsClock => SetupCall::AlignPhysicsClock,
+            CallW::LiveState { copy, state } => SetupCall::LiveState { copy, state },
+            CallW::LiveValue { copy, prop, value } => SetupCall::LiveValue { copy, prop, value },
         }
     }
 }

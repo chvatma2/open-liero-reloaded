@@ -42,7 +42,8 @@ pub use record::Recorder;
 /// 5: 16-bit keys (Strafe, Previous/Next weapon), high bytes after the low.
 /// 6: the local slots (`viewers`, issue #29) in place of one viewer.
 /// 7: the keys' bits 11-15 are Weapon 1-5 (issue #48).
-pub const FORMAT_VERSION: u16 = 7;
+/// 8: the live setup calls (`SetupCall::LiveState`, `LiveValue`, issue #86).
+pub const FORMAT_VERSION: u16 = 8;
 
 /// The first bytes of every replay file.
 pub const MAGIC: [u8; 4] = *b"OLRP";
@@ -93,10 +94,15 @@ pub enum SetupCall {
     FindSpot,
     /// `World::align_physics_clock`.
     AlignPhysicsClock,
+    /// `World::set_live_state` (issue #86): live copy `copy` enters `state`.
+    LiveState { copy: u16, state: u16 },
+    /// `World::set_live_value` (issue #86): live copy `copy`'s value `prop`
+    /// is set to `value` (the world's units).
+    LiveValue { copy: u16, prop: u16, value: i64 },
 }
 
 /// What a replay's world starts from: a [`MatchSetup`] whose mod, terrain,
-/// holes and green-dirt mask come from [`Packs`] (as
+/// holes, green-dirt mask and live copies come from [`Packs`] (as
 /// `olr_content::match_setup` builds them), and the setup calls made before
 /// the first tick.
 #[derive(Clone, Debug, PartialEq)]
@@ -136,6 +142,7 @@ impl ReplaySetup {
             worms,
             pool_capacity,
             bonus_weapons,
+            // The level's live copies: its played form is in its pack hash.
             live: _,
         } = setup;
         ReplaySetup {
@@ -160,7 +167,7 @@ impl ReplaySetup {
 
     /// The [`MatchSetup`] this describes, made of `assets`.
     pub fn match_setup(&self, assets: Assets) -> MatchSetup {
-        let Assets { sim_mod, terrain, holes, green_mask } = assets;
+        let Assets { sim_mod, terrain, holes, green_mask, live } = assets;
         MatchSetup {
             settings: self.settings.clone(),
             sim_mod,
@@ -172,7 +179,7 @@ impl ReplaySetup {
             worms: self.worms.clone(),
             pool_capacity: self.pool_capacity,
             bonus_weapons: self.bonus_weapons.clone(),
-            live: None,
+            live,
         }
     }
 }

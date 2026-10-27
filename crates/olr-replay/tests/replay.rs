@@ -610,12 +610,13 @@ fn the_looks_round_trip() {
 }
 
 /// A format-4 file (before 16-bit keys), format-5 file (one viewer,
-/// before the local slots of issue #29) or format-6 file (before the
-/// Weapon 1-5 keys of issue #48) is refused with the version error.
+/// before the local slots of issue #29), format-6 file (before the
+/// Weapon 1-5 keys of issue #48) or format-7 file (before the live setup
+/// calls of issue #86) is refused with the version error.
 #[test]
 fn an_older_format_replay_is_refused() {
     let (replay, ..) = record(10, 1);
-    for old in [4u16, 5, 6] {
+    for old in [4u16, 5, 6, 7] {
         let mut bytes = replay.encode();
         bytes[4..6].copy_from_slice(&old.to_le_bytes());
         assert_eq!(
@@ -623,5 +624,53 @@ fn an_older_format_replay_is_refused() {
             DecodeError::Version { found: old, supported: FORMAT_VERSION }
         );
     }
-    assert_eq!(FORMAT_VERSION, 7);
+    assert_eq!(FORMAT_VERSION, 8);
+}
+
+/// Issue #86: a match on a level with live copies, its door shut and
+/// moved before the first tick, replays; the setup calls round-trip
+/// through the wire, and a replay missing them differs at tick 0.
+#[test]
+fn a_replay_of_a_live_level_plays_back() {
+    let (mut setup, mode) = deathmatch(4, 11);
+    setup.live = Some(live_level());
+    let mut world = World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
+    let mut rec = Recorder::new(packs(), &setup, &mode, vec![]);
+    rec.apply(&mut world, SetupCall::LiveState { copy: 0, state: 1 }).unwrap();
+    rec.apply(&mut world, SetupCall::LiveValue { copy: 0, prop: 0, value: -3 * olr_sim::LIVE_SUBPIXELS - 1 })
+        .unwrap();
+    rec.start(&world).unwrap();
+    let start = world.clone();
+    let mut keys = KeyGen::new(11, 4, 12);
+    let mut out = TickEvents::new();
+    for _ in 0..250 {
+        let row = keys.row();
+        world.tick(&row, &mut out);
+        rec.push(&row, &world).unwrap();
+    }
+    let replay = rec.finish(&world).unwrap();
+    let decoded = Replay::decode(&replay.encode()).unwrap();
+    assert_eq!(decoded, replay, "the live setup calls round-trip");
+    assert_eq!(
+        decoded.setup.calls,
+        [
+            SetupCall::LiveState { copy: 0, state: 1 },
+            SetupCall::LiveValue { copy: 0, prop: 0, value: -3 * olr_sim::LIVE_SUBPIXELS - 1 }
+        ]
+    );
+    let rebuilt = decoded.world(live_assets()).unwrap();
+    assert_eq!(rebuilt, start);
+    let run = decoded.play(rebuilt).unwrap();
+    assert_eq!(run.world, world);
+    let door = run.world.live().unwrap().copy(0).unwrap();
+    assert_eq!((door.state_name(), door.rect().0), ("Shut", 146));
+    let mut missing = decoded.clone();
+    missing.setup.calls.clear();
+    let err = missing.play(missing.world(live_assets()).unwrap()).unwrap_err();
+    assert_eq!(err.tick, 0, "the live calls are part of the setup");
+    // Calls the level cannot take are errors.
+    let mut bad = decoded;
+    bad.setup.calls.push(SetupCall::LiveState { copy: 0, state: 2 });
+    assert!(matches!(bad.world(live_assets()), Err(ReplayError::Live { index: 2, .. })));
+    assert!(matches!(bad.world(assets()), Err(ReplayError::Live { index: 0, .. })));
 }
