@@ -17,10 +17,12 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   (`Upload` a world rectangle of the bake, `Open`, `Create`, `Save`,
   `Play`, `SaveSettings`, `List`, `ReadImage`, `RecoveryDone`, `Close`;
   the libraries' `AddTexture`, `RemoveTexture`, `ReadAsset`, `SaveAsset`,
-  `ImportAsset`, `RemoveAsset`; issue #11's `Distant`)
+  `ImportAsset`, `RemoveAsset`; issue #11's `Distant`; issue #77's
+  `ReadAssetToEdit`)
   and answers (`Opened`, `Recovered`: as `Opened` but unsaved, `OpenFailed`,
   `Saved`, `PlayEnded`, `Listed`, `ImportImage`, `ImportFailed`,
-  `TexturesChanged`, `AssetsChanged`, `AssetSaved`, `AssetRead`; and
+  `TexturesChanged`, `AssetsChanged`, `AssetSaved`, `AssetRead`,
+  `AssetToEdit`; and
   `Failed(why)`, an error dialog, `Note(text)`, the status bar's message,
   for what the host could not do: a Play that did not start, a recovery
   copy not written).
@@ -501,6 +503,69 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     `canvas_double_click_alt_click_and_escape` (frames 1/60 s apart:
     `harness_at`), `ctrl_g_groups_and_ctrl_shift_g_ungroups`,
     `a_folders_panel_renames_it`).
+- **The asset tab (issues #77, #78)** (STATUS.md "Asset tab (issues #77,
+  #78)"; the design's "The asset tab", call 18):
+  - **Two sessions**: the level tab's and the asset tab's (`DocTab`,
+    `state::Session`: document, history, unsaved mark, status,
+    selection, saves, tool and its options, view, pixel selection, panel
+    tab, focus). The shown tab's are `EditorState`'s own fields; the
+    other's wait in `other`, swapped by `place` (`swap_session!`: a new
+    per-tab field goes into `Session` and the macro); `on_tab(tab, f)`
+    runs `f` on a tab and puts the shown one back; `switch_tab` (the
+    session bar's `ShowTab`, an asset opened, `Opened`) bumps
+    `shown_generation` (the host uploads the canvas whole) and resends
+    `Distant`. Shared: the catalog, settings, clipboard, dialog, browser,
+    textures, the views (collision, Materials, grid, lit) and the clock.
+    `document()` and `dirty()` are always the level's (crash recovery
+    covers the level only); `active_document()`, `active_dirty()` the
+    shown tab's (the panels and the host's canvas draw it);
+    `asset_document()`, `asset_dirty()`, `asset_key()`.
+  - **Opening** (`asset_tab.rs`): `Document::open_asset(asset, theme,
+    catalog)` (a level of the asset's size and art scale, the open
+    level's theme, else `DEFAULT_THEME`, else the first; no spawns;
+    `preview_look` with its groups and materials; `is_asset`,
+    `asset_parts`: the states, start, exposed entries, sounds, script and
+    health kept as opened) and `to_asset` (the name is the bake's,
+    edited by `Meta`; `olr_edit::asset::carried_look`). Edit asset
+    (`EditAsset(key)` → `ReadAssetToEdit` → `AssetToEdit`) and New
+    asset… (`NewAssetDialog`, `Dialog::NewAsset`, `MakeAsset(NewAsset)`:
+    `NewAsset::refusal`, then one empty drawn Background layer,
+    `FIRST_LAYER`, unsaved) ask first when the open asset is unsaved
+    (`Pending::EditAsset`, `NewAsset`); Close asks for the asset
+    (`Pending::CloseAsset`), then the level (`Pending::Close`).
+  - **Saving** (`save_asset`): the user's own `SaveAsset { replace:
+    Some(folder) }`; a built-in or new one `replace: None`, a name the
+    user has asking `Dialog::AssetExists` (`pending_tab` beside
+    `pending_asset`; Keep both renames the document too); `tab_save`
+    waits for `AssetSaved`, which makes the key the user's
+    (`tab_saved`). A built-in asset's key stays `builtin` till then and
+    the status bar says `BUILT_IN_NOTE`.
+  - **Refusals**: `update` notes the history's `pushes()` before an
+    asset tab action; a new step is checked (`Document::asset_refusal`:
+    no distant layer, raster or spawn; a layer a state owns a picture of
+    keeps its box and picture shape and the asset its size, "state …
+    has its own picture of …: edit it in the states panel (issue #79)";
+    each exposed entry's and state value's layer still offering it,
+    "lamps is used by exposed lamp_colour: unexpose it first"; then
+    `olr_format::assets::check_states`) and a refused one reverted and
+    forgotten (`guard`, `History::retract`), the unsaved mark, selection
+    and focus restored, the status naming the entry. `AssetParts::
+    constrains` is false for an asset without states and exposure: never
+    refused.
+  - **Panels** (today's layout; #78 moves it to the skin editor's): the
+    session bar starts with `labels::LEVEL_TAB` | `ASSET_TAB` (Asset
+    disabled with `ASSET_TAB_HINT` until one is open); the asset tab has
+    no Play, File ▾ Open…, Spawn, Haze brush (`offers(tool)`, the
+    shortcuts too) or Spawns tab, no Distant switch, and nothing
+    selected shows the asset's panel (`ui::level::asset`: `NAME`,
+    `ASSET_SIZE` with `WIDTH` and `HEIGHT`: a `Resize` from the top-left,
+    one step; the art scale shown; Lighting; Materials). The Assets tab
+    has `NEW_ASSET` and, beside a picked asset, `EDIT_LIBRARY_ASSET`
+    ("Edit asset"; #81's "Edit in level" is the level's own copies').
+    `EditorData`'s drafts belong to the tab, the directory and the asset
+    key.
+  - Tests: `tests/asset_tab.rs` and `flows.rs`'s
+    `paint_an_asset_through_the_panels`.
 - **Tests** (`tests/`, one binary): `asset.rs` (issue #9: save, the name
   clash, the rectangle unclipped and hidden layers left out, placing as one
   step with lighting added, join and add, Remove, Import, and the

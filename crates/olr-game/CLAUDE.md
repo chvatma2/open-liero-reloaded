@@ -947,7 +947,12 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `RemoveAsset` (`remove_from_library`) answer `AssetsChanged` and, for a
   folder written, `AssetSaved`, or `Failed` (`EditorHost::assets`). The
   built-in folder is never written (`tests/editor_host.rs`'s
-  `assets_are_listed_saved_placed_and_removed`). A Ctrl+V egui-winit swallowed (an empty system
+  `assets_are_listed_saved_placed_and_removed`). Issue #77, the asset
+  tab: `ReadAssetToEdit` answers `AssetToEdit` (`read_asset`, as
+  `ReadAsset`); the canvas draws the shown tab's document
+  (`EditorState::active_document`), and `act` answers a change of
+  `shown_generation` (a tab switch, an asset opened) with `FullUpload`;
+  recovery stays the level's (`document()`, `dirty()`). A Ctrl+V egui-winit swallowed (an empty system
   clipboard: it sends no key and no paste) is given to egui as an empty
   `Event::Paste` (`app::paste_swallowed`, the window's modifiers kept in
   `App::modifiers`), so the editor's own clipboard pastes.

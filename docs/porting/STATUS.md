@@ -6755,6 +6755,66 @@ level library|export|import`. The level tab's notice and buttons are
   editable" is met by the export archive, the way levels are shared for
   editing.
 
+## Asset tab (issues #77, #78)
+
+No OLX counterpart. The design
+`docs/superpowers/specs/2026-10-26-asset-based-levels-design.md` ("The
+asset tab", call 18); the code is `olr-editor`'s `asset_tab.rs` and
+`state.rs`. Part 1 (#77) is the second document on today's layout; #78
+moves it to the skin editor's layout, #79 adds the states panel.
+
+- **Two tabs inside the level editor, not a second editor.** One session
+  holds the level and an asset (#81 opens the level's ground in the asset
+  tab and needs both): the session bar's Level | Asset switch. Each tab
+  has its own document, undo history, unsaved mark, selection, view, tool
+  and options and status line (`state::Session`); the shown tab's live in
+  `EditorState`'s fields and the other's waits beside them, the two
+  swapped on a switch, so every operation, tool and panel works on the
+  asset tab unchanged. The catalog, settings, clipboard (elements copied
+  in one tab paste into the other, resampled as before), textures and
+  libraries are shared. Play, the Spawn tool, the Haze brush, the
+  Spawns tab, the level's theme, notes, art scale field and resize with
+  an offset are the level tab's; distant layers are not offered in the
+  asset tab (an asset carries none).
+- **The asset's document is a level of its size.** `Document::open_asset`
+  bakes the asset as a level of its size and art scale under the open
+  level's theme (so the Front and Back tile paints and the craters work
+  as on the level; the default theme without a level), with no spawns
+  and `olr_edit::asset::preview_look` holding the asset's glow groups
+  and materials; `to_asset` makes the asset again, the glow groups and
+  materials no layer names left out (`olr_edit::asset::carried_look`,
+  as `check_asset` asks). An asset stores no theme or lighting settings:
+  tile paints are stored as pixels, and a change of the Lighting's
+  ambient or grade in the asset tab previews only.
+- **Saving writes the user's library only.** The user's own asset is
+  saved over its folder; a built-in one (call 18) or a new one is saved
+  as a new asset of the user's, a name the user has asking Replace or
+  Keep both. A built-in asset opens read-only in place: its key stays
+  built-in until the first save ("Built-in: saving makes your own copy"),
+  then the tab edits the user's copy.
+- **Crash recovery covers the level only.** `EditorState::document()` and
+  `dirty()` stay the level's, whichever tab shows, so the host writes the
+  level's recovery copy as before; the asset tab's unsaved work is not
+  recovered after a crash. Close asks once for each tab with unsaved
+  changes, the asset first.
+- **Edits that would break states or exposure are refused, until #79 and
+  #80 edit them.** An asset made by #71's commands keeps its states,
+  exposed properties, sounds, script and health through an open and a
+  save. Each step the asset tab records is checked against them
+  (`Document::asset_refusal`: the exposed entries' and states' values'
+  layers still offering the property, then `olr_format::assets::
+  check_states`, metadata only); a refused step is reverted and
+  forgotten at once, so the document, the unsaved mark and the selection
+  are as they were and the status line names the entry ("lamps is used
+  by exposed lamp_colour: unexpose it first"). This applies the edit and
+  takes it back rather than editing a scratch copy, which gives the same
+  result without copying the document; a refused edit does clear the redo
+  list, as any edit does. A layer a state owns a picture of keeps its
+  place, size and kind, and the asset its size ("state Broken has its own
+  picture of lamps: edit it in the states panel (issue #79)"): #79 lifts
+  this by carrying the states' pictures along. An asset without states
+  and exposure (every built-in one) is never refused.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`
