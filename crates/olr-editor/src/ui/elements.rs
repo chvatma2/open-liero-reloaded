@@ -14,7 +14,7 @@ use olr_format::levels::{ElementKind, Folder, LevelObject};
 use super::{EditorData, labels};
 use crate::catalog::{AssetEntry, AssetKey};
 use crate::folder_ops::{FolderField, RowDrop};
-use crate::state::{EditorAction, EditorState, PanelTab, Selection};
+use crate::state::{DocTab, EditorAction, EditorState, PanelTab, Selection};
 
 /// The lists' share of the panel's height: the properties take the rest.
 const LIST_SHARE: f32 = 0.4;
@@ -24,11 +24,16 @@ const THUMB: egui::Vec2 = egui::vec2(80.0, 48.0);
 
 pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
     ui.horizontal(|ui| {
+        let asset = state.doc_tab() == DocTab::Asset;
         for (tab, label) in [
             (PanelTab::Elements, labels::ELEMENTS),
             (PanelTab::Assets, labels::ASSETS),
             (PanelTab::Spawns, labels::SPAWNS),
         ] {
+            // The asset tab has no spawns (issue #77).
+            if asset && tab == PanelTab::Spawns {
+                continue;
+            }
             if ui.selectable_label(state.tab() == tab, label).clicked() && state.tab() != tab {
                 out.push(EditorAction::Tab(tab));
             }
@@ -52,7 +57,7 @@ const EDGE: f32 = 0.3;
 /// The element list (issue #61: the tree): rows top first, a folder's
 /// members under it, indented one step per level; Add layer and New folder.
 fn elements(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
-    let Some(doc) = state.document() else { return };
+    let Some(doc) = state.active_document() else { return };
     let rows = doc.rows();
     let folders = doc.folders();
     let carried = egui::DragAndDrop::payload::<String>(ui.ctx()).map(|p| (*p).clone());
@@ -144,7 +149,7 @@ fn toggle(ui: &mut Ui, on: &mut bool, icon: &str, dimmed: bool, hover: &str) -> 
 
 /// An element's row: eye, lock, kind, the distant mark, the name.
 fn element_row(ui: &mut Ui, state: &EditorState, id: &str, out: &mut Vec<EditorAction>) {
-    let Some(doc) = state.document() else { return };
+    let Some(doc) = state.active_document() else { return };
     let Some(index) = doc.index_of(id) else { return };
     let e = &doc.items()[index].element;
     let mut visible = e.visible;
@@ -174,7 +179,7 @@ fn element_row(ui: &mut Ui, state: &EditorState, id: &str, out: &mut Vec<EditorA
 /// A folder's row (issue #61): fold arrow, eye, lock, the folder mark and
 /// its name.
 fn folder_row(ui: &mut Ui, state: &EditorState, f: &Folder, out: &mut Vec<EditorAction>) {
-    let Some(doc) = state.document() else { return };
+    let Some(doc) = state.active_document() else { return };
     let set = |out: &mut Vec<EditorAction>, field| out.push(EditorAction::SetFolder(f.id.clone(), field));
     let name = if f.name.is_empty() { f.id.as_str() } else { f.name.as_str() };
     let arrow = ui.small_button(if f.collapsed { "▶" } else { "▼" });
@@ -232,9 +237,21 @@ fn assets(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec
                 });
             }
         });
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if ui.button(labels::IMPORT_ASSET).on_hover_text("add an asset folder someone shared").clicked() {
             out.push(EditorAction::Browse(crate::browser::Purpose::ImportAsset));
+        }
+        // Issue #77: the asset tab opens a blank asset, or the one picked.
+        if ui.button(labels::NEW_ASSET).on_hover_text("a blank asset to paint in the asset tab").clicked() {
+            out.push(EditorAction::NewAssetDialog);
+        }
+        if let Some(key) = state.picked_asset()
+            && ui
+                .button(labels::EDIT_LIBRARY_ASSET)
+                .on_hover_text("open it in the asset tab; saving keeps it in your assets")
+                .clicked()
+        {
+            out.push(EditorAction::EditAsset(key.clone()));
         }
         if let Some(key) = state.picked_asset().filter(|k| !k.builtin)
             && ui.button(labels::REMOVE_ASSET).clicked()
@@ -303,7 +320,7 @@ fn thumb(ui: &Ui, data: &mut EditorData, a: &AssetEntry) -> Option<egui::Texture
 }
 
 fn spawns(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
-    let Some(doc) = state.document() else { return };
+    let Some(doc) = state.active_document() else { return };
     if doc.level().objects.is_empty() {
         ui.weak("No spawns yet: place them with the Spawn tool (P).");
     }
@@ -314,7 +331,7 @@ fn spawns(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
 }
 
 fn spawn_rows(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
-    let Some(doc) = state.document() else { return };
+    let Some(doc) = state.active_document() else { return };
     for (i, o) in doc.level().objects.iter().enumerate() {
         let at = o.at();
         let kind = match o {

@@ -13,18 +13,28 @@ pub(super) fn show(
 ) {
     let Some(dialog) = state.dialog() else {
         data.asset_name = None;
+        data.new_asset = None;
         return;
     };
     let modal = egui::Modal::new(egui::Id::new("olr-editor-dialog")).show(ctx, |ui| {
         let choose = |out: &mut Vec<EditorAction>, c| out.push(EditorAction::Choose(c));
         match dialog {
             Dialog::Unsaved { then } => {
-                let before = match then {
-                    Pending::Open(_) => "opening another level",
-                    Pending::New(_) => "making a new level",
-                    Pending::Close => "closing",
+                // Issue #77: naming the level or the asset.
+                let name = |d: Option<&crate::document::Document>| d.map_or(String::new(), |d| d.level().name.clone());
+                let (of, before) = match then {
+                    Pending::Open(_) => (format!("the level {:?}", name(state.document())), "opening another level"),
+                    Pending::New(_) => (format!("the level {:?}", name(state.document())), "making a new level"),
+                    Pending::Close => (format!("the level {:?}", name(state.document())), "closing"),
+                    Pending::EditAsset { .. } => {
+                        (format!("the asset {:?}", name(state.asset_document())), "opening another asset")
+                    }
+                    Pending::NewAsset(_) => {
+                        (format!("the asset {:?}", name(state.asset_document())), "making a new asset")
+                    }
+                    Pending::CloseAsset => (format!("the asset {:?}", name(state.asset_document())), "closing"),
                 };
-                ui.label(format!("Save the changes before {before}?"));
+                ui.label(format!("Save the changes to {of} before {before}?"));
                 ui.horizontal(|ui| {
                     if ui.button(labels::SAVE).clicked() {
                         choose(out, Choice::Save);
@@ -105,6 +115,32 @@ pub(super) fn show(
                     }
                 });
             }
+            Dialog::NewAsset(start) => {
+                let n = data.new_asset.get_or_insert_with(|| start.clone());
+                ui.label("New asset: its name, size and art scale");
+                let l = ui.label(labels::ASSET_NAME);
+                ui.add(egui::TextEdit::singleline(&mut n.name).desired_width(280.0)).labelled_by(l.id);
+                let side = 1..=olr_format::levels::MAX_SIDE;
+                for (label, v) in [(labels::WIDTH, &mut n.size.0), (labels::HEIGHT, &mut n.size.1)] {
+                    ui.horizontal(|ui| {
+                        let l = ui.label(label);
+                        ui.add(egui::DragValue::new(v).range(side.clone())).labelled_by(l.id);
+                    });
+                }
+                ui.horizontal(|ui| {
+                    let l = ui.label(labels::ART_SCALE);
+                    ui.add(egui::DragValue::new(&mut n.art_scale).range(1..=olr_format::levels::MAX_ART_SCALE))
+                        .labelled_by(l.id);
+                });
+                ui.horizontal(|ui| {
+                    if ui.button(labels::CREATE).clicked() {
+                        out.push(EditorAction::MakeAsset(n.clone()));
+                    }
+                    if ui.button(labels::CANCEL).clicked() {
+                        choose(out, Choice::Cancel);
+                    }
+                });
+            }
             Dialog::Error(e) => {
                 ui.label(e);
                 if ui.button("OK").clicked() {
@@ -115,7 +151,9 @@ pub(super) fn show(
     });
     // Escape or a click on the backdrop cancels, unless a button answered.
     if modal.should_close()
-        && !out.iter().any(|a| matches!(a, EditorAction::Choose(_) | EditorAction::NameAsset(_)))
+        && !out.iter().any(|a| {
+            matches!(a, EditorAction::Choose(_) | EditorAction::NameAsset(_) | EditorAction::MakeAsset(_))
+        })
     {
         out.push(EditorAction::Choose(Choice::Cancel));
     }

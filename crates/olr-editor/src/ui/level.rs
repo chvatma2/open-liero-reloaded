@@ -6,7 +6,7 @@ use olr_data::image::Rgba;
 use olr_data::level::Material;
 use olr_format::levels::{MAX_ART_SCALE, MAX_SIDE};
 
-use super::{EditorData, number, text};
+use super::{EditorData, labels, number, text};
 use crate::history::LevelMeta;
 use crate::state::{EditorAction, EditorState};
 
@@ -14,7 +14,7 @@ const NEW_AREA: [(Material, &str); 3] =
     [(Material::Rock, "Rock"), (Material::Dirt, "Dirt"), (Material::Background, "Background")];
 
 pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
-    let Some(doc) = state.document() else { return };
+    let Some(doc) = state.active_document() else { return };
     let l = doc.level();
     ui.heading("Level");
     let meta = doc.meta();
@@ -74,6 +74,36 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
         });
         data.resize = None;
     }
+    super::look::level_look(ui, state, data, out);
+    super::look::level_materials(ui, state, out);
+}
+
+/// The asset tab's asset, shown when nothing is selected (issue #77): its
+/// name, its size (Width and Height resize it from its top-left, one
+/// step), its art scale (shown, not changed), its Lighting and Materials.
+pub(super) fn asset(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
+    let Some(doc) = state.active_document() else { return };
+    let l = doc.level();
+    ui.heading("Asset");
+    let meta = doc.meta();
+    if let Some(name) = text(ui, data, "asset/name", labels::NAME, &meta.name, false) {
+        out.push(EditorAction::Meta(LevelMeta { name, ..meta.clone() }));
+    }
+    ui.separator();
+    ui.strong(labels::ASSET_SIZE);
+    let side = 1..=i64::from(MAX_SIDE);
+    let w = number(ui, data, "asset/w", labels::WIDTH, l.size.0.into(), side.clone());
+    let h = number(ui, data, "asset/h", labels::HEIGHT, l.size.1.into(), side);
+    if w.is_some() || h.is_some() {
+        let size = (w.map_or(l.size.0, |v| v as u32), h.map_or(l.size.1, |v| v as u32));
+        out.push(EditorAction::Resize {
+            size,
+            offset: (0, 0),
+            material: Material::Background,
+            colour: Rgba::BLACK,
+        });
+    }
+    ui.label(format!("{}: {}", labels::ART_SCALE, l.art_scale));
     super::look::level_look(ui, state, data, out);
     super::look::level_materials(ui, state, out);
 }

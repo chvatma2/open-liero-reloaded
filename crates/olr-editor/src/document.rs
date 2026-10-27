@@ -127,6 +127,10 @@ pub struct Document {
     pub(crate) distant_generation: u64,
     /// The back art's see-through pixels (alpha 0), counted.
     pub(crate) holes: u64,
+    /// Issue #77: an asset tab's document keeps the asset's states,
+    /// exposed properties, sounds, script and health (`open_asset`); `None`
+    /// for a level's.
+    pub(crate) asset: Option<Box<crate::asset_tab::AssetParts>>,
 }
 
 /// What a plain level brought that its layers cannot bake.
@@ -406,6 +410,7 @@ impl Document {
             distant_masks: Vec::new(),
             distant_generation: 0,
             holes: 0,
+            asset: None,
         };
         doc.rebake(doc.all());
         doc.rebaked = (&doc.level.material, &doc.level.front, &doc.level.back)
@@ -718,7 +723,8 @@ impl Document {
                     .into(),
             });
         }
-        if spawns == 0 {
+        // An asset has no spawns (issue #77).
+        if spawns == 0 && self.asset.is_none() {
             out.push(Problem {
                 severity: Severity::Warning,
                 text: "the level has no spawn: worms start at free spots".into(),

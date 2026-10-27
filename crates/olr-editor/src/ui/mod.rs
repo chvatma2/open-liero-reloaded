@@ -168,6 +168,22 @@ pub mod labels {
     pub const KEEP_BOTH: &str = "Keep both";
     pub const BUILT_IN: &str = "Built-in";
     pub const YOURS: &str = "Yours";
+    // The asset tab (issue #77).
+    pub const LEVEL_TAB: &str = "Level";
+    pub const ASSET_TAB: &str = "Asset";
+    /// The Asset switch's hint while no asset is open.
+    pub const ASSET_TAB_HINT: &str = "Open or make an asset from the Assets tab";
+    /// The Assets tab's button beside a picked asset (issue #81's "Edit in
+    /// level" is the level's own copies').
+    pub const EDIT_LIBRARY_ASSET: &str = "Edit asset";
+    pub const NEW_ASSET: &str = "New asset…";
+    /// The asset's properties' size, its Width and Height fields.
+    pub const ASSET_SIZE: &str = "Asset size";
+    pub const WIDTH: &str = "Width";
+    pub const HEIGHT: &str = "Height";
+    pub const ART_SCALE: &str = "Art scale";
+    /// The New asset dialog's button.
+    pub const CREATE: &str = "Create";
     // Surface materials (issue #43).
     pub const MATERIALS: &str = "Materials";
     pub const ADD_MATERIAL: &str = "Add from library";
@@ -240,8 +256,9 @@ pub struct EditorData {
     resize: Option<([i64; 4], (u32, u32))>,
     /// The new area's material for a resize: 0 rock, 1 dirt, 2 background.
     resize_material: usize,
-    /// The open level's directory: drafts belong to it.
-    dir: Option<std::path::PathBuf>,
+    /// The tab, the open document's directory and the asset tab's asset:
+    /// drafts belong to them.
+    dir: Option<(crate::state::DocTab, std::path::PathBuf, Option<crate::catalog::AssetKey>)>,
     /// The draft keys of the fields drawn this frame.
     drawn: std::collections::BTreeSet<String>,
     /// The file browser's typed path and selection, while it is open.
@@ -258,6 +275,8 @@ pub struct EditorData {
     asset_generation: u64,
     /// The asset name dialog's field, while it is open.
     asset_name: Option<String>,
+    /// The New asset dialog's fields, while it is open (issue #77).
+    new_asset: Option<crate::asset_tab::NewAsset>,
 }
 
 /// The file browser's drafts, for the directory shown.
@@ -287,15 +306,19 @@ impl EditorData {
 /// properties' commits come first: a field's last value is in before a
 /// toolbar or list click that ended its edit (Undo, Save) acts.
 pub fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData) -> Vec<EditorAction> {
-    let Some(doc) = state.document() else {
+    let Some(doc) = state.active_document() else {
         ui.centered_and_justified(|ui| ui.label("No level is open."));
         return Vec::new();
     };
-    // Drafts belong to the open level.
-    if data.dir.as_deref() != Some(doc.dir()) {
+    // Drafts belong to the open level, or the asset tab's asset (issue
+    // #77): a switch or another document drops them.
+    let owner = (state.doc_tab(), doc.dir().to_path_buf(), state.asset_key().cloned());
+    if data.dir.as_ref() != Some(&owner) {
         let canvas = (data.canvas_rect, data.canvas_size);
-        *data = EditorData { dir: Some(doc.dir().to_path_buf()), ..EditorData::default() };
+        let thumbs = (std::mem::take(&mut data.asset_thumbs), data.asset_generation);
+        *data = EditorData { dir: Some(owner), ..EditorData::default() };
         (data.canvas_rect, data.canvas_size) = canvas;
+        (data.asset_thumbs, data.asset_generation) = thumbs;
     }
     data.drawn.clear();
     // A popup open (a flyout, a menu) takes Escape for itself.
@@ -317,6 +340,9 @@ pub fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData) -> Vec<Edit
         elements::show(ui, state, data, &mut list);
         ui.separator();
         egui::ScrollArea::vertical().id_salt("olr-editor-properties").show(ui, |ui| match state.selection() {
+            Selection::None if state.doc_tab() == crate::state::DocTab::Asset => {
+                level::asset(ui, state, data, &mut fields)
+            }
             Selection::None => level::show(ui, state, data, &mut fields),
             _ => properties::show(ui, state, data, &mut fields),
         })
@@ -404,7 +430,7 @@ fn shortcuts(ui: &Ui, state: &EditorState, popup: bool, out: &mut Vec<EditorActi
         {
             out.push(EditorAction::MergeDown(id.clone()));
         }
-        for tool in Tool::ALL {
+        for tool in Tool::ALL.into_iter().filter(|t| state.offers(*t)) {
             if let Some(key) = Key::from_name(&tool.key().to_string())
                 && i.consume_key(Modifiers::NONE, key)
             {

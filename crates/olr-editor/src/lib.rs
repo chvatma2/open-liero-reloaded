@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 pub mod asset_ops;
+pub mod asset_tab;
 pub mod browser;
 pub mod catalog;
 pub mod clipboard;
@@ -26,6 +27,6 @@ pub use history::{Edit, History, LevelMeta};
 pub use olr_pack::Severity;
 pub use ops::Change;
 pub use state::{
-    Choice, Dialog, EditorAction, EditorCommand, EditorState, MAX_BOTS, NewLevel, PanelTab, Pending,
+    Choice, Dialog, DocTab, EditorAction, EditorCommand, EditorState, MAX_BOTS, NewLevel, PanelTab, Pending,
     SURFACE_TINTS, Selection, Status, surface_tint,
 };

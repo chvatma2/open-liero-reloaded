@@ -20,6 +20,11 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState) {
         }
         if let Some(m) = &status.message {
             ui.label(m);
+        } else if state.doc_tab() == crate::state::DocTab::Asset
+            && state.asset_key().is_some_and(|k| k.builtin)
+        {
+            // Issue #77: a built-in asset is saved as the user's.
+            ui.label(crate::asset_tab::BUILT_IN_NOTE);
         }
         if state.playing() {
             ui.label("playing");

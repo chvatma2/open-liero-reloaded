@@ -26,7 +26,7 @@ const DITHERS: [(Dither, &str); 3] =
     [(Dither::None, "None"), (Dither::Ordered, "Ordered"), (Dither::Diffusion, "Diffusion")];
 
 pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
-    let Some(doc) = state.document() else { return };
+    let Some(doc) = state.active_document() else { return };
     match state.selection() {
         Selection::Object(i) => {
             let Some(LevelObject::Spawn { at, .. }) = doc.level().objects.get(*i) else { return };
@@ -46,7 +46,7 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
 /// An element's panel: name, what it is, glow and place; "More" holds the
 /// rest.
 fn element(ui: &mut Ui, state: &EditorState, data: &mut EditorData, id: &str, out: &mut Vec<EditorAction>) {
-    let Some(doc) = state.document() else { return };
+    let Some(doc) = state.active_document() else { return };
     let Some(index) = doc.index_of(id) else { return };
     let e = &doc.items()[index].element;
     let set = |out: &mut Vec<EditorAction>, p: Property| out.push(EditorAction::Set(id.to_string(), p));
@@ -73,7 +73,11 @@ fn element(ui: &mut Ui, state: &EditorState, data: &mut EditorData, id: &str, ou
         if mixed {
             ui.weak("Mixed: rock, dirt and background painted in one layer");
         }
-        if material == ElementMaterial::Background && !mixed {
+        // An asset carries no distant layer (issue #77).
+        if material == ElementMaterial::Background
+            && !mixed
+            && !state.active_document().is_some_and(|d| d.is_asset())
+        {
             distant(ui, state, data, e, out);
         }
         if material == ElementMaterial::Background && e.distant.is_none() {
@@ -164,7 +168,7 @@ fn distant(
     {
         set(out, Property::Distant(Some(v as u8)));
     }
-    if state.document().is_some_and(|d| !d.has_holes()) {
+    if state.active_document().is_some_and(|d| !d.has_holes()) {
         ui.colored_label(ui.visuals().warn_fg_color, labels::DISTANT_HINT);
     }
 }
@@ -177,7 +181,7 @@ fn glass(ui: &mut Ui, state: &EditorState, data: &mut EditorData, e: &Element, o
     let set = |out: &mut Vec<EditorAction>, g: Option<ElementGlass>| {
         out.push(EditorAction::Set(e.id.clone(), Property::Glass(g)))
     };
-    let Some(doc) = state.document() else { return };
+    let Some(doc) = state.active_document() else { return };
     let mut on = e.glass.is_some();
     let r = ui.add_enabled(!e.locked, egui::Checkbox::new(&mut on, labels::GLASS)).on_hover_text(
         "its pixels are see-through glass over the distant layers: lit as the layer behind, \
@@ -318,7 +322,7 @@ fn more(ui: &mut Ui, data: &mut EditorData, e: &Element, index: usize, out: &mut
 /// Visible and Locked (its own), Ungroup, then its elements' count and
 /// shared material, Delete and Save as asset.
 fn folder(ui: &mut Ui, state: &EditorState, data: &mut EditorData, id: &str, out: &mut Vec<EditorAction>) {
-    let Some(doc) = state.document() else { return };
+    let Some(doc) = state.active_document() else { return };
     let Some(f) = doc.folders().into_iter().find(|f| f.id == id) else { return };
     let set = |out: &mut Vec<EditorAction>, field: FolderField| {
         out.push(EditorAction::SetFolder(id.to_string(), field))
@@ -358,7 +362,7 @@ fn folder(ui: &mut Ui, state: &EditorState, data: &mut EditorData, id: &str, out
 /// when they disagree); no Merge down nor Split. A selected folder stands
 /// for its elements (issue #61).
 fn group(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
-    let Some(doc) = state.document() else { return };
+    let Some(doc) = state.active_document() else { return };
     let ids = state.selected_elements();
     let members: Vec<_> =
         ids.iter().filter_map(|id| doc.index_of(id)).map(|i| &doc.items()[i].element).collect();
@@ -383,7 +387,7 @@ fn group(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
 /// are images or drawn layers ("Different" when they disagree), disabled
 /// when `locked`.
 fn shared(ui: &mut Ui, state: &EditorState, ids: &[String], locked: bool, out: &mut Vec<EditorAction>) {
-    let Some(doc) = state.document() else { return };
+    let Some(doc) = state.active_document() else { return };
     let members: Vec<_> =
         ids.iter().filter_map(|id| doc.index_of(id)).map(|i| &doc.items()[i].element).collect();
     let set = |out: &mut Vec<EditorAction>, p: Property| out.push(EditorAction::SetMany(ids.to_vec(), p));

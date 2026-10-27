@@ -177,7 +177,7 @@ pub(super) fn level_look(
     data: &mut EditorData,
     out: &mut Vec<EditorAction>,
 ) {
-    let Some(doc) = state.document() else { return };
+    let Some(doc) = state.active_document() else { return };
     ui.separator();
     ui.heading(labels::LOOK);
     let Some(look) = doc.level().look.clone() else {
@@ -383,7 +383,7 @@ pub(super) fn element_glow(
     if matches!(e.kind, ElementKind::Raster) {
         return;
     }
-    let Some(doc) = state.document() else { return };
+    let Some(doc) = state.active_document() else { return };
     ui.separator();
     let set_glow =
         |out: &mut Vec<EditorAction>, glow| out.push(EditorAction::SetGlow { id: e.id.clone(), glow });
@@ -521,7 +521,7 @@ pub(super) fn tint_swatch(ui: &mut Ui, value: u8, side: f32, name: &str) -> egui
 /// Materials view tint, who uses it, and Remove (only when nothing uses
 /// it); "Add from library" copies a built-in or user's material in.
 pub(super) fn level_materials(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
-    let Some(doc) = state.document() else { return };
+    let Some(doc) = state.active_document() else { return };
     ui.separator();
     ui.label(egui::RichText::new(labels::MATERIALS).strong())
         .on_hover_text("what the level's pixels are made of: how they take heat from explosions");
@@ -580,7 +580,7 @@ pub(super) fn level_materials(ui: &mut Ui, state: &EditorState, out: &mut Vec<Ed
 /// back art; each one of the level's materials or none. The Surface
 /// brush paints them per pixel over these.
 pub(super) fn element_surfaces(ui: &mut Ui, state: &EditorState, e: &Element, out: &mut Vec<EditorAction>) {
-    let Some(doc) = state.document() else { return };
+    let Some(doc) = state.active_document() else { return };
     ui.separator();
     let materials = doc.materials();
     let hint = if materials.is_empty() {

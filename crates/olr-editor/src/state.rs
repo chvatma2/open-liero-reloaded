@@ -16,6 +16,7 @@ use olr_edit::pack::Pack;
 use olr_edit::textures::Texture;
 use olr_format::levels::{ElementMaterial, LevelSource};
 
+use crate::asset_tab::{BUILT_IN_NOTE, NewAsset};
 use crate::browser::{Browser, DirEntry, Purpose};
 use crate::catalog::{AssetEntry, AssetKey, Catalog, EditorSettings, TextureEntry};
 use crate::clipboard::{Clipboard, PASTE_STEP};
@@ -114,6 +115,9 @@ pub enum Dialog {
     AssetExists { name: String, id: String },
     /// Removing the user's asset `id` (named `name`): Remove, Cancel.
     RemoveAsset { id: String, name: String },
+    /// New asset… (issue #77): its name, size and art scale, the fields
+    /// starting at these: Create (`MakeAsset`), Cancel.
+    NewAsset(NewAsset),
 }
 
 /// The surface materials' tints in the Materials view and its legend
@@ -154,6 +158,115 @@ pub enum Pending {
     Open(PathBuf),
     New(NewLevel),
     Close,
+    /// Issue #77: the asset tab opens `asset`, read from the library's
+    /// `key`, in place of the asset open there.
+    EditAsset {
+        key: AssetKey,
+        asset: Box<olr_edit::asset::Asset>,
+    },
+    /// The asset tab makes this new asset in place of the asset open there.
+    NewAsset(NewAsset),
+    /// Close asks for the asset tab's changes first, then the level's.
+    CloseAsset,
+}
+
+/// The editor's two documents (issue #77): the level and the asset tab's
+/// library asset, each its own session (document, history, unsaved mark,
+/// selection, view, tool and options, status).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DocTab {
+    #[default]
+    Level,
+    Asset,
+}
+
+/// A tab's own state (issue #77). The shown tab's lives in `EditorState`'s
+/// fields; the other tab's waits in `EditorState::other`, and they swap.
+pub(crate) struct Session {
+    doc: Option<Document>,
+    history: History,
+    dirty: bool,
+    status: Status,
+    selection: Selection,
+    saves: VecDeque<(u64, Option<Pending>)>,
+    tool: Tool,
+    prev_tool: Tool,
+    brush: Brush,
+    paint: PaintChoice,
+    paint_material: Option<ElementMaterial>,
+    restore: bool,
+    tolerance: u8,
+    fill_tolerance: u8,
+    view: View,
+    fit_pending: bool,
+    surface_paint: Option<String>,
+    surface_back: bool,
+    drag: Option<Drag>,
+    changes: u64,
+    pixel_rect: Option<(String, Rect)>,
+    pixel_region: Option<Arc<Vec<bool>>>,
+    pixel_world: Option<Rect>,
+    glow_by_colour: bool,
+    select_by_colour: bool,
+    glow_strength: u8,
+    haze_strength: u8,
+    last_tools: [Tool; 2],
+    tab: PanelTab,
+    distant_sent: Option<u64>,
+    focus: Option<String>,
+}
+
+impl Session {
+    /// A tab with nothing open, every tool option at its start.
+    fn new() -> Session {
+        Session {
+            doc: None,
+            history: History::new(),
+            dirty: false,
+            status: Status::default(),
+            selection: Selection::None,
+            saves: VecDeque::new(),
+            tool: Tool::Select,
+            prev_tool: Tool::Select,
+            brush: Brush::default(),
+            paint: PaintChoice::default(),
+            paint_material: None,
+            restore: false,
+            tolerance: DEFAULT_TOLERANCE,
+            fill_tolerance: DEFAULT_FILL_TOLERANCE,
+            view: View { zoom: 2, offset: [0.0, 0.0] },
+            fit_pending: false,
+            surface_paint: None,
+            surface_back: false,
+            drag: None,
+            changes: 0,
+            pixel_rect: None,
+            pixel_region: None,
+            pixel_world: None,
+            glow_by_colour: false,
+            select_by_colour: false,
+            glow_strength: 100,
+            haze_strength: 100,
+            last_tools: ToolGroup::ALL.map(ToolGroup::first),
+            tab: PanelTab::Elements,
+            distant_sent: None,
+            focus: None,
+        }
+    }
+}
+
+/// Swaps a session's fields between `$a` and `$b` (an `EditorState` and a
+/// `Session`): every field of `Session`.
+macro_rules! swap_session {
+    ($a:expr, $b:expr) => {
+        swap_session!(@ $a, $b; doc, history, dirty, status, selection, saves, tool, prev_tool, brush, paint,
+            paint_material, restore, tolerance, fill_tolerance, view, fit_pending, surface_paint, surface_back,
+            drag, changes, pixel_rect, pixel_region, pixel_world, glow_by_colour, select_by_colour,
+            glow_strength, haze_strength, last_tools, tab, distant_sent, focus)
+    };
+    (@ $a:expr, $b:expr; $($f:ident),*) => {
+        $(std::mem::swap(&mut $a.$f, &mut $b.$f);)*
+    };
 }
 
 /// A new level pack to make.
@@ -422,6 +535,20 @@ pub enum EditorAction {
     },
     /// Removes the user's asset `id` (asks first).
     RemoveAsset(String),
+    // The asset tab (issue #77).
+    /// The session bar's Level | Asset switch (Asset once one is open).
+    ShowTab(DocTab),
+    /// Edit asset: reads library asset `key` to open in the asset tab.
+    EditAsset(AssetKey),
+    /// The asset `ReadAssetToEdit` asked for, or why it cannot be read.
+    AssetToEdit {
+        key: AssetKey,
+        asset: Result<Box<olr_edit::asset::Asset>, String>,
+    },
+    /// New asset…: asks its name, size and art scale.
+    NewAssetDialog,
+    /// The New asset dialog's Create.
+    MakeAsset(NewAsset),
     // The layout (issue #8).
     /// The right panel's tab, by hand.
     Tab(PanelTab),
@@ -487,6 +614,9 @@ pub enum EditorCommand {
     ImportAsset(PathBuf),
     /// Remove the user's asset folder `id`; answer `AssetsChanged`.
     RemoveAsset(String),
+    /// Read asset `key` whole (`olr_edit::asset::load_dir`) to edit it in
+    /// the asset tab (issue #77); answer `AssetToEdit`.
+    ReadAssetToEdit(AssetKey),
     /// The document was saved, or is being closed or left: drop its
     /// recovery copy (R7).
     RecoveryDone,
@@ -499,6 +629,11 @@ pub const DEFAULT_TOLERANCE: u8 = 10;
 
 /// Fill's tolerance at first, percent (plan 14e R5): exact.
 pub const DEFAULT_FILL_TOLERANCE: u8 = 0;
+
+/// What `update` notes before an asset tab's action (issue #77): the
+/// history's step count, the unsaved mark, the change count, the selection
+/// and the focus.
+type GuardMark = (u64, bool, u64, Selection, Option<String>);
 
 /// Bots a Play match takes at most.
 pub const MAX_BOTS: u8 = 8;
@@ -593,62 +728,120 @@ pub struct EditorState {
     /// The folder a double click went into (issue #61): plain clicks on its
     /// members select its children; a click outside it, or Escape, leaves.
     pub(crate) focus: Option<String>,
+    // The asset tab (issue #77).
+    /// The tab the user sees, and the tab whose session is in the fields
+    /// above (they differ only inside `on_tab`).
+    pub(crate) shown: DocTab,
+    pub(crate) in_place: DocTab,
+    /// The other tab's session.
+    pub(crate) other: Box<Session>,
+    /// Where the asset tab's asset is in the library; `None` for a new one.
+    pub(crate) asset_key: Option<AssetKey>,
+    /// The asset tab's save in progress: its change count when sent, and
+    /// what it carries out once saved.
+    pub(crate) tab_save: Option<(u64, Option<Pending>)>,
+    /// The same while `pending_asset` is the asset tab's, waiting on
+    /// `Dialog::AssetExists`.
+    pub(crate) pending_tab: Option<(u64, Option<Pending>)>,
+    /// Counts the times the canvas's document was replaced: a tab switch,
+    /// an asset opened (the host uploads the canvas whole).
+    pub(crate) shown_generation: u64,
 }
 
 impl EditorState {
     pub fn new(settings: EditorSettings, catalog: Catalog) -> EditorState {
+        let Session {
+            doc,
+            history,
+            dirty,
+            status,
+            selection,
+            saves,
+            tool,
+            prev_tool,
+            brush,
+            paint,
+            paint_material,
+            restore,
+            tolerance,
+            fill_tolerance,
+            view,
+            fit_pending,
+            surface_paint,
+            surface_back,
+            drag,
+            changes,
+            pixel_rect,
+            pixel_region,
+            pixel_world,
+            glow_by_colour,
+            select_by_colour,
+            glow_strength,
+            haze_strength,
+            last_tools,
+            tab,
+            distant_sent,
+            focus,
+        } = Session::new();
         EditorState {
             settings,
             catalog,
-            doc: None,
-            history: History::new(),
-            dirty: false,
+            doc,
+            history,
+            dirty,
             playing: false,
             dialog: None,
-            status: Status::default(),
-            selection: Selection::None,
-            saves: VecDeque::new(),
-            tool: Tool::Select,
-            prev_tool: Tool::Select,
-            brush: Brush::default(),
-            paint: PaintChoice::default(),
-            paint_material: None,
-            restore: false,
-            tolerance: DEFAULT_TOLERANCE,
-            fill_tolerance: DEFAULT_FILL_TOLERANCE,
+            status,
+            selection,
+            saves,
+            tool,
+            prev_tool,
+            brush,
+            paint,
+            paint_material,
+            restore,
+            tolerance,
+            fill_tolerance,
             builtin: Arc::new(olr_edit::textures::builtin()),
             textures_generation: 0,
-            view: View { zoom: 2, offset: [0.0, 0.0] },
+            view,
             canvas: None,
-            fit_pending: false,
+            fit_pending,
             material_view: false,
             surface_view: false,
-            surface_paint: None,
-            surface_back: false,
+            surface_paint,
+            surface_back,
             grid: false,
             preview_parallax: false,
-            drag: None,
-            changes: 0,
+            drag,
+            changes,
             browser: None,
             clipboard: None,
-            pixel_rect: None,
-            pixel_region: None,
-            glow_by_colour: false,
-            select_by_colour: false,
-            glow_strength: 100,
-            haze_strength: 100,
+            pixel_rect,
+            pixel_region,
+            glow_by_colour,
+            select_by_colour,
+            glow_strength,
+            haze_strength,
             view_mode: olr_look::ViewMode::Lit,
             clock_ms: 0.0,
             clock_running: false,
-            last_tools: ToolGroup::ALL.map(ToolGroup::first),
-            tab: PanelTab::Elements,
-            pixel_world: None,
+            last_tools,
+            tab,
+            pixel_world,
             pending_asset: None,
             picked_asset: None,
             placing: false,
             assets_generation: 0,
-            distant_sent: None,
-            focus: None,
+            distant_sent,
+            focus,
+            shown: DocTab::Level,
+            in_place: DocTab::Level,
+            other: Box::new(Session::new()),
+            asset_key: None,
+            tab_save: None,
+            pending_tab: None,
+            shown_generation: 0,
         }
     }
 
@@ -730,8 +923,49 @@ impl EditorState {
         self.pixel_rect.as_ref().and(self.pixel_region.as_deref().map(Vec::as_slice))
     }
 
+    /// The level's document, whichever tab shows (issue #77: crash
+    /// recovery covers the level only).
     pub fn document(&self) -> Option<&Document> {
+        match self.in_place {
+            DocTab::Level => self.doc.as_ref(),
+            DocTab::Asset => self.other.doc.as_ref(),
+        }
+    }
+
+    /// The shown tab's document: what the panels and the canvas show.
+    pub fn active_document(&self) -> Option<&Document> {
         self.doc.as_ref()
+    }
+
+    /// The asset tab's document, if an asset is open there.
+    pub fn asset_document(&self) -> Option<&Document> {
+        match self.in_place {
+            DocTab::Asset => self.doc.as_ref(),
+            DocTab::Level => self.other.doc.as_ref(),
+        }
+    }
+
+    /// The tab shown (issue #77).
+    pub fn doc_tab(&self) -> DocTab {
+        self.shown
+    }
+
+    /// Where the asset tab's asset is in the library (`builtin` until a
+    /// built-in one is first saved as the user's); `None` for a new one.
+    pub fn asset_key(&self) -> Option<&AssetKey> {
+        self.asset_key.as_ref()
+    }
+
+    /// Counts the times the canvas's document was replaced (a tab switch,
+    /// an asset opened): the host then uploads it whole.
+    pub fn shown_generation(&self) -> u64 {
+        self.shown_generation
+    }
+
+    /// Whether the shown tab offers `tool`: the Spawn tool and the Haze
+    /// brush are the level's.
+    pub fn offers(&self, tool: Tool) -> bool {
+        self.shown == DocTab::Level || !matches!(tool, Tool::Spawn | Tool::Haze)
     }
 
     pub fn settings(&self) -> &EditorSettings {
@@ -742,9 +976,26 @@ impl EditorState {
         &self.catalog
     }
 
-    /// Whether there are unsaved changes.
+    /// Whether the level has unsaved changes, whichever tab shows (issue
+    /// #77: crash recovery covers the level only).
     pub fn dirty(&self) -> bool {
+        match self.in_place {
+            DocTab::Level => self.dirty,
+            DocTab::Asset => self.other.dirty,
+        }
+    }
+
+    /// Whether the shown tab's document has unsaved changes.
+    pub fn active_dirty(&self) -> bool {
         self.dirty
+    }
+
+    /// Whether the asset tab's asset has unsaved changes.
+    pub fn asset_dirty(&self) -> bool {
+        match self.in_place {
+            DocTab::Asset => self.dirty && self.doc.is_some(),
+            DocTab::Level => self.other.dirty && self.other.doc.is_some(),
+        }
     }
 
     pub fn playing(&self) -> bool {
@@ -842,7 +1093,9 @@ impl EditorState {
                 | EditorAction::AssetsChanged(_)
                 | EditorAction::AssetSaved(_)
                 | EditorAction::AssetRead { .. }
+                | EditorAction::AssetToEdit { .. }
                 | EditorAction::NameAsset(_)
+                | EditorAction::MakeAsset(_)
                 | EditorAction::Previewed { .. }
                 | EditorAction::Pointer { .. }
                 | EditorAction::Canvas(_)
@@ -885,6 +1138,8 @@ impl EditorState {
                 | EditorAction::AssetsChanged(_)
                 | EditorAction::AssetSaved(_)
                 | EditorAction::PickAsset(_)
+                | EditorAction::EditAsset(_)
+                | EditorAction::NewAssetDialog
                 | EditorAction::CancelPlacing
                 | EditorAction::RemoveAsset(_)
                 | EditorAction::Select(_)
@@ -921,8 +1176,17 @@ impl EditorState {
             _ => false,
         };
         let before = self.selection.clone();
+        // Issue #77: the asset tab's edits are checked once made.
+        let guard = (self.shown == DocTab::Asset)
+            .then(|| (self.history.pushes(), self.dirty, self.changes, before.clone(), self.focus.clone()));
         let mut cmds = if view_only { Vec::new() } else { self.release() };
         cmds.extend(self.act(action));
+        if let Some(g) = guard
+            && self.shown == DocTab::Asset
+            && self.history.pushes() > g.0
+        {
+            self.guard(g, &mut cmds);
+        }
         // The tab follows the selection (issue #8): a spawn shows Spawns,
         // an element Elements.
         if selects || self.selection != before {
@@ -958,8 +1222,12 @@ impl EditorState {
 
     fn act(&mut self, action: EditorAction) -> Vec<EditorCommand> {
         match action {
-            EditorAction::Opened(doc) => self.opened(doc),
+            EditorAction::Opened(doc) => {
+                self.switch_tab(DocTab::Level);
+                self.opened(doc)
+            }
             EditorAction::Recovered(doc) => {
+                self.switch_tab(DocTab::Level);
                 let cmds = self.opened(doc);
                 self.dirty = true;
                 cmds
@@ -971,6 +1239,8 @@ impl EditorState {
                 Vec::new()
             }
             EditorAction::ImportFailed(why) | EditorAction::Failed(why) => {
+                // An asset tab's save that failed is over.
+                self.tab_save = None;
                 self.dialog = Some(Dialog::Error(why));
                 Vec::new()
             }
@@ -993,8 +1263,14 @@ impl EditorState {
                 if self.picked_asset.as_ref().is_some_and(|k| self.asset(k).is_none()) {
                     self.picked_asset = None;
                 }
+                // The asset tab's asset removed from the library: saving
+                // makes a new one (issue #77).
+                if self.asset_key.as_ref().is_some_and(|k| self.asset(k).is_none()) {
+                    self.asset_key = None;
+                }
                 Vec::new()
             }
+            EditorAction::AssetSaved(key) if self.tab_save.is_some() => self.tab_saved(key),
             EditorAction::AssetSaved(key) => {
                 let name = self.asset(&key).map_or_else(|| key.id.clone(), |a| a.name.clone());
                 self.status.message = Some(format!("saved the asset {name:?} in your assets"));
@@ -1033,6 +1309,43 @@ impl EditorState {
                     return Vec::new();
                 }
                 vec![EditorCommand::ReadAsset { key, at }]
+            }
+            EditorAction::ShowTab(tab) if tab == self.shown => Vec::new(),
+            EditorAction::ShowTab(DocTab::Asset) if self.asset_document().is_none() => Vec::new(),
+            EditorAction::ShowTab(tab) => {
+                self.switch_tab(tab);
+                vec![EditorCommand::Upload(
+                    self.doc.as_ref().map_or(Rect { x: 0, y: 0, w: 0, h: 0 }, Document::all),
+                )]
+            }
+            EditorAction::EditAsset(key) => match self.asset(&key) {
+                Some(_) => vec![EditorCommand::ReadAssetToEdit(key)],
+                None => Vec::new(),
+            },
+            EditorAction::AssetToEdit { key, asset } => match asset {
+                Ok(asset) => self.leave(Pending::EditAsset { key, asset }),
+                Err(why) => {
+                    self.dialog = Some(Dialog::Error(why));
+                    Vec::new()
+                }
+            },
+            EditorAction::NewAssetDialog => {
+                let art_scale = self.document().map_or(1, |d| d.level().art_scale);
+                self.dialog =
+                    Some(Dialog::NewAsset(NewAsset { name: "Asset".into(), size: (64, 64), art_scale }));
+                Vec::new()
+            }
+            EditorAction::MakeAsset(n) => {
+                if !matches!(self.dialog, Some(Dialog::NewAsset(_))) {
+                    return Vec::new();
+                }
+                if let Some(why) = n.refusal() {
+                    self.status.message = Some(why);
+                    self.dialog = Some(Dialog::NewAsset(n));
+                    return Vec::new();
+                }
+                self.dialog = None;
+                self.leave(Pending::NewAsset(n))
             }
             EditorAction::RemoveAsset(id) => {
                 let key = AssetKey { builtin: false, id: id.clone() };
@@ -1077,11 +1390,12 @@ impl EditorState {
                 self.dialog = Some(Dialog::Error(why));
                 Vec::new()
             }
-            EditorAction::Saved(result) => self.saved(result),
+            EditorAction::Saved(result) => self.on_tab(DocTab::Level, |s| s.saved(result)),
             EditorAction::PlayEnded => Vec::new(),
             EditorAction::Open(dir) => self.leave(Pending::Open(dir)),
             EditorAction::New(n) => self.leave(Pending::New(n)),
             EditorAction::Close => self.leave(Pending::Close),
+            EditorAction::Save if self.shown == DocTab::Asset => self.save_asset(None),
             EditorAction::Save => self.save(None),
             EditorAction::Choose(choice) => self.choose(choice),
             EditorAction::ImportImage { file_name, bytes } => {
@@ -1241,9 +1555,18 @@ impl EditorState {
             EditorAction::MoveElement { id, to } => self.edit(|d| d.move_to(&id, to)),
             EditorAction::Split(id) => self.restack(&id, false),
             EditorAction::MergeDown(id) => self.restack(&id, true),
-            EditorAction::Meta(meta) => {
+            EditorAction::Meta(mut meta) => {
+                // The asset tab's name only: its theme is the level's.
+                if let (DocTab::Asset, Some(d)) = (self.shown, &self.doc) {
+                    let now = d.meta();
+                    (meta.theme, meta.notes) = (now.theme, now.notes);
+                }
                 let catalog = self.catalog.clone();
                 self.edit(|d| d.set_meta(meta, &catalog))
+            }
+            EditorAction::ArtScale(_) if self.shown == DocTab::Asset => {
+                self.status.message = Some("an asset's art scale is shown, not changed".into());
+                Vec::new()
             }
             EditorAction::ArtScale(to) => {
                 if self.doc.as_ref().is_some_and(|d| d.level().art_scale != to) {
@@ -1256,6 +1579,10 @@ impl EditorState {
             }
             EditorAction::Undo => self.step(true),
             EditorAction::Redo => self.step(false),
+            EditorAction::Play if self.shown == DocTab::Asset => {
+                self.status.message = Some("Play is the level tab's".into());
+                Vec::new()
+            }
             EditorAction::Play => match &self.doc {
                 Some(d) => {
                     self.playing = true;
@@ -1275,6 +1602,7 @@ impl EditorState {
                 self.settings.play_bots = n.min(MAX_BOTS);
                 vec![EditorCommand::SaveSettings(self.settings.clone())]
             }
+            EditorAction::Tab(PanelTab::Spawns) if self.shown == DocTab::Asset => Vec::new(),
             EditorAction::Tab(tab) => {
                 self.tab = tab;
                 Vec::new()
@@ -1286,6 +1614,10 @@ impl EditorState {
             EditorAction::ShowFineTuning(open) => {
                 self.settings.fine_tuning_open = open;
                 vec![EditorCommand::SaveSettings(self.settings.clone())]
+            }
+            EditorAction::Tool(tool) if !self.offers(tool) => {
+                self.status.message = Some(format!("the {} is the level tab's", tool.name()));
+                Vec::new()
             }
             EditorAction::Tool(tool) => {
                 self.placing = false;
@@ -1823,12 +2155,20 @@ impl EditorState {
         self.send_asset(None)
     }
 
-    /// The named asset to the host (over folder `replace`).
+    /// The named asset to the host (over folder `replace`). The asset
+    /// tab's own (issue #77) takes the name it is saved under.
     fn send_asset(&mut self, replace: Option<String>) -> Vec<EditorCommand> {
-        match self.pending_asset.take() {
-            Some(asset) => vec![EditorCommand::SaveAsset { asset, replace }],
-            None => Vec::new(),
+        let Some(asset) = self.pending_asset.take() else { return Vec::new() };
+        if let Some(t) = self.pending_tab.take() {
+            self.tab_save = Some(t);
+            let name = asset.name.clone();
+            self.on_tab(DocTab::Asset, |s| {
+                if let Some(d) = s.doc.as_mut() {
+                    d.level.name = name;
+                }
+            });
         }
+        vec![EditorCommand::SaveAsset { asset, replace }]
     }
 
     /// Places `asset` (`AssetRead`) at world pixel `at`: one step, the new
@@ -2039,29 +2379,197 @@ impl EditorState {
         self.pixel_region = None;
     }
 
-    /// Open, New or Close: asks first when there are unsaved changes.
+    /// Open, New or Close (and issue #77's asset tab openings): asks first
+    /// when the document it leaves has unsaved changes; Close asks for the
+    /// asset tab's, then the level's.
     fn leave(&mut self, then: Pending) -> Vec<EditorCommand> {
-        if self.dirty && self.doc.is_some() {
-            self.dialog = Some(Dialog::Unsaved { then });
-            return Vec::new();
+        match then {
+            Pending::EditAsset { .. } | Pending::NewAsset(_) | Pending::CloseAsset => {
+                if self.asset_dirty() {
+                    self.dialog = Some(Dialog::Unsaved { then });
+                    return Vec::new();
+                }
+                self.carry_out(then)
+            }
+            Pending::Close if self.asset_dirty() => {
+                self.dialog = Some(Dialog::Unsaved { then: Pending::CloseAsset });
+                Vec::new()
+            }
+            then => {
+                if self.dirty() && self.document().is_some() {
+                    self.dialog = Some(Dialog::Unsaved { then });
+                    return Vec::new();
+                }
+                self.carry_out(then)
+            }
         }
-        self.carry_out(then)
     }
 
-    /// What `then` asks of the host; the document left behind (closed, or
-    /// replaced by another) drops its recovery copy first.
+    /// What `then` asks of the host; the level left behind (closed, or
+    /// replaced by another) drops its recovery copy first. The asset tab's
+    /// are carried out here.
     fn carry_out(&mut self, then: Pending) -> Vec<EditorCommand> {
-        let mut cmds = if self.doc.is_some() { vec![EditorCommand::RecoveryDone] } else { Vec::new() };
-        cmds.push(match then {
+        let level = match then {
+            Pending::EditAsset { key, asset } => return self.open_asset_tab(Some(key), &asset),
+            Pending::NewAsset(n) => return self.open_asset_tab(None, &n.asset()),
+            Pending::CloseAsset => {
+                self.close_asset_tab();
+                return self.leave(Pending::Close);
+            }
+            level => level,
+        };
+        let mut cmds = if self.document().is_some() { vec![EditorCommand::RecoveryDone] } else { Vec::new() };
+        cmds.push(match level {
             Pending::Open(dir) => EditorCommand::Open(dir),
             Pending::New(n) => EditorCommand::Create(n),
-            Pending::Close => {
+            _ => {
                 self.pixel_rect = None;
                 self.pixel_region = None;
                 EditorCommand::Close
             }
         });
         cmds
+    }
+
+    /// Puts `tab`'s session in the fields (the other one in `other`).
+    fn place(&mut self, tab: DocTab) {
+        if self.in_place != tab {
+            swap_session!(self, self.other);
+            self.in_place = tab;
+        }
+    }
+
+    /// `f` on `tab`'s session, the shown one's back in place after.
+    fn on_tab<R>(&mut self, tab: DocTab, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.place(tab);
+        let r = f(self);
+        self.place(self.shown);
+        r
+    }
+
+    /// Shows `tab` (issue #77): its session in place, its distant layers
+    /// sent again and the canvas uploaded whole.
+    fn switch_tab(&mut self, tab: DocTab) {
+        if self.shown != tab {
+            self.shown = tab;
+            self.placing = false;
+            self.shown_generation += 1;
+        }
+        self.place(tab);
+        self.distant_sent = None;
+    }
+
+    /// The asset tab with `asset` open, read from the library's `key` (none
+    /// for a new asset, unsaved till saved): a fresh session, shown.
+    fn open_asset_tab(
+        &mut self,
+        key: Option<AssetKey>,
+        asset: &olr_edit::asset::Asset,
+    ) -> Vec<EditorCommand> {
+        let theme = self.document().map(|d| d.level().theme.clone()).unwrap_or_default();
+        let doc = match Document::open_asset(asset, &theme, &self.catalog) {
+            Ok(doc) => doc,
+            Err(e) => {
+                self.dialog = Some(Dialog::Error(e.to_string()));
+                return Vec::new();
+            }
+        };
+        let all = doc.all();
+        self.close_asset_tab();
+        self.switch_tab(DocTab::Asset);
+        self.shown_generation += 1;
+        self.doc = Some(doc);
+        self.dirty = key.is_none();
+        self.status.message = key.as_ref().filter(|k| k.builtin).map(|_| BUILT_IN_NOTE.to_string());
+        self.asset_key = key;
+        self.fit_pending = true;
+        self.fit();
+        self.refresh_problems();
+        vec![EditorCommand::Upload(all)]
+    }
+
+    /// Empties the asset tab (its session made anew), showing the level.
+    fn close_asset_tab(&mut self) {
+        self.on_tab(DocTab::Asset, |s| {
+            let mut fresh = Session::new();
+            swap_session!(s, fresh);
+        });
+        self.asset_key = None;
+        self.tab_save = None;
+        if self.shown == DocTab::Asset {
+            self.switch_tab(DocTab::Level);
+        }
+    }
+
+    /// Saves the asset tab's asset (issue #77) into the user's library,
+    /// then carries out `then`: the user's own over its folder; a built-in
+    /// or new one as a new asset of the user's, a name the user has asking
+    /// Replace or Keep both first. A built-in folder is never written.
+    fn save_asset(&mut self, then: Option<Pending>) -> Vec<EditorCommand> {
+        let made = self.on_tab(DocTab::Asset, |s| s.doc.as_ref().map(|d| (d.to_asset(), s.changes)));
+        let Some((asset, changes)) = made else { return Vec::new() };
+        match self.asset_key.clone().filter(|k| !k.builtin) {
+            Some(k) => {
+                self.tab_save = Some((changes, then));
+                vec![EditorCommand::SaveAsset { asset: Box::new(asset), replace: Some(k.id) }]
+            }
+            None => {
+                let clash = self.catalog.assets.iter().find(|a| !a.key.builtin && a.name == asset.name);
+                let asks = clash.map(|a| Dialog::AssetExists { name: a.name.clone(), id: a.key.id.clone() });
+                self.pending_asset = Some(Box::new(asset));
+                self.pending_tab = Some((changes, then));
+                match asks {
+                    Some(d) => {
+                        self.dialog = Some(d);
+                        Vec::new()
+                    }
+                    None => self.send_asset(None),
+                }
+            }
+        }
+    }
+
+    /// The asset tab's save done (`AssetSaved`): the tab edits the saved
+    /// key from now on; what waited on the save is carried out.
+    fn tab_saved(&mut self, key: AssetKey) -> Vec<EditorCommand> {
+        let Some((sent, then)) = self.tab_save.take() else { return Vec::new() };
+        let name = self.asset(&key).map_or_else(|| key.id.clone(), |a| a.name.clone());
+        self.asset_key = Some(key);
+        self.on_tab(DocTab::Asset, |s| {
+            // A change made after the save was sent is not in the saved asset.
+            s.dirty = s.changes != sent;
+            s.status.message = Some(format!("saved the asset {name:?} in your assets"));
+        });
+        then.map(|t| self.carry_out(t)).unwrap_or_default()
+    }
+
+    /// Issue #77: refuses the asset tab's step(s) just made when they leave
+    /// the asset's states or exposure invalid (`Document::asset_refusal`):
+    /// the steps reverted and forgotten, the unsaved mark, selection and
+    /// focus as they were, the status line saying why.
+    fn guard(
+        &mut self,
+        (pushes, dirty, changes, selection, focus): GuardMark,
+        cmds: &mut Vec<EditorCommand>,
+    ) {
+        let Some(doc) = self.doc.as_mut() else { return };
+        let Some(why) = doc.asset_refusal() else { return };
+        while self.history.pushes() > pushes {
+            let Some(step) = self.history.retract() else { break };
+            for e in step.iter().rev() {
+                doc.apply(e, false);
+            }
+            if step.iter().any(|e| matches!(e, Edit::Whole { .. })) {
+                self.pixel_rect = None;
+                self.pixel_region = None;
+            }
+        }
+        let all = doc.all();
+        (self.dirty, self.changes, self.selection, self.focus) = (dirty, changes, selection, focus);
+        self.refresh_problems();
+        self.status.message = Some(why);
+        cmds.retain(|c| !matches!(c, EditorCommand::Upload(_)));
+        cmds.push(EditorCommand::Upload(all));
     }
 
     fn save(&mut self, then: Option<Pending>) -> Vec<EditorCommand> {
@@ -2097,7 +2605,12 @@ impl EditorState {
     fn choose(&mut self, choice: Choice) -> Vec<EditorCommand> {
         let Some(dialog) = self.dialog.take() else { return Vec::new() };
         match (dialog, choice) {
-            (Dialog::Unsaved { then }, Choice::Save) => self.save(Some(then)),
+            (Dialog::Unsaved { then }, Choice::Save) => match then {
+                Pending::EditAsset { .. } | Pending::NewAsset(_) | Pending::CloseAsset => {
+                    self.save_asset(Some(then))
+                }
+                then => self.on_tab(DocTab::Level, |s| s.save(Some(then))),
+            },
             (Dialog::Unsaved { then }, Choice::Discard) => self.carry_out(then),
             (Dialog::ArtScale { to }, Choice::Confirm) => self.edit(|d| d.set_art_scale(to)),
             (Dialog::RemoveGroup { id }, Choice::Confirm) => self.edits(|d| d.remove_group(&id)),
@@ -2114,6 +2627,7 @@ impl EditorState {
             (Dialog::RemoveAsset { id, .. }, Choice::Confirm) => vec![EditorCommand::RemoveAsset(id)],
             (Dialog::AssetName { .. } | Dialog::AssetExists { .. }, Choice::Cancel) => {
                 self.pending_asset = None;
+                self.pending_tab = None;
                 Vec::new()
             }
             (Dialog::Error(_), _) | (_, Choice::Cancel) => Vec::new(),

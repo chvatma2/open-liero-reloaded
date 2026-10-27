@@ -10,7 +10,7 @@ use olr_look::ViewMode;
 use super::icons::{self, Icon};
 use super::{EditorData, labels, number, relabel};
 use crate::browser::Purpose;
-use crate::state::{ClockAction, EditorAction, EditorState, MAX_BOTS};
+use crate::state::{ClockAction, DocTab, EditorAction, EditorState, MAX_BOTS};
 use crate::tools::{Brush, BrushShape, MAX_BRUSH, PaintChoice, TextureRef, Tool};
 use olr_format::levels::ElementMaterial;
 
@@ -57,9 +57,23 @@ fn button_height(ui: &mut Ui) -> f32 {
 /// changed width, and pushed the mod picker past the window's edge).
 pub(super) fn session(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
     button_height(ui);
+    let asset = state.doc_tab() == DocTab::Asset;
     ui.horizontal(|ui| {
+        // Issue #77: the level and the asset tab.
+        if ui.add(egui::Button::selectable(!asset, labels::LEVEL_TAB)).clicked() && asset {
+            out.push(EditorAction::ShowTab(DocTab::Level));
+        }
+        let open = state.asset_document().is_some();
+        let r = ui
+            .add_enabled(open, egui::Button::selectable(asset, labels::ASSET_TAB))
+            .on_disabled_hover_text(labels::ASSET_TAB_HINT);
+        if r.clicked() && !asset {
+            out.push(EditorAction::ShowTab(DocTab::Asset));
+        }
+        ui.separator();
         menu(ui, "File", labels::FILE, None, |ui| {
-            if ui.button(labels::OPEN).clicked() {
+            // Open… opens a level: the level tab's.
+            if !asset && ui.button(labels::OPEN).clicked() {
                 out.push(EditorAction::Browse(Purpose::OpenPack));
             }
             if ui.button(labels::SAVE).on_hover_text("Ctrl+S").clicked() {
@@ -78,17 +92,20 @@ pub(super) fn session(ui: &mut Ui, state: &EditorState, data: &mut EditorData, o
         {
             out.push(EditorAction::Redo);
         }
-        let mark = if state.dirty() { "unsaved changes" } else { "" };
+        let mark = if state.active_dirty() { "unsaved changes" } else { "" };
         ui.add_sized(
             [MARK_WIDTH, ui.spacing().interact_size.y],
             egui::Label::new(egui::RichText::new(mark).weak()),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            play_menu(ui, state, data, out);
-            if ui.button(labels::PLAY).on_hover_text("play a test match on this level").clicked() {
-                out.push(EditorAction::Play);
+            // Play is the level's (issue #77).
+            if !asset {
+                play_menu(ui, state, data, out);
+                if ui.button(labels::PLAY).on_hover_text("play a test match on this level").clicked() {
+                    out.push(EditorAction::Play);
+                }
+                ui.separator();
             }
-            ui.separator();
             view_menu(ui, state, data, out);
         });
     });
@@ -409,7 +426,7 @@ struct Entry<'a> {
 
 /// The palette's choices, grouped "Theme", "Built-in" and "Yours".
 fn palette_entries(state: &EditorState) -> Vec<(&'static str, Vec<Entry<'_>>)> {
-    let Some(doc) = state.document() else { return Vec::new() };
+    let Some(doc) = state.active_document() else { return Vec::new() };
     let theme = &doc.level().theme;
     let entry = |choice, key, image, name: &str| Entry { choice, key, image, name: name.to_string() };
     let ours = vec![
@@ -499,7 +516,7 @@ fn palette(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Ve
 /// The selected drawn layer's own material, when one is selected.
 fn selected_material(state: &EditorState) -> Option<ElementMaterial> {
     let crate::state::Selection::Element(id) = state.selection() else { return None };
-    let doc = state.document()?;
+    let doc = state.active_document()?;
     match &doc.items()[doc.index_of(id)?].element.kind {
         olr_format::levels::ElementKind::Drawn { material, .. } => Some(*material),
         _ => None,
@@ -623,7 +640,7 @@ fn options(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Ve
 /// level's, or the element's own default), and Front and Back when the
 /// selected element has back art.
 fn surface_options(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
-    let Some(doc) = state.document() else { return };
+    let Some(doc) = state.active_document() else { return };
     let current = state.surface_paint();
     let name = |id: Option<&str>| match id {
         Some(id) => {

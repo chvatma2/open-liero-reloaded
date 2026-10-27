@@ -328,8 +328,13 @@ impl EditorHost {
         let mut queue: VecDeque<EditorAction> = actions.into();
         while let Some(a) = queue.pop_front() {
             let opened = matches!(a, EditorAction::Opened(_) | EditorAction::Recovered(_));
+            // Issue #77: a tab switch, or an asset opened, shows another
+            // document: the canvas goes up whole.
+            let shown = self.state.shown_generation();
             let cmds = self.state.update(a);
-            if opened && self.state.document().is_some() {
+            let opened = (opened && self.state.document().is_some())
+                || (shown != self.state.shown_generation() && self.state.active_document().is_some());
+            if opened {
                 out.retain(|o| !matches!(o, HostOut::Upload(_) | HostOut::FullUpload));
                 out.push(HostOut::FullUpload);
             }
@@ -472,16 +477,12 @@ impl EditorHost {
                 self.textures(queue, |dir| files::remove_texture(dir, &name).map(|()| None))
             }
             EditorCommand::ReadAsset { key, at } => {
-                let dir = if key.builtin { &self.builtin_assets_dir } else { &self.assets_dir };
-                let asset = match dir {
-                    Some(dir) if olr_edit::asset::valid_asset_id(&key.id) => {
-                        olr_edit::asset::load_dir(&dir.join(&key.id))
-                            .map(Box::new)
-                            .map_err(|e| format!("asset {}: {e}", key.id))
-                    }
-                    _ => Err(format!("no asset {:?}", key.id)),
-                };
+                let asset = self.read_asset(&key);
                 queue.push_back(EditorAction::AssetRead { at, asset });
+            }
+            EditorCommand::ReadAssetToEdit(key) => {
+                let asset = self.read_asset(&key);
+                queue.push_back(EditorAction::AssetToEdit { key, asset });
             }
             EditorCommand::SaveAsset { asset, replace } => self.assets(queue, |dir| {
                 olr_edit::asset::add_to_library(dir, &asset, replace.as_deref())
@@ -587,6 +588,20 @@ impl EditorHost {
             info: RecoveryInfo { origin: doc.dir().to_path_buf(), name: doc.level().name.clone() },
             pack: doc.snapshot(),
         })
+    }
+
+    /// Library asset `key` read whole (`olr_edit::asset::load_dir`), or why
+    /// not.
+    fn read_asset(&self, key: &olr_editor::AssetKey) -> Result<Box<olr_edit::asset::Asset>, String> {
+        let dir = if key.builtin { &self.builtin_assets_dir } else { &self.assets_dir };
+        match dir {
+            Some(dir) if olr_edit::asset::valid_asset_id(&key.id) => {
+                olr_edit::asset::load_dir(&dir.join(&key.id))
+                    .map(Box::new)
+                    .map_err(|e| format!("asset {}: {e}", key.id))
+            }
+            _ => Err(format!("no asset {:?}", key.id)),
+        }
     }
 
     fn root_refs(&self) -> Vec<&Path> {

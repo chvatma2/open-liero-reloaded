@@ -11,7 +11,7 @@ use egui::{Align2, Rect, Response, Sense, Stroke, StrokeKind, Ui, WidgetType, po
 use super::icons::{self, Icon};
 use super::{labels, relabel};
 use crate::browser::Purpose;
-use crate::state::{EditorAction, EditorState};
+use crate::state::{DocTab, EditorAction, EditorState};
 use crate::tools::{Tool, ToolGroup};
 
 /// The rail's width (points).
@@ -39,8 +39,11 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>
     // Its label is the brush's, never the element's Glow checkbox's.
     single(ui, state, Tool::Glow, "Glow", out);
     single(ui, state, Tool::Surface, "Surface", out);
-    single(ui, state, Tool::Haze, "Haze", out);
-    single(ui, state, Tool::Spawn, "Spawn", out);
+    // The level's own (issue #77: not the asset tab's).
+    if state.doc_tab() == DocTab::Level {
+        single(ui, state, Tool::Haze, "Haze", out);
+        single(ui, state, Tool::Spawn, "Spawn", out);
+    }
 }
 
 /// A button of one tool.

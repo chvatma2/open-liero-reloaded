@@ -303,6 +303,9 @@ pub struct History {
     bytes: usize,
     /// The grids held, by address: how many edits hold each, and its bytes.
     grids: BTreeMap<usize, (usize, usize)>,
+    /// Steps recorded, less those retracted (issue #77: the asset tab
+    /// checks each new one).
+    pushes: u64,
 }
 
 impl History {
@@ -351,6 +354,7 @@ impl History {
         }
         self.count(&step, true);
         self.undo.push_back(step);
+        self.pushes += 1;
         while self.bytes > History::MAX_BYTES && self.undo.len() > 1 {
             if let Some(old) = self.undo.pop_front() {
                 self.count(&old, false);
@@ -370,6 +374,21 @@ impl History {
         let step = self.redo.pop()?;
         self.undo.push_back(step);
         self.undo.back().map(Vec::as_slice)
+    }
+
+    /// How many steps were recorded (`push`), less those retracted.
+    pub fn pushes(&self) -> u64 {
+        self.pushes
+    }
+
+    /// Takes back the last step recorded, to be reverted by the caller and
+    /// forgotten (issue #77: an edit the asset tab refuses); it does not
+    /// go to the redo list.
+    pub fn retract(&mut self) -> Option<Vec<Edit>> {
+        let step = self.undo.pop_back()?;
+        self.count(&step, false);
+        self.pushes = self.pushes.saturating_sub(1);
+        Some(step)
     }
 
     pub fn can_undo(&self) -> bool {

@@ -91,7 +91,8 @@ pub struct Config {
 /// rectangle.
 fn canvas_outs(canvas: &mut Canvas, full: &mut bool, shell: &Shell, outs: Vec<HostOut>) {
     let Some(h) = &shell.editor else { return };
-    let Some(doc) = h.state().document() else { return };
+    // The shown tab's document (issue #77: the level's or the asset's).
+    let Some(doc) = h.state().active_document() else { return };
     let view = CanvasView::of(h.state());
     for o in &outs {
         if let HostOut::Distant(layers) = o {
@@ -1236,7 +1237,7 @@ impl App {
                 // A level with a look draws lit (plan 15a Task 19): the
                 // renderer's look textures come with a whole upload.
                 let state = self.shell.editor.as_ref().map(|h| h.state());
-                let lit = state.and_then(|s| s.document()).is_some_and(|d| self.canvas.lit(d));
+                let lit = state.and_then(|s| s.active_document()).is_some_and(|d| self.canvas.lit(d));
                 if w.gpu.renderer.lighting() != lit {
                     w.gpu.renderer.set_lighting(lit);
                     self.canvas_full = true;
@@ -1265,9 +1266,9 @@ impl App {
                     UpscaleFilter::SharpBilinear,
                 ));
                 let look = match (state, &self.canvas_list) {
-                    (Some(st), Some(_)) => {
-                        st.document().and_then(|d| self.canvas.look_frame(d, st.clock_ms(), st.view_mode()))
-                    }
+                    (Some(st), Some(_)) => st
+                        .active_document()
+                        .and_then(|d| self.canvas.look_frame(d, st.clock_ms(), st.view_mode())),
                     _ => None,
                 };
                 canvas_draw = self.canvas_list.as_ref().map(|(list, area)| [ViewDraw { list, area: *area }]);

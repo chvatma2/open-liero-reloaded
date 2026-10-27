@@ -15,7 +15,7 @@ use crate::tools::{BrushShape, Overlay, PointerKind};
 const GRID_FROM: f32 = 8.0;
 
 pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
-    let Some(doc) = state.document() else { return };
+    let Some(doc) = state.active_document() else { return };
     let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, labels::CANVAS));
     data.canvas_rect = Some(rect);
@@ -219,7 +219,7 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
 /// The Materials view's legend (issue #43), at the canvas's bottom left:
 /// each of the level's materials' tint and name, then "None".
 fn legend(ui: &Ui, state: &EditorState, canvas: egui::Rect) {
-    let Some(doc) = state.document() else { return };
+    let Some(doc) = state.active_document() else { return };
     egui::Area::new(egui::Id::new("olr-editor-legend"))
         .fixed_pos(canvas.left_bottom() + egui::vec2(8.0, -8.0))
         .pivot(egui::Align2::LEFT_BOTTOM)
