@@ -2,7 +2,9 @@
 //! Undo, Redo, the unsaved mark, then at the right View ▾ and Play with
 //! its ▾) and the tool options bar, which shows only the chosen tool's
 //! options: the brush for the tools that dab with it, the paint for those
-//! that lay it, then the tool's own.
+//! that lay it, then the tool's own. The asset tab's session bar takes
+//! their pieces (issue #78, `ui::asset`), and its tools panel the options
+//! (`options_panel`, wrapped to the panel).
 
 use egui::{Ui, WidgetType};
 use olr_look::ViewMode;
@@ -45,7 +47,7 @@ const PAINT_AS: [(Option<ElementMaterial>, &str); 4] = [
 /// pickers share its buttons' centre line (the host's theme makes buttons
 /// taller than labels: the playtest's crooked Play, Mod, Bots). Returns
 /// that height.
-fn button_height(ui: &mut Ui) -> f32 {
+pub(super) fn button_height(ui: &mut Ui) -> f32 {
     let h = ui.text_style_height(&egui::TextStyle::Button) + 2.0 * ui.spacing().button_padding.y;
     ui.spacing_mut().interact_size.y = ui.spacing().interact_size.y.max(h);
     ui.spacing().interact_size.y
@@ -59,39 +61,11 @@ pub(super) fn session(ui: &mut Ui, state: &EditorState, data: &mut EditorData, o
     button_height(ui);
     let asset = state.doc_tab() == DocTab::Asset;
     ui.horizontal(|ui| {
-        // Issue #77: the level and the asset tab.
-        if ui.add(egui::Button::selectable(!asset, labels::LEVEL_TAB)).clicked() && asset {
-            out.push(EditorAction::ShowTab(DocTab::Level));
-        }
-        let open = state.asset_document().is_some();
-        let r = ui
-            .add_enabled(open, egui::Button::selectable(asset, labels::ASSET_TAB))
-            .on_disabled_hover_text(labels::ASSET_TAB_HINT);
-        if r.clicked() && !asset {
-            out.push(EditorAction::ShowTab(DocTab::Asset));
-        }
+        tab_switch(ui, state, out);
         ui.separator();
-        menu(ui, "File", labels::FILE, None, |ui| {
-            // Open… opens a level: the level tab's.
-            if !asset && ui.button(labels::OPEN).clicked() {
-                out.push(EditorAction::Browse(Purpose::OpenPack));
-            }
-            if ui.button(labels::SAVE).on_hover_text("Ctrl+S").clicked() {
-                out.push(EditorAction::Save);
-            }
-            if ui.button(labels::CLOSE).clicked() {
-                out.push(EditorAction::Close);
-            }
-        });
+        file_menu(ui, state, out);
         ui.separator();
-        if ui.add_enabled(state.can_undo(), egui::Button::new(labels::UNDO)).on_hover_text("Ctrl+Z").clicked()
-        {
-            out.push(EditorAction::Undo);
-        }
-        if ui.add_enabled(state.can_redo(), egui::Button::new(labels::REDO)).on_hover_text("Ctrl+Y").clicked()
-        {
-            out.push(EditorAction::Redo);
-        }
+        undo_redo(ui, state, out);
         let mark = if state.active_dirty() { "unsaved changes" } else { "" };
         ui.add_sized(
             [MARK_WIDTH, ui.spacing().interact_size.y],
@@ -109,6 +83,49 @@ pub(super) fn session(ui: &mut Ui, state: &EditorState, data: &mut EditorData, o
             view_menu(ui, state, data, out);
         });
     });
+}
+
+/// Issue #77: the Level | Asset switch (Asset disabled while no asset is
+/// open).
+pub(super) fn tab_switch(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
+    let asset = state.doc_tab() == DocTab::Asset;
+    if ui.add(egui::Button::selectable(!asset, labels::LEVEL_TAB)).clicked() && asset {
+        out.push(EditorAction::ShowTab(DocTab::Level));
+    }
+    let open = state.asset_document().is_some();
+    let r = ui
+        .add_enabled(open, egui::Button::selectable(asset, labels::ASSET_TAB))
+        .on_disabled_hover_text(labels::ASSET_TAB_HINT);
+    if r.clicked() && !asset {
+        out.push(EditorAction::ShowTab(DocTab::Asset));
+    }
+}
+
+/// File ▾: Open… (the level tab's), Save and Close.
+pub(super) fn file_menu(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
+    let asset = state.doc_tab() == DocTab::Asset;
+    menu(ui, "File", labels::FILE, None, |ui| {
+        // Open… opens a level: the level tab's.
+        if !asset && ui.button(labels::OPEN).clicked() {
+            out.push(EditorAction::Browse(Purpose::OpenPack));
+        }
+        if ui.button(labels::SAVE).on_hover_text("Ctrl+S").clicked() {
+            out.push(EditorAction::Save);
+        }
+        if ui.button(labels::CLOSE).clicked() {
+            out.push(EditorAction::Close);
+        }
+    });
+}
+
+/// Undo and Redo.
+pub(super) fn undo_redo(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
+    if ui.add_enabled(state.can_undo(), egui::Button::new(labels::UNDO)).on_hover_text("Ctrl+Z").clicked() {
+        out.push(EditorAction::Undo);
+    }
+    if ui.add_enabled(state.can_redo(), egui::Button::new(labels::REDO)).on_hover_text("Ctrl+Y").clicked() {
+        out.push(EditorAction::Redo);
+    }
 }
 
 /// A menu's button: `text` and a ▾, drawn (a font may lack the glyph),
@@ -177,7 +194,12 @@ fn play_menu(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut 
 
 /// View ▾: the collision view, the grid, Preview parallax (issue #66),
 /// the light views, the Materials view (issue #43) and the lights' clock.
-fn view_menu(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
+pub(super) fn view_menu(
+    ui: &mut Ui,
+    state: &EditorState,
+    data: &mut EditorData,
+    out: &mut Vec<EditorAction>,
+) {
     menu(ui, "View", labels::VIEW, Some(stays_open()), |ui| {
         let mut material = state.material_view();
         if ui.checkbox(&mut material, labels::MATERIAL_VIEW).changed() {
@@ -187,8 +209,10 @@ fn view_menu(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut 
         if ui.checkbox(&mut grid, labels::GRID).changed() {
             out.push(EditorAction::Grid(grid));
         }
+        // An asset has no distant layers (issue #78).
         let mut parallax = state.preview_parallax();
-        if ui.checkbox(&mut parallax, labels::PREVIEW_PARALLAX).changed() {
+        if state.doc_tab() == DocTab::Level && ui.checkbox(&mut parallax, labels::PREVIEW_PARALLAX).changed()
+        {
             out.push(EditorAction::PreviewParallax(parallax));
         }
         ui.separator();
@@ -262,16 +286,55 @@ pub(super) fn options_bar(
     });
 }
 
+/// The asset tab's tool options (issue #78): the options bar's sections
+/// under the tools, one under another, each wrapped to the panel (a
+/// picker under its label, a group of toggles in rows).
+pub(super) fn options_panel(
+    ui: &mut Ui,
+    state: &EditorState,
+    data: &mut EditorData,
+    out: &mut Vec<EditorAction>,
+) {
+    let tool = state.tool();
+    ui.strong(format!("{} options", tool.name()));
+    if tool.uses_brush() {
+        brush(ui, state, data, out);
+        ui.separator();
+    }
+    if tool.lays_paint() {
+        paint(ui, state, data, out);
+        ui.separator();
+    }
+    if !matches!(tool, Tool::Select | Tool::Spawn | Tool::Eyedropper) {
+        options(ui, state, data, out);
+    } else if !tool.uses_brush() && !tool.lays_paint() {
+        ui.weak("No options");
+    }
+}
+
+/// Whether `ui` is the options panel's (issue #78): a column, not the
+/// options bar's row.
+fn in_panel(ui: &Ui) -> bool {
+    !ui.layout().is_horizontal()
+}
+
+/// `add` in the bar's row as it is, or in the panel in wrapped rows.
+fn group<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+    if in_panel(ui) { ui.horizontal_wrapped(add).inner } else { add(ui) }
+}
+
 /// The brush: Round, Square, the craters and the size.
 fn brush(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
     let brush = state.brush();
-    for (shape, name, icon) in
-        [(BrushShape::Round, "Round", Icon::Round), (BrushShape::Square, "Square", Icon::Square)]
-    {
-        if icon_toggle(ui, icon, name, brush.shape == shape).clicked() {
-            out.push(EditorAction::Brush(Brush { shape, ..brush }));
+    group(ui, |ui| {
+        for (shape, name, icon) in
+            [(BrushShape::Round, "Round", Icon::Round), (BrushShape::Square, "Square", Icon::Square)]
+        {
+            if icon_toggle(ui, icon, name, brush.shape == shape).clicked() {
+                out.push(EditorAction::Brush(Brush { shape, ..brush }));
+            }
         }
-    }
+    });
     craters(ui, state, out);
     if let Some(size) = number(ui, data, "brush-size", "Size", brush.size.into(), 1..=MAX_BRUSH.into()) {
         out.push(EditorAction::Brush(Brush { size: size as u32, ..brush }));
@@ -301,35 +364,40 @@ fn paint(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<
         PaintChoice::Colour(c) => egui::Color32::from_rgb(c.r, c.g, c.b),
         _ => egui::Color32::from_rgb(140, 90, 40),
     };
-    let r = egui::color_picker::color_edit_button_srgba(ui, &mut colour, egui::color_picker::Alpha::Opaque);
-    if is_colour {
-        let stroke = ui.visuals().selection.stroke;
-        ui.painter().rect_stroke(r.rect.expand(2.0), 2.0, stroke, egui::StrokeKind::Outside);
-    }
-    relabel(&r, WidgetType::ColorButton, Some(is_colour), labels::COLOUR);
-    let changed = r.changed();
-    if r.on_hover_text("paint with a colour").clicked() || changed {
-        let rgba = olr_data::image::Rgba::rgb(colour.r(), colour.g(), colour.b());
-        out.push(EditorAction::Paint(PaintChoice::Colour(rgba)));
-    }
-    for (choice, name) in
-        [(PaintChoice::FrontTile, labels::FRONT_TILE), (PaintChoice::BackTile, labels::BACK_TILE)]
-    {
-        if ui.selectable_label(*paint == choice, name).clicked() {
-            out.push(EditorAction::Paint(choice));
+    group(ui, |ui| {
+        let r =
+            egui::color_picker::color_edit_button_srgba(ui, &mut colour, egui::color_picker::Alpha::Opaque);
+        if is_colour {
+            let stroke = ui.visuals().selection.stroke;
+            ui.painter().rect_stroke(r.rect.expand(2.0), 2.0, stroke, egui::StrokeKind::Outside);
         }
-    }
+        relabel(&r, WidgetType::ColorButton, Some(is_colour), labels::COLOUR);
+        let changed = r.changed();
+        if r.on_hover_text("paint with a colour").clicked() || changed {
+            let rgba = olr_data::image::Rgba::rgb(colour.r(), colour.g(), colour.b());
+            out.push(EditorAction::Paint(PaintChoice::Colour(rgba)));
+        }
+        for (choice, name) in
+            [(PaintChoice::FrontTile, labels::FRONT_TILE), (PaintChoice::BackTile, labels::BACK_TILE)]
+        {
+            if ui.selectable_label(*paint == choice, name).clicked() {
+                out.push(EditorAction::Paint(choice));
+            }
+        }
+    });
     palette(ui, state, data, out);
 }
 
 /// `add` in a slot `width` points wide, whatever it shows: a picker's long
-/// choice is cut, never wider (the playtest's moving controls).
-fn fixed(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui)) {
+/// choice is cut, never wider (the playtest's moving controls); in the
+/// options panel at most the panel's width (issue #78).
+fn fixed(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui, f32)) {
+    let width = if in_panel(ui) { width.min(ui.available_width()) } else { width };
     let size = egui::vec2(width, ui.spacing().interact_size.y);
     ui.allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
         ui.set_min_size(size);
         ui.set_max_width(width);
-        add(ui);
+        add(ui, width);
     });
 }
 
@@ -343,10 +411,10 @@ fn craters(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
     let brush = state.brush();
     let current = crater_name(brush.shape, n);
     let label = ui.label(labels::CRATER);
-    fixed(ui, CRATER_WIDTH, |ui| {
+    fixed(ui, CRATER_WIDTH, |ui, width| {
         egui::ComboBox::from_id_salt("olr-editor-crater")
             .selected_text(current)
-            .width(CRATER_WIDTH)
+            .width(width)
             .truncate()
             .show_ui(ui, |ui| {
                 for i in 0..n {
@@ -540,10 +608,10 @@ fn paint_as(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
     let layer = selected_material(state);
     let name = paint_as_name(current, layer);
     let label = ui.label(labels::PAINT_AS);
-    fixed(ui, PAINT_AS_WIDTH, |ui| {
+    fixed(ui, PAINT_AS_WIDTH, |ui, width| {
         egui::ComboBox::from_id_salt("olr-editor-paint-as")
             .selected_text(name)
-            .width(PAINT_AS_WIDTH)
+            .width(width)
             .truncate()
             .show_ui(ui, |ui| {
                 for (m, _) in PAINT_AS {
@@ -593,12 +661,17 @@ fn options(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Ve
             }
         }
         Tool::SelectPixels | Tool::Glow => {
-            // By colour's space is kept, its tolerance shown or not.
-            let size = egui::vec2(BY_COLOUR_WIDTH, ui.spacing().interact_size.y);
-            ui.allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.set_min_size(size);
+            // By colour's space is kept, its tolerance shown or not; in the
+            // panel the tolerance goes under it.
+            if in_panel(ui) {
                 by_colour(ui, state, data, out);
-            });
+            } else {
+                let size = egui::vec2(BY_COLOUR_WIDTH, ui.spacing().interact_size.y);
+                ui.allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.set_min_size(size);
+                    by_colour(ui, state, data, out);
+                });
+            }
             ui.separator();
             if state.tool() == Tool::SelectPixels
                 && ui
@@ -649,10 +722,10 @@ fn surface_options(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>
         None => labels::DEFAULT_SURFACE.to_string(),
     };
     let label = ui.label(labels::BRUSH_MATERIAL);
-    fixed(ui, SURFACE_WIDTH, |ui| {
+    fixed(ui, SURFACE_WIDTH, |ui, width| {
         egui::ComboBox::from_id_salt("olr-editor-surface-paint")
             .selected_text(name(current))
-            .width(SURFACE_WIDTH)
+            .width(width)
             .truncate()
             .show_ui(ui, |ui| {
                 let choices =
@@ -675,15 +748,17 @@ fn surface_options(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>
         _ => false,
     };
     if back_art {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        for (back, n, hover) in [
-            (false, labels::SURFACE_FRONT, "paint the element's own pixels"),
-            (true, labels::SURFACE_BACK, "paint its back art: what shows where its front is dug"),
-        ] {
-            if ui.selectable_label(state.surface_back() == back, n).on_hover_text(hover).clicked() {
-                out.push(EditorAction::SurfaceBack(back));
+        group(ui, |ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            for (back, n, hover) in [
+                (false, labels::SURFACE_FRONT, "paint the element's own pixels"),
+                (true, labels::SURFACE_BACK, "paint its back art: what shows where its front is dug"),
+            ] {
+                if ui.selectable_label(state.surface_back() == back, n).on_hover_text(hover).clicked() {
+                    out.push(EditorAction::SurfaceBack(back));
+                }
             }
-        }
+        });
     }
 }
 

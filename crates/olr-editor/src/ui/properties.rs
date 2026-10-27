@@ -118,7 +118,8 @@ fn save_as_asset(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) 
 fn what_is_it(ui: &mut Ui, current: Option<ElementMaterial>, locked: bool) -> Option<ElementMaterial> {
     ui.label(egui::RichText::new(labels::WHAT_IS_IT).strong());
     let mut chosen = None;
-    ui.horizontal(|ui| {
+    // In rows where one does not fit (issue #78).
+    ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         for (m, n) in MATERIALS {
             let r = ui.add_enabled(!locked, egui::Button::selectable(current == Some(m), n)).on_hover_text(

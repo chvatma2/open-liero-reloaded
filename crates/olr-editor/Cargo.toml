@@ -21,6 +21,8 @@ thiserror.workspace = true
 
 [dev-dependencies]
 egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
+# Issue #78: the fit and flow tests run under the game's theme.
+olr-ui.workspace = true
 tempfile.workspace = true
 proptest.workspace = true
 

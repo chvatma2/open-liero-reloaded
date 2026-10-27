@@ -3676,6 +3676,7 @@ dependencies = [
  "olr-format",
  "olr-look",
  "olr-pack",
+ "olr-ui",
  "olr-vfs",
  "proptest",
  "serde",

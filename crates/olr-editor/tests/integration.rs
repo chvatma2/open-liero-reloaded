@@ -7,6 +7,7 @@ mod browser;
 mod common;
 mod distant;
 mod document;
+mod fits;
 mod flows;
 mod folders;
 mod history;

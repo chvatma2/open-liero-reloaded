@@ -57,59 +57,75 @@ const EDGE: f32 = 0.3;
 /// The element list (issue #61: the tree): rows top first, a folder's
 /// members under it, indented one step per level; Add layer and New folder.
 fn elements(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
+    egui::ScrollArea::vertical()
+        .id_salt("olr-editor-element-list")
+        .max_height(ui.available_height() * LIST_SHARE)
+        .show(ui, |ui| rows(ui, state, false, out));
+    buttons(ui, state, out);
+}
+
+/// The asset tab's Layers (issue #78): the tree's rows in the panel's own
+/// scroll area, the names cut to the panel's width, then Add layer and New
+/// folder.
+pub(super) fn tree(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
+    rows(ui, state, true, out);
+    buttons(ui, state, out);
+}
+
+/// The tree's rows; `fit` cuts a name to the room left.
+fn rows(ui: &mut Ui, state: &EditorState, fit: bool, out: &mut Vec<EditorAction>) {
     let Some(doc) = state.active_document() else { return };
     let rows = doc.rows();
     let folders = doc.folders();
     let carried = egui::DragAndDrop::payload::<String>(ui.ctx()).map(|p| (*p).clone());
     let accent = ui.visuals().selection.stroke;
-    egui::ScrollArea::vertical()
-        .id_salt("olr-editor-element-list")
-        .max_height(ui.available_height() * LIST_SHARE)
-        .show(ui, |ui| {
-            for (k, row) in rows.iter().enumerate() {
-                let r = ui.horizontal(|ui| {
-                    ui.add_space(INDENT * row.depth as f32);
-                    match folders.iter().find(|f| row.folder && f.id == row.id) {
-                        Some(f) => folder_row(ui, state, f, out),
-                        None => element_row(ui, state, &row.id, out),
-                    }
-                });
-                // Where a carried row would land (issue #61): beside this
-                // one, taking its place (below it when it comes from above),
-                // or into this folder.
-                let Some(dragged) = carried.as_ref().filter(|d| **d != row.id) else { continue };
-                let rect = r.response.rect;
-                let Some(p) = ui.input(|i| i.pointer.interact_pos()).filter(|p| rect.contains(*p)) else {
-                    continue;
-                };
-                let from_above = rows.iter().position(|r| r.id == *dragged).is_some_and(|d| d < k);
-                let t = (p.y - rect.top()) / rect.height().max(1.0);
-                let folded = folders.iter().any(|f| f.id == row.id && f.collapsed);
-                let at = if !row.folder {
-                    if from_above { RowDrop::Below(row.id.clone()) } else { RowDrop::Above(row.id.clone()) }
-                } else if t < EDGE {
-                    RowDrop::Above(row.id.clone())
-                } else if folded && t > 1.0 - EDGE {
-                    RowDrop::Below(row.id.clone())
-                } else {
-                    RowDrop::Into(row.id.clone())
-                };
-                let painter = ui.painter();
-                match &at {
-                    RowDrop::Above(_) => painter.hline(rect.x_range(), rect.top(), accent),
-                    RowDrop::Below(_) => painter.hline(rect.x_range(), rect.bottom(), accent),
-                    RowDrop::Into(_) => painter.rect_stroke(rect, 2.0, accent, egui::StrokeKind::Inside),
-                };
-                if r.response.dnd_release_payload::<String>().is_some() {
-                    // A level without folders reorders as it always has.
-                    let flat = folders.is_empty() && !row.folder;
-                    out.push(match (flat, doc.index_of(&row.id)) {
-                        (true, Some(to)) => EditorAction::MoveElement { id: dragged.clone(), to },
-                        _ => EditorAction::DropRow { id: dragged.clone(), at },
-                    });
-                }
+    for (k, row) in rows.iter().enumerate() {
+        let r = ui.horizontal(|ui| {
+            ui.add_space(INDENT * row.depth as f32);
+            match folders.iter().find(|f| row.folder && f.id == row.id) {
+                Some(f) => folder_row(ui, state, f, fit, out),
+                None => element_row(ui, state, &row.id, fit, out),
             }
         });
+        // Where a carried row would land (issue #61): beside this
+        // one, taking its place (below it when it comes from above),
+        // or into this folder.
+        let Some(dragged) = carried.as_ref().filter(|d| **d != row.id) else { continue };
+        let rect = r.response.rect;
+        let Some(p) = ui.input(|i| i.pointer.interact_pos()).filter(|p| rect.contains(*p)) else {
+            continue;
+        };
+        let from_above = rows.iter().position(|r| r.id == *dragged).is_some_and(|d| d < k);
+        let t = (p.y - rect.top()) / rect.height().max(1.0);
+        let folded = folders.iter().any(|f| f.id == row.id && f.collapsed);
+        let at = if !row.folder {
+            if from_above { RowDrop::Below(row.id.clone()) } else { RowDrop::Above(row.id.clone()) }
+        } else if t < EDGE {
+            RowDrop::Above(row.id.clone())
+        } else if folded && t > 1.0 - EDGE {
+            RowDrop::Below(row.id.clone())
+        } else {
+            RowDrop::Into(row.id.clone())
+        };
+        let painter = ui.painter();
+        match &at {
+            RowDrop::Above(_) => painter.hline(rect.x_range(), rect.top(), accent),
+            RowDrop::Below(_) => painter.hline(rect.x_range(), rect.bottom(), accent),
+            RowDrop::Into(_) => painter.rect_stroke(rect, 2.0, accent, egui::StrokeKind::Inside),
+        };
+        if r.response.dnd_release_payload::<String>().is_some() {
+            // A level without folders reorders as it always has.
+            let flat = folders.is_empty() && !row.folder;
+            out.push(match (flat, doc.index_of(&row.id)) {
+                (true, Some(to)) => EditorAction::MoveElement { id: dragged.clone(), to },
+                _ => EditorAction::DropRow { id: dragged.clone(), at },
+            });
+        }
+    }
+}
+
+/// Add layer and New folder.
+fn buttons(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
     ui.horizontal_wrapped(|ui| {
         if ui.button(labels::ADD_LAYER).on_hover_text("an empty layer to paint on").clicked() {
             out.push(EditorAction::AddLayer);
@@ -148,7 +164,7 @@ fn toggle(ui: &mut Ui, on: &mut bool, icon: &str, dimmed: bool, hover: &str) -> 
 }
 
 /// An element's row: eye, lock, kind, the distant mark, the name.
-fn element_row(ui: &mut Ui, state: &EditorState, id: &str, out: &mut Vec<EditorAction>) {
+fn element_row(ui: &mut Ui, state: &EditorState, id: &str, fit: bool, out: &mut Vec<EditorAction>) {
     let Some(doc) = state.active_document() else { return };
     let Some(index) = doc.index_of(id) else { return };
     let e = &doc.items()[index].element;
@@ -172,13 +188,16 @@ fn element_row(ui: &mut Ui, state: &EditorState, id: &str, out: &mut Vec<EditorA
     let name = if e.name.is_empty() { e.id.as_str() } else { e.name.as_str() };
     let selected = state.selection().has(&e.id);
     // The name selects on a click and reorders on a drag.
-    let r = ui.add(egui::Button::selectable(selected, name).sense(egui::Sense::click_and_drag()));
+    let r = ui.add(name_button(selected, name, fit));
+    if fit {
+        super::relabel(&r, egui::WidgetType::Button, Some(selected), name);
+    }
     row_click(ui, &r, &e.id, Selection::Element(e.id.clone()), out);
 }
 
 /// A folder's row (issue #61): fold arrow, eye, lock, the folder mark and
 /// its name.
-fn folder_row(ui: &mut Ui, state: &EditorState, f: &Folder, out: &mut Vec<EditorAction>) {
+fn folder_row(ui: &mut Ui, state: &EditorState, f: &Folder, fit: bool, out: &mut Vec<EditorAction>) {
     let Some(doc) = state.active_document() else { return };
     let set = |out: &mut Vec<EditorAction>, field| out.push(EditorAction::SetFolder(f.id.clone(), field));
     let name = if f.name.is_empty() { f.id.as_str() } else { f.name.as_str() };
@@ -205,8 +224,18 @@ fn folder_row(ui: &mut Ui, state: &EditorState, f: &Folder, out: &mut Vec<Editor
     }
     ui.label("📁");
     let selected = state.selection().has(&f.id);
-    let r = ui.add(egui::Button::selectable(selected, name).sense(egui::Sense::click_and_drag()));
+    let r = ui.add(name_button(selected, name, fit));
+    if fit {
+        super::relabel(&r, egui::WidgetType::Button, Some(selected), name);
+    }
     row_click(ui, &r, &f.id, Selection::Folder(f.id.clone()), out);
+}
+
+/// A row's name: a click selects, a drag reorders; `fit` cuts it to the
+/// room left (named in full).
+fn name_button(selected: bool, name: &str, fit: bool) -> egui::Button<'_> {
+    let b = egui::Button::selectable(selected, name).sense(egui::Sense::click_and_drag());
+    if fit { b.truncate() } else { b }
 }
 
 fn assets(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {

@@ -415,21 +415,10 @@ fn a_raster_splits_by_its_button() {
     assert_eq!(ids(&h)[0], "base", "one undo puts the raster back");
 }
 
-/// The game's style (`olr_ui::theme::apply`): larger buttons than labels.
+/// The game's style (`olr_ui::theme::apply`, a dev-dependency since issue
+/// #78): larger buttons than labels.
 fn theme(h: &mut Harness<'static, App>) {
-    h.ctx.all_styles_mut(|style| {
-        use egui::{FontId, TextStyle};
-        style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-        style.spacing.button_padding = egui::vec2(10.0, 4.0);
-        style.text_styles = [
-            (TextStyle::Small, FontId::proportional(11.0)),
-            (TextStyle::Body, FontId::proportional(15.0)),
-            (TextStyle::Monospace, FontId::monospace(14.0)),
-            (TextStyle::Button, FontId::proportional(16.0)),
-            (TextStyle::Heading, FontId::proportional(26.0)),
-        ]
-        .into();
-    });
+    olr_ui::theme::apply(&h.ctx);
     h.run();
 }
 
@@ -1786,24 +1775,80 @@ fn paint_haze() {
 /// unchanged.
 #[test]
 fn paint_an_asset_through_the_panels() {
-    let Some((tmp, mut h)) = opened() else { return };
+    paint_an_asset(false);
+    // Issue #78: at 1280 × 720 at UI scale 3 (427 × 240 points), through
+    // the narrow window's Tools | Layers switch.
+    paint_an_asset(true);
+}
+
+/// `harness` in a window of `w` × `h` pixels at UI `scale` (the menus'
+/// scale: the height / 720 × the scale), under the game's theme.
+fn harness_scaled(state: EditorState, (w, h): (f32, f32), scale: f32) -> Harness<'static, App> {
+    let ppp = olr_ui::theme::pixels_per_point(h, scale);
+    let app = App { state, data: EditorData::default(), commands: Vec::new() };
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(w / ppp, h / ppp))
+        .with_pixels_per_point(ppp)
+        .with_step_dt(0.25)
+        .build_ui_state(
+            |ui, app: &mut App| {
+                for a in ui::show(ui, &app.state, &mut app.data) {
+                    let c = run(&mut app.state, a);
+                    app.commands.extend(c);
+                }
+            },
+            app,
+        );
+    theme(&mut h);
+    h
+}
+
+/// Issue #77's flow: a built-in asset edited, painted and saved as the
+/// user's, the level untouched; `narrow`: at 1280 × 720 at UI scale 3, the
+/// asset tab's side panels shown in turn (the level tab's own fit is issue
+/// #83's: its controls are pressed through AccessKit there).
+fn paint_an_asset(narrow: bool) {
+    let Some(root) = content() else { return };
+    let (tmp, state) = editor(&root);
+    let mut h = if narrow { harness_scaled(state, (1280.0, 720.0), 3.0) } else { harness(state) };
+    h.run();
     let assets = crate::common::set_library(&crate::common::built_in_assets(), &tmp.path().join("yours"));
     act(&mut h, A::AssetsChanged(assets));
     let level = h.state().state.document().unwrap().to_asset();
     // The Asset switch waits for an asset.
     assert!(h.get_by_role_and_label(Role::Button, labels::ASSET_TAB).accesskit_node().is_disabled());
-    h.get_by_label(labels::ASSETS).click();
-    h.run();
-    h.get_by_role_and_label(Role::Button, "Ceiling lamp").click();
-    h.run();
-    h.get_by_label(labels::EDIT_LIBRARY_ASSET).click();
-    h.run();
+    let pick = |h: &mut Harness<'static, App>, role: Option<Role>, label: &str| {
+        let node = match role {
+            Some(role) => h.get_by_role_and_label(role, label),
+            None => h.get_by_label(label),
+        };
+        if narrow {
+            node.click_accesskit()
+        } else {
+            node.click()
+        }
+        h.run();
+    };
+    pick(&mut h, None, labels::ASSETS);
+    pick(&mut h, Some(Role::Button), "Ceiling lamp");
+    pick(&mut h, None, labels::EDIT_LIBRARY_ASSET);
     let s = &h.state().state;
     assert_eq!(s.doc_tab(), olr_editor::DocTab::Asset);
     assert!(!h.get_by_role_and_label(Role::Button, labels::ASSET_TAB).accesskit_node().is_disabled());
     assert!(s.active_document().unwrap().is_asset());
+    if narrow {
+        // The tools first; the layers by the switch.
+        assert!(h.query_by_label("Lamps").is_none());
+        h.get_by_role_and_label(Role::Button, labels::LAYERS_TAB).click();
+        h.run();
+        assert!(h.query_by_label(labels::DRAW).is_none());
+    }
     h.get_by_label("Lamps").click();
     h.run();
+    if narrow {
+        h.get_by_role_and_label(Role::Button, labels::TOOLS_TAB).click();
+        h.run();
+    }
     h.get_by_label(labels::DRAW).click();
     h.run();
     assert_eq!(h.state().state.tool(), Tool::Brush);
@@ -1829,4 +1874,32 @@ fn paint_an_asset_through_the_panels() {
     assert_eq!(s.doc_tab(), olr_editor::DocTab::Level);
     assert!(!s.active_document().unwrap().is_asset() && !s.dirty());
     assert_eq!(s.active_document().unwrap().to_asset(), level, "the level unchanged");
+}
+
+/// Issue #78: the previews are made again when an edit is done, never
+/// while a stroke is in progress (nor every frame).
+#[test]
+fn previews_follow_edits_not_frames() {
+    let Some((_tmp, mut s)) = crate::fits::lamp_open() else { return };
+    run(&mut s, A::Select(Selection::Element("lamps".into())));
+    run(&mut s, A::Tool(Tool::Brush));
+    let mut h = harness(s);
+    h.run();
+    let generation = |h: &Harness<'static, App>| h.state().data.preview_generation();
+    let bake = |h: &Harness<'static, App>| h.state().state.active_document().unwrap().bake_generation();
+    let first = generation(&h).expect("the previews were made");
+    assert_eq!(first, bake(&h));
+    h.run();
+    assert_eq!(generation(&h), Some(first), "not every frame");
+    let (from, to) = (canvas_point(&h, (-10.0, 0.0)), canvas_point(&h, (10.0, 0.0)));
+    hover(&mut h, from);
+    press(&mut h, from, true);
+    hover(&mut h, to);
+    assert!(h.state().state.dragging());
+    assert!(bake(&h) > first, "the stroke paints as it goes");
+    assert_eq!(generation(&h), Some(first), "the previews wait for the release");
+    press(&mut h, to, false);
+    assert!(!h.state().state.dragging() && h.state().state.active_dirty());
+    assert_eq!(generation(&h), Some(bake(&h)), "the release makes them again");
+    assert_ne!(generation(&h), Some(first));
 }

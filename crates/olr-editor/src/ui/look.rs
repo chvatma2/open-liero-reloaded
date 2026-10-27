@@ -136,8 +136,18 @@ fn animation(
         AnimationSource::Keys { mut keys, mut looped } => {
             let mut changed = ui.checkbox(&mut looped, "Loop").changed();
             let mut remove = None;
+            let fit = data.fit;
             for (i, k) in keys.iter_mut().enumerate() {
-                ui.horizontal(|ui| {
+                // The asset tab's panel takes a key's fields one under
+                // another (issue #78).
+                let row = |ui: &mut Ui, add: &mut dyn FnMut(&mut Ui)| {
+                    if fit {
+                        ui.vertical(|ui| add(ui));
+                    } else {
+                        ui.horizontal(|ui| add(ui));
+                    }
+                };
+                row(ui, &mut |ui: &mut Ui| {
                     let at = number(ui, data, &format!("{key}/k{i}/at"), "ms", k.at_ms.into(), 0..=600_000);
                     let lv = number(ui, data, &format!("{key}/k{i}/level"), "%", k.level.into(), 0..=1000);
                     if let Some(v) = at {
@@ -336,7 +346,8 @@ fn group_fields(ui: &mut Ui, data: &mut EditorData, g: &GlowGroupSource) -> Opti
              light through tinted glass",
         ),
     ];
-    ui.horizontal(|ui| {
+    // In rows where one does not fit (issue #78).
+    ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         for (kind, name, hint) in kinds {
             let on = std::mem::discriminant(&kind) == std::mem::discriminant(&g.colour);
@@ -525,9 +536,18 @@ pub(super) fn level_materials(ui: &mut Ui, state: &EditorState, out: &mut Vec<Ed
     ui.separator();
     ui.label(egui::RichText::new(labels::MATERIALS).strong())
         .on_hover_text("what the level's pixels are made of: how they take heat from explosions");
+    let fit = state.doc_tab() == crate::state::DocTab::Asset;
     for (i, m) in doc.materials().iter().enumerate() {
         let users = doc.material_users(&m.id);
-        ui.horizontal(|ui| {
+        // A long name wraps in the asset tab's panel (issue #78).
+        let row = |ui: &mut Ui, add: &mut dyn FnMut(&mut Ui)| {
+            if fit {
+                ui.horizontal_wrapped(|ui| add(ui));
+            } else {
+                ui.horizontal(|ui| add(ui));
+            }
+        };
+        row(ui, &mut |ui: &mut Ui| {
             let side = ui.spacing().interact_size.y * 0.7;
             tint_swatch(ui, u8::try_from(i + 1).unwrap_or(0), side, &format!("{} colour", m.name));
             ui.label(&m.name);
@@ -599,8 +619,9 @@ pub(super) fn element_surfaces(ui: &mut Ui, state: &EditorState, e: &Element, ou
             Some(id) => materials.iter().find(|m| m.id == *id).map_or_else(|| id.clone(), |m| m.name.clone()),
             None => labels::NO_SURFACE.to_string(),
         };
-        ui.horizontal(|ui| {
-            let l = ui.label(label);
+        let fit = state.doc_tab() == crate::state::DocTab::Asset;
+        let needs = ui.spacing().combo_width + ui.spacing().icon_width + 2.0 * ui.spacing().button_padding.x;
+        super::beside(ui, fit, label, needs, |ui, l| {
             ui.add_enabled_ui(!e.locked, |ui| {
                 egui::ComboBox::from_id_salt(format!("{}/{label}", e.id))
                     .selected_text(name(now.as_ref()))
@@ -617,7 +638,7 @@ pub(super) fn element_surfaces(ui: &mut Ui, state: &EditorState, e: &Element, ou
                         }
                     })
                     .response
-                    .labelled_by(l.id)
+                    .labelled_by(l)
                     .on_hover_text(hint);
             });
         });

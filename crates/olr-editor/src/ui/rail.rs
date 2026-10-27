@@ -4,7 +4,8 @@
 //! icon of its tool chosen last, and one click chooses that tool again; a
 //! second click, a click on the corner mark or a right click opens its
 //! flyout, which lists the group's tools with their shortcuts. A pick, a
-//! click elsewhere or Escape closes it.
+//! click elsewhere or Escape closes it. The asset tab lays the same
+//! buttons out in rows across its tools panel (issue #78, `grid`).
 
 use egui::{Align2, Rect, Response, Sense, Stroke, StrokeKind, Ui, WidgetType, pos2, vec2};
 
@@ -24,31 +25,60 @@ const ROW_ICON: f32 = 16.0;
 const ROW_WIDTH: f32 = 190.0;
 /// The corner mark's side: a click there opens the flyout.
 const CORNER: f32 = 14.0;
+/// A button's width in the asset tab's rows (points).
+const GRID_BUTTON: f32 = 54.0;
 
 pub(super) fn show(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
-    let import = button(ui, Icon::Import, "Import", labels::IMPORT_IMAGE, false, false)
+    import(ui, None, out);
+    ui.separator();
+    tools(ui, state, None, out);
+}
+
+/// The asset tab's tools (issue #78): the rail's buttons in rows across
+/// the panel, Select, Draw ▸, Pixels ▸, Glow brush and Surface brush,
+/// then Import image….
+pub(super) fn grid(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
+    ui.horizontal_wrapped(|ui| {
+        tools(ui, state, Some(GRID_BUTTON), out);
+        import(ui, Some(GRID_BUTTON), out);
+    });
+}
+
+/// Import image…, `width` points wide (else the rail's).
+fn import(ui: &mut Ui, width: Option<f32>, out: &mut Vec<EditorAction>) {
+    let import = button(ui, Icon::Import, "Import", labels::IMPORT_IMAGE, (false, false), width)
         .on_hover_text("import a picture (.png or .jpg) as a new element");
     if import.clicked() {
         out.push(EditorAction::Browse(Purpose::ImportImage));
     }
-    ui.separator();
-    single(ui, state, Tool::Select, "Select", out);
+}
+
+/// The tools' buttons, `width` points wide (else the rail's).
+fn tools(ui: &mut Ui, state: &EditorState, width: Option<f32>, out: &mut Vec<EditorAction>) {
+    single(ui, state, Tool::Select, "Select", width, out);
     for group in ToolGroup::ALL {
-        grouped(ui, state, group, out);
+        grouped(ui, state, group, width, out);
     }
     // Its label is the brush's, never the element's Glow checkbox's.
-    single(ui, state, Tool::Glow, "Glow", out);
-    single(ui, state, Tool::Surface, "Surface", out);
+    single(ui, state, Tool::Glow, "Glow", width, out);
+    single(ui, state, Tool::Surface, "Surface", width, out);
     // The level's own (issue #77: not the asset tab's).
     if state.doc_tab() == DocTab::Level {
-        single(ui, state, Tool::Haze, "Haze", out);
-        single(ui, state, Tool::Spawn, "Spawn", out);
+        single(ui, state, Tool::Haze, "Haze", width, out);
+        single(ui, state, Tool::Spawn, "Spawn", width, out);
     }
 }
 
 /// A button of one tool.
-fn single(ui: &mut Ui, state: &EditorState, tool: Tool, text: &str, out: &mut Vec<EditorAction>) {
-    let r = button(ui, Icon::of(tool), text, tool.name(), state.tool() == tool, false)
+fn single(
+    ui: &mut Ui,
+    state: &EditorState,
+    tool: Tool,
+    text: &str,
+    width: Option<f32>,
+    out: &mut Vec<EditorAction>,
+) {
+    let r = button(ui, Icon::of(tool), text, tool.name(), (state.tool() == tool, false), width)
         .on_hover_text(format!("{} ({})", tool.name(), tool.key()));
     if r.clicked() {
         out.push(EditorAction::Tool(tool));
@@ -56,15 +86,22 @@ fn single(ui: &mut Ui, state: &EditorState, tool: Tool, text: &str, out: &mut Ve
 }
 
 /// A group's button and its flyout.
-fn grouped(ui: &mut Ui, state: &EditorState, group: ToolGroup, out: &mut Vec<EditorAction>) {
+fn grouped(
+    ui: &mut Ui,
+    state: &EditorState,
+    group: ToolGroup,
+    width: Option<f32>,
+    out: &mut Vec<EditorAction>,
+) {
     let last = state.last_tool(group);
     let chosen = state.tool().group() == Some(group);
-    let r = button(ui, Icon::of(last), group.name(), group.name(), chosen, true).on_hover_text(format!(
-        "{} ({}); click again, or on the corner, for every {} tool",
-        last.name(),
-        last.key(),
-        group.name().to_lowercase()
-    ));
+    let r =
+        button(ui, Icon::of(last), group.name(), group.name(), (chosen, true), width).on_hover_text(format!(
+            "{} ({}); click again, or on the corner, for every {} tool",
+            last.name(),
+            last.key(),
+            group.name().to_lowercase()
+        ));
     let flyout = r.id.with("flyout");
     let on_corner = r.interact_pointer_pos().is_some_and(|p| corner(r.rect).contains(p));
     let opens = r.secondary_clicked() || (r.clicked() && (chosen || on_corner));
@@ -93,12 +130,20 @@ fn corner(rect: Rect) -> Rect {
     Rect::from_min_max(rect.max - vec2(CORNER, CORNER), rect.max)
 }
 
-/// A rail button: `icon` over `text`, named `label` for AccessKit;
-/// `mark` draws a group's corner mark.
-fn button(ui: &mut Ui, icon: Icon, text: &str, label: &str, selected: bool, mark: bool) -> Response {
+/// A rail button: `icon` over `text`, named `label` for AccessKit,
+/// `width` points wide (else the rail's); `mark` draws a group's corner
+/// mark.
+fn button(
+    ui: &mut Ui,
+    icon: Icon,
+    text: &str,
+    label: &str,
+    (selected, mark): (bool, bool),
+    width: Option<f32>,
+) -> Response {
     let font = egui::TextStyle::Small.resolve(ui.style());
     let galley = ui.painter().layout_no_wrap(text.to_string(), font, egui::Color32::PLACEHOLDER);
-    let size = vec2(ui.available_width().max(ICON), ICON + galley.size().y + 12.0);
+    let size = vec2(width.unwrap_or(ui.available_width()).max(ICON), ICON + galley.size().y + 12.0);
     let (rect, r) = ui.allocate_exact_size(size, Sense::click());
     if ui.is_rect_visible(rect) {
         let v = ui.style().interact_selectable(&r, selected);
