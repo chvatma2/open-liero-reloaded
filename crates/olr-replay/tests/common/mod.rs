@@ -122,7 +122,14 @@ pub fn holes() -> Vec<Stamp> {
 
 /// What the synthetic match is made of, as `olr-content` would resolve it.
 pub fn assets() -> Assets {
-    Assets { sim_mod: sim_mod(), terrain: arena(), holes: holes(), green_mask: None, live: None }
+    Assets {
+        sim_mod: sim_mod(),
+        terrain: arena(),
+        holes: holes(),
+        green_mask: None,
+        live: None,
+        director: None,
+    }
 }
 
 /// A level's live copies (issue #86): a door, Open or Shut, its `x`

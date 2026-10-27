@@ -24,8 +24,10 @@ ticks and at the end.
   its checksums; `Recorder::new(.., looks)` and `set_looks` fit them to the
   worms (extra dropped, missing `WormLook::numbered`) and sanitise them;
   every recorder passes the looks it shows; its mod,
-  terrain, holes, green mask and live copies (`MatchSetup::live`,
-  `Assets::live`, issue #86) are named by `Packs`, ids and content
+  terrain, holes, green mask, live copies (`MatchSetup::live`,
+  `Assets::live`, issue #86) and their scripts (`MatchSetup::director`,
+  `Assets::director`, issue #88: compiled again from the same played
+  form) are named by `Packs`, ids and content
   hashes, never stored; the setup calls), `ModeSpec` (`Oracle` or
   `Deathmatch(DeathmatchSettings)`; `ModeSpec::game_mode(&settings)` makes
   it with `Deathmatch::resume`, which refuses settings that disagree with
@@ -92,4 +94,6 @@ ticks and at the end.
   list of files; `decode` starts with it.
 
 Test: `cargo nextest run -p olr-replay` (`tests/content.rs` writes small packs
-to a temporary directory; its bot match needs `OLR_CONTENT_DIR`).
+to a temporary directory; its bot match and issue #88's
+`a_scripted_level_replays_from_content` (the live fixture, its gate given a
+test script) need `OLR_CONTENT_DIR`).

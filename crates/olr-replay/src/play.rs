@@ -3,7 +3,8 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use olr_sim::{LiveLevel, SimMod, TickEvents, World};
+use alloc::boxed::Box;
+use olr_sim::{Director, LiveLevel, SimMod, TickEvents, World};
 use olr_terrain::{GreenMask, Stamp, Terrain};
 
 use crate::{Mismatch, Replay, ReplayError, SetupCall};
@@ -18,6 +19,9 @@ pub struct Assets {
     pub green_mask: Option<GreenMask>,
     /// The level's live copies (issue #86), if it has any.
     pub live: Option<Arc<LiveLevel>>,
+    /// The level's scripts (issue #88: `olr_script`'s runtime, compiled
+    /// from the same played form), if it has any.
+    pub director: Option<Box<dyn Director>>,
 }
 
 /// Makes setup call number `index` on `world`; gives `find_spot`'s position.

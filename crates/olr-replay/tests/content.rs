@@ -302,3 +302,62 @@ fn bot_match_replays_from_content() {
     assert_eq!((run.ticks, run.checked), (6000, 61));
     assert_eq!(run.world, world);
 }
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for e in std::fs::read_dir(from).unwrap() {
+        let e = e.unwrap();
+        let path = e.path();
+        if path.is_dir() {
+            copy_dir(&path, &to.join(e.file_name()));
+        } else {
+            std::fs::copy(&path, to.join(e.file_name())).unwrap();
+        }
+    }
+}
+
+/// Issue #88: a match on a scripted level (`fixtures/live/levels/live-test`,
+/// the gate given a test script: timers, memory, its own generator, a
+/// state change of another copy) replays from the content to the same
+/// checksums, the scripts compiled again from the same played form.
+#[test]
+fn a_scripted_level_replays_from_content() {
+    let Some(dir) = std::env::var("OLR_CONTENT_DIR").ok().filter(|d| Path::new(d).is_dir()) else {
+        eprintln!("OLR_CONTENT_DIR not set or missing; skipping");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let level = tmp.path().join("live-test");
+    copy_dir(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/live/levels/live-test"), &level);
+    std::fs::write(
+        level.join("live/1.rhai"),
+        "fn start() { this.mem.n = 0; this.every(5, \"step\"); }\n\
+         fn step() {\n\
+           this.mem.n += 1;\n\
+           this.set(\"gate_x\", this.rand(9) - 4);\n\
+           let c = this.copy(\"console-a\");\n\
+           this.set_state(c, if this.chance(40) { \"Alarm\" } else { \"Normal\" });\n\
+         }\n",
+    )
+    .unwrap();
+    let c = Content::open_layers(&[Path::new(&dir), tmp.path()]).unwrap();
+    let players = vec![olr_content::Player::Human, olr_content::Player::Human];
+    let o = olr_content::MatchOptions::deathmatch("olx-classic", "olr-level-live-test", 5, players);
+    let built = c.build_match(&o).unwrap();
+    let (mut world, mut rec) = (built.world, built.recorder);
+    assert!(built.setup.director.is_some(), "the level's scripts run");
+    let mut out = TickEvents::new();
+    let mut states = std::collections::BTreeSet::new();
+    for t in 0..400u32 {
+        let k = [Keys(if t % 40 < 20 { Keys::LEFT | Keys::FIRE } else { Keys::RIGHT }), Keys(Keys::JUMP)];
+        world.tick(&k, &mut out);
+        rec.push(&k, &world).unwrap();
+        states.insert(world.live().unwrap().copy_by_id("console-a").unwrap().state_name().to_string());
+    }
+    assert_eq!(states.len(), 2, "the gate's script switched console-a: {states:?}");
+    assert!(world.script_peak().run > 0);
+    let replay = Replay::decode(&rec.finish(&world).unwrap().encode()).unwrap();
+    let run = c.play_replay(&replay).unwrap();
+    assert_eq!(run.ticks, 400);
+    assert_eq!(run.world.checksum(), world.checksum());
+}

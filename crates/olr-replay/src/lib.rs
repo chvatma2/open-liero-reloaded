@@ -144,6 +144,8 @@ impl ReplaySetup {
             bonus_weapons,
             // The level's live copies: its played form is in its pack hash.
             live: _,
+            // Its scripts: compiled from the same played form.
+            director: _,
         } = setup;
         ReplaySetup {
             packs,
@@ -167,7 +169,7 @@ impl ReplaySetup {
 
     /// The [`MatchSetup`] this describes, made of `assets`.
     pub fn match_setup(&self, assets: Assets) -> MatchSetup {
-        let Assets { sim_mod, terrain, holes, green_mask, live } = assets;
+        let Assets { sim_mod, terrain, holes, green_mask, live, director } = assets;
         MatchSetup {
             settings: self.settings.clone(),
             sim_mod,
@@ -180,6 +182,7 @@ impl ReplaySetup {
             pool_capacity: self.pool_capacity,
             bonus_weapons: self.bonus_weapons.clone(),
             live,
+            director,
         }
     }
 }
