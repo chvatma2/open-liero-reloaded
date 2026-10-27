@@ -230,6 +230,25 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   Nothing reads the parts in play yet (#90, #91, #94). `LiveWorld` is
   where #88 (script state, below) and #89 (motion) extend: each adds to
   the struct, `LiveWorld::hash` and `LiveWire` (exhaustive destructurings).
+  **Motions** (issue #89): `LiveMotion { target, speed }` per value, a
+  `Buf` beside the values (`moving()`: `speed != 0`); `move_value(copy,
+  prop, target, speed)` (a position only, else `LiveError::NotPosition`;
+  the target clamped into the limits, the speed into
+  `1..=MAX_MOTION_SPEED`, 8 px a tick in 1/256 units), `stop_value`, and
+  `set_value` stops the value's motion (entering a state does not).
+  `step_motions` moves each moving value `speed` toward its target, in
+  copy then prop order, once a tick in `World::frame` after the keys are
+  latched and before the first sub-step (a tick without one moves them
+  too; none while frozen); on arrival the motion ends and
+  `EventKind::LiveArrived { copy, prop }` (gameplay class) is emitted.
+  Motions are hashed after the scripts' part, only in a world with a
+  director (a live level without scripts hashes as before), and
+  transferred in `LiveWire::motions`: `can_load` refuses a motion of a
+  non-position, a target outside the limits, a speed outside
+  `1..=MAX_MOTION_SPEED` (or 0 with a target other than 0), and any
+  motion in a world without a director. Tests: `tests/motion.rs`
+  (`motions_are_in_the_checksum_and_the_transfer`,
+  `motion_runs_before_the_first_substep`, a `Sweeper` director).
   Tests: `tests/live.rs` (`tests/common/live.rs`'s console, press and
   crate; `a_value_is_read_by_its_target`), `tests/state.rs`' live refusals and proptest, `tests/no_alloc.rs`'s
   `a_live_world_ticks_without_allocating`.
@@ -259,7 +278,8 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   `rebuild_reads`; patched per command), each instance's state (getters
   and setters), `apply(LiveCommand)` (`SetState`, `SetValue`,
   `SwitchOff`; refused past `MAX_LIVE_COMMANDS` a tick; a state change
-  emits `LiveState`), `fail(i)` (`EventKind::ScriptError { instance }`,
+  emits `LiveState`; issue #89's `Move` and `Stop` motions, `LiveReads`
+  carrying them; `ScriptEvent::Arrived` from `LiveArrived`), `fail(i)` (`EventKind::ScriptError { instance }`,
   switched off at the bound) and `charge(ops)`. `World::script_peak()`
   (`ScriptPeak { run, tick }`, the most operations one run and one tick
   used since the world was made) is not state (`NotState`, like
