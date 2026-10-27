@@ -117,6 +117,17 @@ impl State {
         lines[lines.len().saturating_sub(n)..].to_vec()
     }
 
+    /// When the workspace's `target/` was last emptied (unix seconds;
+    /// `run::fresh_start`), if ever.
+    pub fn fresh_start(&self) -> Option<u64> {
+        std::fs::read_to_string(self.dir.join("fresh-start")).ok()?.trim().parse().ok()
+    }
+
+    pub fn set_fresh_start(&self, secs: u64) -> Result<()> {
+        std::fs::write(self.dir.join("fresh-start"), secs.to_string())?;
+        Ok(())
+    }
+
     /// Where a running session's process id is kept, so a later tick can
     /// stop a session an interrupted runner left behind.
     pub fn session_pid(&self) -> PathBuf {

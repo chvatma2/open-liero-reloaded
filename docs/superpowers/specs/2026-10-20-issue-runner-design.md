@@ -158,7 +158,8 @@ text, never silently.
    a detached HEAD) is reset to the latest `origin/main` and cleaned. The
    user's own checkout is never touched, so they can keep working while
    the runner works. It has its own Cargo target directory, kept tidy by
-   the repository's existing 40 GiB sweep.
+   the repository's sweep (every `check`), and emptied by an idle tick
+   once a week (`run::fresh_start`).
 3. **Start the session** (headless `claude -p`, configuration below) with
    the prompt: the trusted task, the fenced report material, the issue
    number, the rules below and the path of the result file. Everything

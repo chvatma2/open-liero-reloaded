@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 
@@ -337,6 +337,43 @@ fn describe(pick: &Pick) -> String {
     }
 }
 
+/// How often an idle runner empties its workspace's `target/`: the build
+/// cache is needed warm only within a run, and between fresh starts it
+/// grows with every dependency, toolchain and feature change.
+pub const FRESH_START_EVERY: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
+/// An idle tick's housekeeping: when the last fresh start is
+/// [`FRESH_START_EVERY`] before `now`, empties the workspace's `target/`
+/// but for the run notes (`target/olr-runner`), so the next run builds
+/// from cold. The first idle tick only notes the time. Whether it emptied.
+pub fn fresh_start(s: &Settings, st: &State, now: SystemTime) -> Result<bool> {
+    let now = now.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or_default();
+    match st.fresh_start() {
+        None => {
+            st.set_fresh_start(now)?;
+            return Ok(false);
+        }
+        Some(last) if now.saturating_sub(last) < FRESH_START_EVERY.as_secs() => return Ok(false),
+        Some(_) => {}
+    }
+    let target = s.workspace.join("target");
+    for e in std::fs::read_dir(&target).into_iter().flatten().flatten() {
+        if e.file_name() == "olr-runner" {
+            continue;
+        }
+        let path = e.path();
+        let removed = if e.file_type()?.is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        removed.with_context(|| format!("cannot remove {}", path.display()))?;
+    }
+    st.set_fresh_start(now)?;
+    st.record("fresh start: emptied the workspace's target/")?;
+    Ok(true)
+}
+
 /// One poll-and-work pass: finish a crashed run, then work the queue until
 /// it is empty or the runner is paused.
 pub fn tick(gh: &dyn GitHub, s: &Settings, st: &State) -> Result<()> {
@@ -349,6 +386,7 @@ pub fn tick(gh: &dyn GitHub, s: &Settings, st: &State) -> Result<()> {
         let pick = plan_next(gh)?;
         let Pick::Next { number, .. } = pick else {
             st.record(&describe(&pick))?;
+            fresh_start(s, st, SystemTime::now())?;
             return Ok(());
         };
         run_issue(gh, s, st, number)?;

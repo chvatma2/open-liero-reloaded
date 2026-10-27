@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use olr_runner::github::{GitHub, IssueDetail, LabelEvent, Milestone};
 use olr_runner::repo::Repo;
-use olr_runner::run::{RunResult, run_issue, run_now, tick};
+use olr_runner::run::{FRESH_START_EVERY, RunResult, fresh_start, run_issue, run_now, tick};
 use olr_runner::settings::Settings;
 use olr_runner::state::{Current, Phase, State};
 
@@ -406,4 +406,23 @@ fn run_now_refuses_with_current_or_unapproved() {
     .unwrap();
     assert!(run_now(&e.gh, &e.s, &e.st, 7).is_err(), "an interrupted run comes first");
     assert!(e.gh.logged().is_empty());
+}
+
+#[test]
+fn an_idle_runner_empties_target_weekly() {
+    let e = env("");
+    let target = e.s.workspace.join("target");
+    std::fs::create_dir_all(target.join("debug/deps")).unwrap();
+    std::fs::create_dir_all(target.join("olr-runner")).unwrap();
+    std::fs::write(target.join("olr-runner/notes.md"), "kept").unwrap();
+    let t0 = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_800_000_000);
+    assert!(!fresh_start(&e.s, &e.st, t0).unwrap(), "the first idle tick only notes the time");
+    let day = std::time::Duration::from_secs(24 * 60 * 60);
+    assert!(!fresh_start(&e.s, &e.st, t0 + day).unwrap());
+    assert!(target.join("debug/deps").is_dir());
+    assert!(fresh_start(&e.s, &e.st, t0 + FRESH_START_EVERY).unwrap());
+    let left: Vec<_> = std::fs::read_dir(&target).unwrap().flatten().map(|e| e.file_name()).collect();
+    assert_eq!(left, ["olr-runner"]);
+    assert!(target.join("olr-runner/notes.md").is_file());
+    assert!(!fresh_start(&e.s, &e.st, t0 + FRESH_START_EVERY + day).unwrap(), "a week from the last one");
 }

@@ -31,6 +31,13 @@ Tests never touch the network, GitHub or the user's repositories: they use
 temp git repositories, a `FakeGitHub` (`tests/fake_github.rs`) and a fake
 `claude` script (`tests/data/fake-claude.sh`).
 
+Disk: an idle tick (nothing to work) empties the workspace's `target/`
+(but `target/olr-runner`, the run notes) once a week
+(`run::fresh_start`, `FRESH_START_EVERY`; the time in the state
+directory's `fresh-start`; the first idle tick only notes it), so the
+next run builds from cold and the clone's build cache never grows past a
+week's worth. `check`'s sweep keeps it tidy within the week.
+
 Recovery: `current.ron` holds the run's `Phase` (`Claimed`, `Session`,
 `Gate`, `Pushed`), written before each step with side effects. A tick
 that finds one carries it on: a claim is handed back, a session resumed
