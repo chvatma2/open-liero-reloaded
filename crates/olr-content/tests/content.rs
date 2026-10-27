@@ -223,7 +223,7 @@ fn double_skin(dir: &Path) {
 }
 
 /// Writes the synthetic packs into `dir`.
-fn synthetic(dir: &Path) {
+pub fn synthetic(dir: &Path) {
     let sink = |id: &str| DirFs::new(dir.join(id));
     olr_pack::write_mod(&mut sink("broken-mod"), &broken_mod()).unwrap();
     olr_pack::write_level(&mut sink("test-level"), &room_level()).unwrap();
@@ -756,6 +756,7 @@ fn the_first_spawn_is_used_only_when_inside_the_level() {
         distant: Vec::new(),
         surface: None,
         distant_surface: Vec::new(),
+        live: None,
     };
     assert_eq!(level(&[(-1, 5), (10, 10)]).first_spawn(), None, "only the first one counts");
     assert_eq!(level(&[(10, 10)]).first_spawn(), Some((10, 10)));

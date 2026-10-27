@@ -56,6 +56,9 @@ pub struct LoadedLevel {
     /// `materials` (issue #41, the renderer heats a layer by it), 0 none;
     /// past its end, none.
     pub distant_surface: Vec<u8>,
+    /// Its live copies (`live.ron` and `live/`, issue #85), `None` without
+    /// any: [`LoadedLevel::live_sim`] is the simulation's share.
+    pub live: Option<crate::LoadedLive>,
     /// What loading left out of a look that did not check, to log once.
     pub warnings: Vec<String>,
 }
@@ -76,12 +79,14 @@ impl LoadedLevel {
             distant: src.distant.clone(),
             surface: src.surface.clone(),
             distant_surface: olr_format::levels::distant_surface_values(src),
+            live: src.live.clone(),
         };
         LoadedLevel::from_level(olr_format::levels::compile_level(src)?, extras, Vec::new())
     }
 
     fn from_level(l: Level, extras: Extras, warnings: Vec<String>) -> anyhow::Result<LoadedLevel> {
-        let Extras { look, glow, clear, glass, glow_beams, haze, distant, surface, distant_surface } = extras;
+        let Extras { look, glow, clear, glass, glow_beams, haze, distant, surface, distant_surface, live } =
+            extras;
         check_art_size(l.material.width(), l.material.height(), l.def.art_scale)?;
         Ok(LoadedLevel {
             name: l.def.name,
@@ -100,6 +105,7 @@ impl LoadedLevel {
             distant,
             surface,
             distant_surface,
+            live: live.map(crate::LoadedLive::new),
             warnings,
         })
     }
@@ -108,6 +114,12 @@ impl LoadedLevel {
     /// look passes draw it.
     pub fn has_look(&self) -> bool {
         self.look.is_some() || self.glow.is_some() || self.clear.is_some()
+    }
+
+    /// The simulation's data of its live copies (issue #85), shared by
+    /// every world of a match; `None` without any.
+    pub fn live_sim(&self) -> Option<std::sync::Arc<olr_sim::LiveLevel>> {
+        self.live.as_ref().map(|l| l.sim.clone())
     }
 
     /// The first spawn point when it is a good spawn point, else `None` (a
@@ -139,6 +151,7 @@ struct Extras {
     distant: Vec<olr_data::level::DistantLayer>,
     surface: Option<olr_look::SurfaceMaps>,
     distant_surface: Vec<u8>,
+    live: Option<olr_format::levels::LiveSource>,
 }
 
 /// A theme: the stamps the map is edited with and the tiles dirt is drawn
@@ -230,6 +243,7 @@ impl Content {
             distant: pack.distant,
             surface: pack.surface,
             distant_surface: pack.distant_surface,
+            live: pack.live,
         };
         LoadedLevel::from_level(pack.level, extras, warnings).with_context(|| format!("level pack {id}"))
     }

@@ -6,5 +6,6 @@ mod cache;
 mod catalog;
 mod color;
 mod content;
+mod live;
 mod look;
 mod matches;
