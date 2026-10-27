@@ -213,6 +213,19 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   worked out every frame, so a spotlight turns and widens with its beam
   direction and spread, and a pane's glass opacity and tint change in
   play. `olr-cli render-match --live-value COPY.NAME=VALUE` sets a value.
+- Scripts move values at a speed: `move_to(name, target, speed)` (world
+  pixels a second, at most 8 pixels a tick), `stop`, `moving`, and `min`
+  and `max` (a stretched copy's own travel), with an `arrived(name)`
+  handler when a value reaches its target; a `set` stops the motion, a
+  state change does not. Motions are rolled back, checksummed, sent with a
+  state transfer and replayed; online play (protocol 9) from earlier
+  builds is not compatible.
+- A level's scripts are checked by name: the copies, states and exposed
+  values they name and their handlers' parameters. The editor lists the
+  problems as errors and a level with one does not save (an asset with a
+  broken script still does); a library update that would break a script
+  is reported as a break. `olr-cli level check-scripts <pack>` lists the
+  problems. `olr-cli match --packs DIR` plays on extra pack directories.
 
 ### Changed
 

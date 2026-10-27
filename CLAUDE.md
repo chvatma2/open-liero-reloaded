@@ -82,8 +82,11 @@ reason in `fixtures/blessings.log`.
 `fixtures/matches/*.ron` are golden bot matches: an `olr-cli match` spec and
 the world's checksum stream (`olr-cli`'s `tests/golden.rs`, in `check`). Any
 change to the simulation, the modes or the bots' decisions changes them.
+`fixtures/matches-live/*.ron` are the live goldens (issue #89): matches on
+`fixtures/live/levels` laid over the content, its scripts running, each
+also verified; `cargo xtask determinism` replays them layered on every leg.
 When the change is intended, `cargo xtask bless-regression --reason "<why>"`
-re-records them and logs the reason in `fixtures/blessings.log`;
+re-records both directories and logs the reason in `fixtures/blessings.log`;
 `--from target/failures/<name>.ron` adds a failing match as a new golden.
 
 ## Content

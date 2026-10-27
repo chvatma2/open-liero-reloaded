@@ -6452,8 +6452,8 @@ its checks and the decoded model (`olr_edit::asset`).
   start's values and owns nothing, so it looks like the start; its sounds
   are not copied (a deliberate reading: "the start's values, owning
   nothing"). Renaming a state moves the start and `health.at_zero` with
-  it; scripts are text and are not rewritten (#89 reports a name a script
-  no longer finds).
+  it; scripts are text and are not rewritten (since #89 the name check
+  reports a name a script no longer finds, and the level does not save).
 - **`set_start` keeps every state's look** (settled with the maintainer
   while writing #72 up). For each layer `L` the new start `B` owns, the old
   start comes to own `L`'s base picture, every other state that followed
@@ -6717,8 +6717,9 @@ level library|export|import`. The level tab's notice and buttons are
   relative to the asset). Without force a breaking version is refused,
   naming each break; forced, each is resolved and listed, never silently:
   the value dropped, the copy started in the asset's start, made static,
-  made near. `Break::Script` is reserved for #89 (scripts are not
-  checked here); forced, it is listed as left for the script. Any other
+  made near. `Break::Script` (#89) is a problem the library's version
+  adds to a script the level runs; forced, it is listed as left for the
+  script, and the level does not save until the script is fixed. Any other
   problem of the result (`check_placed`, the bake) still refuses the
   update whole.
 - **Restore and import never write over.** `restore` writes the level's
@@ -6884,7 +6885,8 @@ skin editor's layout, #79 adds the states panel (`state_ops.rs`,
   (`line:column: message`, a click puts the cursor there) but never
   refuse an edit or a save: half-written scripts are kept, and nothing
   runs a script before #88. The check is syntax only (`olr-script`'s
-  `check`, Rhai's parser) until #89 checks the names a script uses.
+  `check`, Rhai's parser) until #89 checks the names a script uses (and,
+  for the scripts a level runs, refuses the level's save: below).
 - **Rhai is pinned (#80).** `rhai = "=1.27.0"`, default features off,
   with `no_std`, `sync`, `no_float`, `only_i64`, `no_module`,
   `no_custom_syntax`, `no_time`, `no_closure` and `internals`: #88's
@@ -7202,8 +7204,8 @@ values.
   value) are setup calls, recorded by replays; tests and tools may call
   them between ticks, which a recorded game never does. `World::live()`
   reads each copy's id, rectangle, state, values by name and visible
-  (rock) parts at their whole-pixel places. Nothing moves and nothing
-  collides with a part yet (#89-#91, #94).
+  (rock) parts at their whole-pixel places. Since #89 scripts move
+  values; nothing collides with a part yet (#90, #91, #94).
 - **Positions in 1/256 pixel (#86).** The world keeps `X`, `Y`, `OffsetX`
   and `OffsetY` in 1/256 world pixel (`LIVE_SUBPIXELS`; the played form's
   numbers, limits included, are whole pixels, scaled when they enter the
@@ -7225,8 +7227,8 @@ values.
 - **Versions (#86).** `olr_proto::PROTOCOL_VERSION` 7 (the state's new
   field), `olr-replay`'s `FORMAT_VERSION` 8 (`SetupCall::LiveState`,
   `LiveValue`), `olr-cli`'s desync `BUNDLE_VERSION` 6; older ones are
-  refused. #88 (8: script state), #89 and #90 extend `LiveWorld` and
-  `LiveWire` and bump the protocol again. `olr-present`'s rollback keys class `LiveState` by
+  refused. #88 (8: script state) and #89 (9: motions) extend `LiveWorld`
+  and `LiveWire`; #90 bumps the protocol again. `olr-present`'s rollback keys class `LiveState` by
   its copy and state, so a re-simulated tick's entry plays its effects
   once (#92).
 - **Drawn into the terrain (#87).** Live copies are composited into the
@@ -7367,6 +7369,50 @@ values.
   the parts' dirty rectangles (a level without live glass uploads its
   glass whole as before). Glass shows only in a see-through level (one
   with distant layers), as the ground's.
+- **Motions (#89).** A script's `move_to(name, target, speed)` starts a
+  motion of a position value (`X`, `Y`, `OffsetX`, `OffsetY`; any other
+  is a script error): `LiveMotion { target, speed }` per value in
+  `LiveWorld`, the target clamped into the value's limits, the speed
+  (world pixels a second) made 1/256 pixel a 10-ms tick, `speed × 256 /
+  100` rounded down and at least 1, clamped to `MAX_MOTION_SPEED` (8 px a
+  tick). Ticks, not the game speed: a motion is a frame count. The world
+  steps every motion once a tick at the start of the frame's physics,
+  after the keys are latched and before the first sub-step, so a tick
+  without a sub-step moves values too (#90's solid parts will move before
+  worms and shots collide with them); on arrival it emits
+  `EventKind::LiveArrived`, which reaches `arrived(name)` in the same
+  tick's script phase. A `set` of the value stops its motion, a state
+  change does not (the motion goes on through it); a frozen world moves nothing. Motions are
+  hashed after the scripts' part, only in a world with scripts (a live
+  level without them hashes as before), cloned with a snapshot and
+  transferred, refused unless each fits its value (a position, its
+  target within limits, its speed 1 to the maximum; none without
+  scripts); protocol 9. `min(name)`/`max(name)` read a copy's limits as
+  baked, so a default script sweeps a stretched copy's whole travel.
+- **Scripts checked by name (#89, call 20).** `olr_script::check_level`
+  reads each script a level runs (each live copy's default unless
+  switched off, its own, the level script) for its syntax, handlers
+  defined only with the wrong parameter count, and every string literal
+  naming a copy (`this.copy`), a state (`set_state`) or an exposed value
+  (`get`, `set`, `move_to`, `stop`, `moving`, `min`, `max`) of the copy
+  it acts on: this one, `this.copy("…")`, or a variable every `let` binds
+  to the same one; other handles and names built at runtime are not
+  checked (a script error when they run). **The save rule:** a level
+  with a problem in a script it runs does not save (`olr_edit::pack::save`,
+  `SaveError::Scripts`; the editor lists them as errors, `olr-cli level
+  check-scripts` prints them); an asset with a broken script still saves
+  (it runs nowhere until a live copy uses it), and so does a static
+  copy's script. A library update that would add a problem is a
+  `Break::Script` of the copy.
+- **The live golden (#89).** `fixtures/matches-live/classic-live-test-4dm.ron`
+  (Classic, 4 Deathmatch bots, 3000 ticks on the fixture level, its lamp
+  stuttering, consoles cycling, the press moving and the consoles
+  alarmed while it moves) pins the scripted simulation: `olr-cli`'s
+  golden test plays it on the fixture laid over the content and verifies
+  it; `cargo xtask determinism` replays it on WASI (in `check`), Windows
+  and arm64. `fixtures/matches/` is unchanged, and so are the static
+  render goldens; #87's live render goldens were re-blessed with the
+  scripts running.
 - **What it costs.** A level without live copies draws as before (the
   render goldens and `lit-hashes.ron` held); the live goldens
   (`live-start.png`, `live-states.png`) changed with the fixture's new
