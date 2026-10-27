@@ -396,7 +396,7 @@ fn every_shipped_level_saves_byte_identical() {
 /// a built-in ceiling lamp at (40, 30), a torch stretched to twice its
 /// width at (200, 100), and the strip light as the level's own at (300,
 /// 50).
-fn placed_level(root: &Path) -> (tempfile::TempDir, PathBuf) {
+pub fn placed_level(root: &Path) -> (tempfile::TempDir, PathBuf) {
     use olr_edit::placed::{Size, add_copy, bake_pack, resize_copy};
     use olr_format::levels::AssetOrigin;
     let (tmp, dir) = copy_pack(root, &fixture());
@@ -455,7 +455,7 @@ fn a_placed_level_opens_whole() {
 
 /// `placed_level` open, its library the built-in assets (and an empty
 /// one of the user's), Select on.
-fn placed(root: &Path) -> (tempfile::TempDir, tempfile::TempDir, EditorState) {
+pub fn placed(root: &Path) -> (tempfile::TempDir, tempfile::TempDir, EditorState) {
     let (t, dir) = placed_level(root);
     let (t2, mut s) = editor_at(root, &dir);
     let assets = crate::common::set_library(&built_in_assets(), &t2.path().join("yours"));

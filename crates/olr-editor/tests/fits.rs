@@ -340,3 +340,73 @@ fn the_options_are_under_the_tools() {
     assert!(size.top() > draw.bottom(), "under the tools: {size:?}, Draw {draw:?}");
     assert!(tools.contains_rect(size) && tools.contains_rect(draw), "in the tools panel {tools:?}");
 }
+
+/// The level tab's side panels (`ui/level_tab.rs`).
+const LIBRARY: &str = "olr-editor-level-library";
+const COPY: &str = "olr-editor-level-copy";
+
+/// Issue #83: the level tab fits as the asset tab does (the module's
+/// rules; `the_toolbar_stays_in_the_window_and_in_place` before it), at
+/// the same sizes, below `ui::NARROW` each side panel in turn: a level of
+/// placed copies (the ground, a lamp, a stretched torch, an own strip
+/// light) with nothing selected (the level's panel: its Lighting and size
+/// fields; then with its Fine tuning open) and Select, a copy selected (its
+/// panel and link) and the Haze brush, and the Spawns tab with Spawn.
+#[test]
+fn the_level_tab_fits() {
+    let Some(root) = content() else { return };
+    let mut failed = Vec::new();
+    let mut cases = 0;
+    for (w, hgt, ppp) in sizes() {
+        let narrow = w / ppp < ui::NARROW;
+        let sides: &[Option<&str>] =
+            if narrow { &[Some(labels::SHOW_LIBRARY), Some(labels::SHOW_COPY)] } else { &[None] };
+        let setups = [
+            ("nothing selected, Select", Selection::None, Tool::Select, false),
+            ("the lighting's fine tuning", Selection::None, Tool::Select, false),
+            ("a copy, the Haze brush", Selection::Copy("torch".into()), Tool::Haze, false),
+            ("the own strip light, Spawn", Selection::Copy("strip-light".into()), Tool::Spawn, false),
+            ("the Spawns tab", Selection::None, Tool::Spawn, true),
+        ];
+        for &side in sides {
+            for (what, selection, tool, spawns) in &setups {
+                cases += 1;
+                let (_t, _t2, mut s) = crate::level_tab::placed(&root);
+                if what.contains("fine tuning") {
+                    if s.document().unwrap().level().look.is_none() {
+                        run(&mut s, A::SetLook(Some(olr_format::look::LookSource::default())));
+                    }
+                    run(&mut s, A::ShowFineTuning(true));
+                    assert!(s.document().unwrap().level().look.is_some(), "{:?}", s.status().message);
+                }
+                run(&mut s, A::Select(selection.clone()));
+                run(&mut s, A::Tool(*tool));
+                if *spawns {
+                    run(&mut s, A::Tab(olr_editor::PanelTab::Spawns));
+                }
+                assert_eq!((s.selection(), s.tool()), (selection, *tool));
+                let mut h = harness(w, hgt, ppp, s);
+                settle(&mut h);
+                let switch_shown = h.query_by_role_and_label(Role::Button, labels::SHOW_COPY).is_some();
+                assert_eq!(switch_shown, narrow, "{w}x{hgt}");
+                if let Some(side) = side {
+                    switch(&mut h, side);
+                }
+                let panels: &[&str] = match side {
+                    None => &[LIBRARY, COPY],
+                    Some(labels::SHOW_LIBRARY) => &[LIBRARY],
+                    Some(_) => &[COPY],
+                };
+                let bad = misfits(&mut h, panels);
+                if !bad.is_empty() {
+                    let panel = side.unwrap_or("both panels");
+                    let at = format!("{what}, {panel}, at {w}x{hgt} ({ppp} pixels a point)");
+                    let first = bad.iter().take(8).map(|b| format!("    {b}")).collect::<Vec<_>>().join("\n");
+                    failed.push(format!("{at}: {} problems, e.g.\n{first}", bad.len()));
+                }
+            }
+        }
+    }
+    assert!(cases >= 20, "{cases}");
+    assert!(failed.is_empty(), "{} cases do not fit:\n{}", failed.len(), failed.join("\n"));
+}

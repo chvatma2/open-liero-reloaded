@@ -16,8 +16,11 @@ use crate::state::{DocTab, EditorAction, EditorState};
 
 /// A thumbnail's size (points): half `THUMB_SIZE`.
 const THUMB: egui::Vec2 = egui::vec2(80.0, 48.0);
-/// A card's width: the thumbnail's button.
-const CARD: f32 = THUMB.x + 8.0;
+
+/// A card's width: the thumbnail's button, its padding the theme's.
+fn card_width(ui: &Ui) -> f32 {
+    THUMB.x + 2.0 * ui.spacing().button_padding.x
+}
 
 /// Whether asset `a` answers the search `query` (lowercase, trimmed): its
 /// name holds it, case aside.
@@ -55,7 +58,7 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
         // Rows of as many cards as fit (a column inside a wrapped row
         // never wraps).
         let gap = ui.spacing().item_spacing.x;
-        let per_row = (((ui.available_width() + gap) / (CARD + gap)).floor() as usize).max(1);
+        let per_row = (((ui.available_width() + gap) / (card_width(ui) + gap)).floor() as usize).max(1);
         for row in group.chunks(per_row) {
             ui.horizontal(|ui| {
                 for a in row {
@@ -107,7 +110,7 @@ fn card(
 ) {
     let picked = state.picked_asset() == Some(&a.key);
     ui.vertical(|ui| {
-        ui.set_width(CARD);
+        ui.set_width(card_width(ui));
         let texture = thumb(ui, data, a);
         let button = match &texture {
             Some(t) => egui::Button::image(egui::Image::new(t).fit_to_exact_size(THUMB)),
