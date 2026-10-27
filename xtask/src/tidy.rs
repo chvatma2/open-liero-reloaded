@@ -1,17 +1,20 @@
 //! `cargo xtask tidy`: sweeps superseded build output from `target/` and old
 //! Docker oracle images (and, with `--docker-cache`, bounds Docker's build
-//! cache). `check` runs the same `target/` sweep by itself when `target/` is
-//! bigger than [`SWEEP_BYTES`].
+//! cache). `check` runs the same sweep first, every time, so `target/`
+//! stays near its working size instead of growing between sweeps.
 //!
 //! Cargo never deletes an artifact whose configuration changed (a profile,
 //! a feature set, a dependency in `Cargo.lock`, the toolchain): the new
 //! one gets a new hash beside the old. The sweep keeps, in every `deps/`
 //! directory of a cargo profile under `target/`, the newest build of each
 //! artifact and removes the older ones, and in every `incremental/` the
-//! newest sessions of each crate. Only files and directories inside
-//! `target/` are removed; never `content/packs`, `target/olx`,
-//! `target/release-zips` (the release zips, [`KEPT`]) or anything
-//! a symbolic link points to.
+//! newest sessions of each crate, dropping a crate's sessions altogether
+//! once it has not been compiled for [`IDLE`] (its next build is then not
+//! incremental). Of the release zips (`target/release-zips`, [`KEPT`]) it
+//! keeps the newest [`KEEP_RELEASES`] versions. Outside `target/` it
+//! removes only `~/.cache/olr-*-target`, the target directories of
+//! spikes and baseline builds, once unused for [`IDLE`]. It never removes
+//! `content/packs`, `target/olx` or anything a symbolic link points to.
 
 use std::collections::BTreeMap;
 use std::io::BufRead;
@@ -20,22 +23,18 @@ use std::time::{Duration, Instant, SystemTime};
 
 use crate::{oracle, root};
 
-/// `check` sweeps `target/` when it is bigger than this.
-pub const SWEEP_BYTES: u64 = 40 * 1024 * 1024 * 1024;
-/// Measuring `target/` gives up after this long (and then sweeps: a tree
-/// that slow to walk is a big one).
-const MEASURE_BUDGET: Duration = Duration::from_secs(10);
+/// A crate's incremental sessions, and a spike's or baseline's target
+/// directory under `~/.cache`, go once unused this long.
+pub const IDLE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+/// The release versions kept in `target/release-zips` (the newest: what
+/// `publish` publishes, and the one before it).
+pub const KEEP_RELEASES: usize = 2;
 /// Builds of one artifact written this close to its newest are the same
 /// cargo run's parallel configurations (a crate built for build scripts
 /// and for the game with the same features), kept with it.
 pub const SAME_RUN: Duration = Duration::from_secs(10 * 60);
 
 const GB: f64 = 1024.0 * 1024.0 * 1024.0;
-
-/// Whether a measured size (`None` = the walk gave up) deserves a sweep.
-pub fn over_threshold(size: Option<u64>) -> bool {
-    size.is_none_or(|s| s > SWEEP_BYTES)
-}
 
 /// Directory size in bytes, or `None` when the walk exceeds `budget`.
 /// Symbolic links are counted as links, never followed; a file hard-linked
@@ -77,8 +76,9 @@ fn first_link(_: &std::fs::Metadata, _: &mut std::collections::BTreeSet<(u64, u6
     true
 }
 
-/// Directories of `target/` the sweep never enters: the release zips
-/// (`cargo xtask dist`, `dist::ZIP_DIR`).
+/// Directories of `target/` the profile sweep never enters: the release
+/// zips (`cargo xtask dist`, `dist::ZIP_DIR`), pruned by
+/// [`stale_releases`] instead.
 pub const KEPT: [&str; 1] = ["release-zips"];
 
 /// The cargo profile directories under `target` (`target/debug`,
@@ -373,64 +373,202 @@ pub fn stale_sessions(incremental: &Path, window: Duration) -> Vec<PathBuf> {
     out
 }
 
+/// The `incremental/<crate>-<hash>` directories whose newest session is
+/// older than `before`: crates not compiled since.
+pub fn idle_crates(incremental: &Path, before: SystemTime) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(incremental).into_iter().flatten().flatten() {
+        if !e.file_type().is_ok_and(|t| t.is_dir()) {
+            continue;
+        }
+        let newest = std::fs::read_dir(e.path())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|s| s.file_name().to_str().is_some_and(|n| n.starts_with("s-")))
+            .filter_map(|s| s.metadata().ok())
+            .map(|m| modified(&m))
+            .max();
+        if newest.is_none_or(|t| t < before) {
+            out.push(e.path());
+        }
+    }
+    out.sort();
+    out
+}
+
+/// A release file's version: `open-liero-reloaded-<version>-<os>-<arch>.<ext>`.
+fn release_version(name: &str) -> Option<&str> {
+    let rest = name.strip_prefix("open-liero-reloaded-")?;
+    let (stem, _ext) = rest.rsplit_once('.')?;
+    let (stem, _arch) = stem.rsplit_once('-')?;
+    let (version, _os) = stem.rsplit_once('-')?;
+    Some(version)
+}
+
+/// The release files in `zips` of all but the newest `keep` versions (by
+/// their newest file). Other files are left alone.
+pub fn stale_releases(zips: &Path, keep: usize) -> Vec<PathBuf> {
+    let mut versions: BTreeMap<String, (SystemTime, Vec<PathBuf>)> = BTreeMap::new();
+    for e in std::fs::read_dir(zips).into_iter().flatten().flatten() {
+        let Ok(name) = e.file_name().into_string() else { continue };
+        let Some(version) = release_version(&name) else { continue };
+        let Ok(meta) = e.metadata() else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        let v = versions.entry(version.to_string()).or_insert((SystemTime::UNIX_EPOCH, Vec::new()));
+        v.0 = v.0.max(modified(&meta));
+        v.1.push(e.path());
+    }
+    let mut by_age: Vec<_> = versions.into_values().collect();
+    by_age.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    let mut out: Vec<PathBuf> = by_age.into_iter().skip(keep).flat_map(|(_, files)| files).collect();
+    out.sort();
+    out
+}
+
+/// The newest `mtime` of `dir` and the directories at most three levels
+/// below it (cargo's profile, `deps/` and `.fingerprint/<unit>`: any build
+/// that compiles something changes one).
+fn newest_dir_time(dir: &Path) -> SystemTime {
+    let mut newest = SystemTime::UNIX_EPOCH;
+    let mut stack = vec![(dir.to_path_buf(), 0)];
+    while let Some((d, depth)) = stack.pop() {
+        if let Ok(m) = std::fs::symlink_metadata(&d) {
+            newest = newest.max(modified(&m));
+        }
+        if depth == 3 {
+            continue;
+        }
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            if e.file_type().is_ok_and(|t| t.is_dir()) {
+                stack.push((e.path(), depth + 1));
+            }
+        }
+    }
+    newest
+}
+
+/// The `olr-*-target` directories in `cache` (spikes' and baseline
+/// builds' `CARGO_TARGET_DIR`s) unused since `before`, except `current`
+/// (this run's `CARGO_TARGET_DIR`). Never a symbolic link.
+pub fn stale_target_dirs(cache: &Path, before: SystemTime, current: Option<&Path>) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(cache).into_iter().flatten().flatten() {
+        let Ok(name) = e.file_name().into_string() else { continue };
+        if !(name.starts_with("olr-") && name.ends_with("-target"))
+            || !e.file_type().is_ok_and(|t| t.is_dir())
+        {
+            continue;
+        }
+        let path = e.path();
+        if current.is_some_and(|c| c == path) || newest_dir_time(&path) >= before {
+            continue;
+        }
+        out.push(path);
+    }
+    out.sort();
+    out
+}
+
 /// What a sweep removed.
 #[derive(Debug, Default, PartialEq)]
 pub struct Swept {
     pub artifacts: usize,
     pub sessions: usize,
+    /// Release files and `~/.cache` target directories.
+    pub others: usize,
     pub bytes: u64,
 }
 
-/// Removes every stale artifact and incremental session under `target`.
-pub fn sweep(target: &Path, window: Duration) -> Swept {
+impl Swept {
+    /// Removes `path` (a file or a whole directory) if it is inside
+    /// `within` and no symbolic link, counting its bytes; whether it went.
+    fn remove(&mut self, path: &Path, within: &Path) -> bool {
+        let Ok(meta) = std::fs::symlink_metadata(path) else { return false };
+        if !path.starts_with(within) || meta.file_type().is_symlink() {
+            return false;
+        }
+        let size = if meta.is_dir() { dir_size(path, Duration::MAX).unwrap_or(0) } else { meta.len() };
+        let removed = if meta.is_dir() { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) };
+        if removed.is_ok() {
+            self.bytes += size;
+        }
+        removed.is_ok()
+    }
+}
+
+/// Removes every stale artifact and incremental session under `target`,
+/// the sessions of crates not compiled since `idle_since`, and all but the
+/// newest [`KEEP_RELEASES`] release versions.
+pub fn sweep(target: &Path, window: Duration, idle_since: SystemTime) -> Swept {
     let mut swept = Swept::default();
     for profile in profile_dirs(target) {
         for path in stale_artifacts(&profile, window) {
-            let size = std::fs::symlink_metadata(&path).map_or(0, |m| m.len());
-            if path.starts_with(target) && std::fs::remove_file(&path).is_ok() {
+            if swept.remove(&path, target) {
                 swept.artifacts += 1;
-                swept.bytes += size;
             }
         }
-        for path in stale_sessions(&profile.join("incremental"), window) {
-            if !path.starts_with(target) {
-                continue;
+        let incremental = profile.join("incremental");
+        let mut sessions = stale_sessions(&incremental, window);
+        sessions.extend(idle_crates(&incremental, idle_since));
+        sessions.sort();
+        sessions.dedup();
+        for path in sessions {
+            // A crate directory may have gone already, with its sessions.
+            let dir = std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir());
+            if swept.remove(&path, target) && dir {
+                swept.sessions += 1;
             }
-            let Ok(meta) = std::fs::symlink_metadata(&path) else { continue };
-            let size = if meta.is_dir() { dir_size(&path, Duration::MAX).unwrap_or(0) } else { meta.len() };
-            let removed =
-                if meta.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
-            if removed.is_ok() {
-                swept.bytes += size;
-                if meta.is_dir() {
-                    swept.sessions += 1;
-                }
-            }
+        }
+    }
+    for path in stale_releases(&target.join(crate::dist::ZIP_DIR), KEEP_RELEASES) {
+        if swept.remove(&path, target) {
+            swept.others += 1;
         }
     }
     swept
 }
 
+/// Removes the `~/.cache/olr-*-target` directories unused since
+/// `idle_since` (not this run's `CARGO_TARGET_DIR`), into `swept`.
+fn sweep_cache(swept: &mut Swept, idle_since: SystemTime) {
+    let Some(home) = std::env::var_os("HOME") else { return };
+    let cache = Path::new(&home).join(".cache");
+    let current = std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from);
+    for path in stale_target_dirs(&cache, idle_since, current.as_deref()) {
+        if swept.remove(&path, &cache) {
+            swept.others += 1;
+        }
+    }
+}
+
 fn describe(s: &Swept) -> String {
     format!(
-        "freed {:.1} GB ({} stale artifacts, {} incremental sessions)",
+        "freed {:.1} GB ({} stale artifacts, {} incremental sessions, {} old releases and build directories)",
         s.bytes as f64 / GB,
         s.artifacts,
-        s.sessions
+        s.sessions,
+        s.others
     )
 }
 
-/// `check`'s first step: sweeps `target/` when it is bigger than
-/// [`SWEEP_BYTES`] and says in one line what it freed. Never fails.
-pub fn sweep_if_large() {
-    let target = root().join("target");
-    let size = dir_size(&target, MEASURE_BUDGET);
-    if !target.is_dir() || !over_threshold(size) {
-        return;
+/// The full sweep: `target/` and `~/.cache`'s stale target directories.
+fn sweep_all() -> Swept {
+    let idle_since = SystemTime::now().checked_sub(IDLE).unwrap_or(SystemTime::UNIX_EPOCH);
+    let mut swept = sweep(&root().join("target"), SAME_RUN, idle_since);
+    sweep_cache(&mut swept, idle_since);
+    swept
+}
+
+/// `check`'s first step: the sweep, every time, saying in one line what it
+/// freed when it freed anything. Never fails.
+pub fn sweep_before_check() {
+    let swept = sweep_all();
+    if swept != Swept::default() {
+        println!("tidy {}", describe(&swept));
     }
-    let was = size.map_or_else(|| "too big to measure".to_string(), |s| format!("{:.1} GB", s as f64 / GB));
-    let swept = sweep(&target, SAME_RUN);
-    println!("tidy target/ was {was} (over {} GB): {}", SWEEP_BYTES as f64 / GB, describe(&swept));
 }
 
 /// With `docker_cache`, also bounds Docker's build cache (the machine's,
@@ -438,7 +576,7 @@ pub fn sweep_if_large() {
 pub fn run(docker_cache: bool) -> anyhow::Result<bool> {
     let target = root().join("target");
     let before = dir_size(&target, Duration::from_secs(60));
-    let swept = sweep(&target, SAME_RUN);
+    let swept = sweep_all();
     println!("{}", describe(&swept));
     oracle::prune_all(docker_cache);
     crate::nat::prune();
@@ -504,13 +642,6 @@ mod tests {
             paths.iter().map(|p| p.strip_prefix(base).unwrap().display().to_string()).collect();
         v.sort();
         v
-    }
-
-    #[test]
-    fn sweep_threshold() {
-        assert!(over_threshold(None), "a walk that gives up means a big tree");
-        assert!(!over_threshold(Some(SWEEP_BYTES)));
-        assert!(over_threshold(Some(SWEEP_BYTES + 1)));
     }
 
     #[test]
@@ -668,8 +799,8 @@ mod tests {
         build(&olx, "a", "0000000000000002", &[".rlib"], "x/a-1.0.1/lib.rs", None, 7200);
         let profiles = names(&target, profile_dirs(&target));
         assert_eq!(profiles, ["debug", "measure/debug", "x86_64-pc-windows-gnu/release"]);
-        let swept = sweep(&target, WINDOW);
-        assert_eq!(swept, Swept { artifacts: 6, sessions: 0, bytes: swept.bytes });
+        let swept = sweep(&target, WINDOW, SystemTime::UNIX_EPOCH);
+        assert_eq!(swept, Swept { artifacts: 6, sessions: 0, others: 0, bytes: swept.bytes });
         for profile in ["debug", "x86_64-pc-windows-gnu/release", "measure/debug"] {
             let deps = target.join(profile).join("deps");
             assert!(!deps.join("liba-0000000000000001.rlib").exists());
@@ -695,7 +826,7 @@ mod tests {
         let zip = target.join("release-zips/open-liero-reloaded-0.1.0-linux-x64.zip");
         std::fs::write(&zip, "zip").unwrap();
         assert_eq!(names(&target, profile_dirs(&target)), ["dist", "x86_64-pc-windows-gnu/dist"]);
-        sweep(&target, WINDOW);
+        sweep(&target, WINDOW, SystemTime::UNIX_EPOCH);
         for profile in ["dist", "x86_64-pc-windows-gnu/dist"] {
             let deps = target.join(profile).join("deps");
             assert!(!deps.join("liba-0000000000000001.rlib").exists(), "{profile}");
@@ -717,5 +848,75 @@ mod tests {
         )
         .unwrap();
         assert_eq!(dir_size(t.path(), Duration::from_secs(5)), Some(1010));
+    }
+
+    #[test]
+    fn drops_the_sessions_of_crates_not_compiled_lately() {
+        let t = tempfile::tempdir().unwrap();
+        let inc = t.path().join("incremental");
+        let session = |dir: &str, s: &str, secs: u64| {
+            let p = inc.join(dir).join(s);
+            std::fs::create_dir_all(&p).unwrap();
+            std::fs::File::open(&p).unwrap().set_modified(t0() + Duration::from_secs(secs)).unwrap();
+        };
+        session("olr_sim-1abc", "s-old-a", 0);
+        session("olr_game-2def", "s-old-b", 0);
+        session("olr_game-2def", "s-new-c", 7200);
+        std::fs::create_dir_all(inc.join("empty-3ghi")).unwrap();
+        let idle = names(&inc, idle_crates(&inc, t0() + Duration::from_secs(3600)));
+        assert_eq!(idle, ["empty-3ghi", "olr_sim-1abc"]);
+    }
+
+    #[test]
+    fn keeps_the_newest_release_versions() {
+        let t = tempfile::tempdir().unwrap();
+        let zips = t.path();
+        let names_at = [
+            ("open-liero-reloaded-0.1.0-linux-x64.zip", 0),
+            ("open-liero-reloaded-0.1.0-windows-x64.zip", 0),
+            ("open-liero-reloaded-0.2.0-dev.218.6a1b0b8-linux-x64.flatpak", 100),
+            ("open-liero-reloaded-0.2.0-dev.218.6a1b0b8-windows-x64.zip", 100),
+            ("open-liero-reloaded-0.2.0-dev.273.b4566e2.dirty-linux-x64.flatpak", 200),
+            ("open-liero-reloaded-0.2.0-dev.273.b4566e2.dirty-windows-x64.zip", 200),
+            ("open-liero-reloaded-0.2.0-windows-x64.zip", 300),
+            ("look-playtest-packs.zip", 0),
+        ];
+        for (name, secs) in names_at {
+            file(zips, name, secs, "zip");
+        }
+        assert_eq!(
+            release_version("open-liero-reloaded-0.2.0-dev.218.6a1b0b8-linux-x64.flatpak"),
+            Some("0.2.0-dev.218.6a1b0b8")
+        );
+        assert_eq!(
+            names(zips, stale_releases(zips, 2)),
+            [
+                "open-liero-reloaded-0.1.0-linux-x64.zip",
+                "open-liero-reloaded-0.1.0-windows-x64.zip",
+                "open-liero-reloaded-0.2.0-dev.218.6a1b0b8-linux-x64.flatpak",
+                "open-liero-reloaded-0.2.0-dev.218.6a1b0b8-windows-x64.zip",
+            ]
+        );
+    }
+
+    #[test]
+    fn finds_unused_spike_target_directories() {
+        let t = tempfile::tempdir().unwrap();
+        let cache = t.path();
+        let dir = |name: &str, secs: u64| {
+            let p = cache.join(name);
+            std::fs::create_dir_all(p.join("debug/deps")).unwrap();
+            for d in [p.join("debug/deps"), p.join("debug"), p.clone()] {
+                std::fs::File::open(&d).unwrap().set_modified(t0() + Duration::from_secs(secs)).unwrap();
+            }
+        };
+        dir("olr-spike-target", 0);
+        dir("olr-cold-target", 0);
+        dir("olr-new-target", 7200);
+        dir("ms-playwright", 0);
+        dir("olr-spike-other", 0);
+        let current = cache.join("olr-cold-target");
+        let stale = stale_target_dirs(cache, t0() + Duration::from_secs(3600), Some(&current));
+        assert_eq!(names(cache, stale), ["olr-spike-target"]);
     }
 }

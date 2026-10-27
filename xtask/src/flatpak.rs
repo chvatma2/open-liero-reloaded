@@ -87,6 +87,9 @@ pub fn bundle(build: &Path, version: &str) -> Result<PathBuf, String> {
     let work = work();
     let (src, repo) = (work.join("src"), work.join("repo"));
     stage(build, &src, version)?;
+    // A fresh repository each build: `publish` reads only this build's
+    // commit, and an old one would keep every earlier build's.
+    let _ = std::fs::remove_dir_all(&repo);
     println!("building the Flatpak (the first run downloads the 26.08 runtime from Flathub)...");
     run(
         "flatpak-builder",

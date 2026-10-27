@@ -181,7 +181,7 @@ fn audio_step(envs: &[(&str, PathBuf)]) -> StepResult {
 }
 
 fn run_with(offline: bool, gpu: bool, render: bool) -> anyhow::Result<bool> {
-    crate::tidy::sweep_if_large();
+    crate::tidy::sweep_before_check();
     let rules = layers::load_rules()?;
     let failed = RefCell::new(Vec::new());
     // A step's line: `ok   <name> (<detail><s>s)`, or its failure and output.

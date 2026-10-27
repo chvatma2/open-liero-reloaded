@@ -586,21 +586,33 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   without its `.d` goes beside a newer one of its stem and kind.
   `stale_sessions` does the same for `incremental/` sessions per crate
   name (a whole `<crate>-<hash>` directory when all its sessions go; a
-  lost session only costs a non-incremental compile). The plain stem is
+  lost session only costs a non-incremental compile), and `idle_crates`
+  drops the sessions of a crate not compiled for `tidy::IDLE` (7 days). The plain stem is
   not a key: `integration`, `matches` or `no_alloc` test binaries of
   several crates, `syn` 2 and 3, a crate's builds for two feature sets are
   all live at once. Removing a live build only costs a rebuild. Only
   regular files and directories inside `target/` go, never through a
-  symbolic link; `content/packs`, `target/olx` and `target/release-zips` (the
-  release zips, `tidy::KEPT`: never entered) are never touched.
+  symbolic link; `content/packs` and `target/olx` are never touched.
+  `target/release-zips` (`tidy::KEPT`) is no profile: `stale_releases`
+  keeps its newest `tidy::KEEP_RELEASES` (2) versions' files (by their
+  newest file; `release_version` parses the names) and leaves other files.
+  Outside `target/`, `stale_target_dirs` removes `~/.cache/olr-*-target`
+  (spikes' and baseline builds' `CARGO_TARGET_DIR`s: name them so) unused
+  for `IDLE` (the newest directory `mtime` three levels down), never this
+  run's `CARGO_TARGET_DIR` or a symbolic link.
   Builds of targets that no longer exist (a removed test file) are the
-  newest of their key and stay until `cargo clean`. `check` runs the
-  sweep first when `target/` exceeds 40 GB (`tidy::SWEEP_BYTES`, GiB; a
-  size walk over 10 s counts as over) and prints one line: `tidy target/
-  was <n> GB (over 40 GB): freed <n> GB (<n> stale artifacts, <n>
-  incremental sessions)`.
+  newest of their key and stay until `cargo clean` (the runner's weekly
+  fresh start clears its own). `check` runs the whole sweep first, every
+  time, and prints one line when it freed anything: `tidy freed <n> GB
+  (<n> stale artifacts, <n> incremental sessions, <n> old releases and
+  build directories)`. `oracle-record` removes a scenario's
+  `target/oracle/<name>` recordings once they pass (a failure keeps
+  them), and `flatpak::bundle` starts `target/flatpak/repo` afresh each
+  build (`publish` reads only that build's commit).
 - WSL footnote: the Windows drive hosts the virtual disk; `wsl --shutdown`
-  then `wsl --manage <distro> --set-sparse true` lets it shrink.
+  then `wsl --manage <distro> --set-sparse true` lets it shrink (this
+  machine's is sparse and `/` is mounted with `discard`: deleting in Linux
+  frees the Windows drive; `sudo fstrim -v /` catches up at once).
 
 ## determinism (`determinism.rs`, plan 9 task 13, spec §9.5)
 

@@ -222,6 +222,15 @@ fn scenarios(root: &Path, names: &[String]) -> anyhow::Result<Vec<(String, PathB
     Ok(all.into_iter().filter(|(s, _)| names.is_empty() || names.contains(s)).collect())
 }
 
+/// Removes a scenario's recordings once they passed (a failed one keeps
+/// them, to look at), and `target/oracle` when it is left empty.
+fn remove_work(work: &Path) {
+    let _ = std::fs::remove_dir_all(work);
+    if let Some(parent) = work.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
+}
+
 pub fn run(names: &[String], check: bool) -> anyhow::Result<bool> {
     let root = root();
     let list = scenarios(&root, names)?;
@@ -264,7 +273,8 @@ pub fn run(names: &[String], check: bool) -> anyhow::Result<bool> {
             };
             match olr_oracle::compare(&committed, &ta, &[]) {
                 Ok(n) if committed.header == ta.header => {
-                    println!("ok   {name}: matches the committed trace ({n} frames)")
+                    println!("ok   {name}: matches the committed trace ({n} frames)");
+                    remove_work(&work);
                 }
                 Ok(_) => {
                     println!(
@@ -280,6 +290,7 @@ pub fn run(names: &[String], check: bool) -> anyhow::Result<bool> {
         } else {
             std::fs::write(&gz_path, olr_oracle::gzip(&a))?;
             println!("ok   {name}: recorded {} frames", ta.frames.len());
+            remove_work(&work);
         }
     }
     Ok(ok)

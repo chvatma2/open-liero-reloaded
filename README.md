@@ -399,7 +399,10 @@ olr-cli level preview my-level --out preview.png --scale 2
   old incremental sessions) and prunes the images (never `content/packs` or
   `target/olx`); `cargo xtask tidy --docker-cache` also bounds Docker's build
   cache to 2 GB, which is machine-wide (other projects' build layers too),
-  so it is opt-in. `check` runs the same sweep when `target/` passes 20 GB.
+  so it is opt-in. `check` runs the same sweep every time; it also drops the
+  incremental caches of crates not compiled for a week, keeps the newest two
+  release versions in `target/release-zips`, and removes `~/.cache/olr-*-target`
+  build directories unused for a week.
   (WSL's disk file does not shrink by itself; `wsl --manage <distro>
   --set-sparse true` after `wsl --shutdown` helps.)
 
