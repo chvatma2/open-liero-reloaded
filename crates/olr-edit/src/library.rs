@@ -601,14 +601,6 @@ pub fn export(dir: &Path, back_tile: BackTile) -> Result<Vec<u8>, LibraryError> 
     archive::encode_level_export(&DirFs::new(dir)).map_err(|e| bad(e.to_string()))
 }
 
-/// The number of library assets (origin not `Own`) and own assets of
-/// `pack`'s placement but the ground: what an export carries.
-pub fn asset_counts(pack: &Pack) -> (usize, usize) {
-    let Some(p) = placement(pack) else { return (0, 0) };
-    let linked = p.file.assets.iter().filter(|a| a.origin != AssetOrigin::Own).count();
-    (linked, p.file.assets.len() - linked)
-}
-
 /// A temporary folder of its own, removed when dropped.
 struct Scratch(PathBuf);
 
