@@ -21,6 +21,7 @@ mod mods;
 mod new;
 mod pack;
 mod pixelate;
+mod placed;
 mod skin;
 mod surface;
 mod surface_ops;
