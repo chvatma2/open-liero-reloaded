@@ -118,7 +118,9 @@ and the colour image that follows it (`ColorMap`).
   glows mask × strength (`live_glow`, the bake's `glow_value`) in its
   groups and is 1 in `live_solid()` (the renderer's solid map: it
   occludes light and takes soak); a background part shows where the
-  ground is background and no rock part is, its alpha × `alpha` laid
+  ground is background, over the parts drawn before it (stack order, as
+  the bake: one over a rock part is the topmost there and clears
+  `live_solid()` where its centre art pixel shows), its alpha × `alpha` laid
   over straight (the bake's `glass_over`; opacity alone never over a
   see-through pixel), its glow over the ground's where it shows, its
   group at a world pixel's centre art pixel. `flip` mirrors the picture
