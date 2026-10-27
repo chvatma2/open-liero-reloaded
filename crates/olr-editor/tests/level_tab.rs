@@ -3,7 +3,7 @@
 //! unsaved step, "Edit Ground", on a switch to the level tab, Play or the
 //! asset tab's Save.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
@@ -13,7 +13,7 @@ use olr_editor::tools::{Overlay, PointerKind, Tool};
 use olr_editor::ui::{self, EditorData, labels};
 use olr_editor::{DocTab, EditorAction as A, EditorCommand as C, EditorState, Selection};
 
-use crate::common::{content, copy_pack, edit_ground, editor, editor_at, run, tree};
+use crate::common::{built_in_assets, catalog, content, copy_pack, edit_ground, editor, editor_at, fixture, run, tree};
 
 struct App {
     state: EditorState,
@@ -371,5 +371,66 @@ fn every_shipped_level_saves_byte_identical() {
         for (name, bytes) in &want {
             assert!(&got[name] == bytes, "{}: {name} differs", level.display());
         }
+    }
+}
+
+// Issue #82: the level tab places copies.
+
+/// The fixture with copies placed by `olr_edit::placed`, baked and saved:
+/// a built-in ceiling lamp at (40, 30), a torch stretched to twice its
+/// width at (200, 100), and the strip light as the level's own at (300,
+/// 50).
+fn placed_level(root: &Path) -> (tempfile::TempDir, PathBuf) {
+    use olr_edit::placed::{Size, add_copy, bake_pack, resize_copy};
+    use olr_format::levels::AssetOrigin;
+    let (tmp, dir) = copy_pack(root, &fixture());
+    let mut pack = olr_edit::pack::load(&dir).unwrap();
+    let lib = built_in_assets();
+    let read = |id: &str| olr_edit::asset::read_dir(&lib.join(id)).unwrap();
+    let builtin = |id: &str| AssetOrigin::Builtin(id.into());
+    add_copy(&mut pack, &read("ceiling-lamp"), builtin("ceiling-lamp"), (40, 30), None, None).unwrap();
+    let torch = add_copy(&mut pack, &read("torch"), builtin("torch"), (200, 100), None, None).unwrap();
+    resize_copy(&mut pack, &torch.id, Size::Width(28)).unwrap();
+    add_copy(&mut pack, &read("strip-light"), AssetOrigin::Own, (300, 50), None, None).unwrap();
+    bake_pack(&mut pack, &catalog(root).themes[0].back_tile).unwrap();
+    olr_edit::pack::save(&dir, &pack).unwrap();
+    (tmp, dir)
+}
+
+fn copy_ids(s: &EditorState) -> Vec<String> {
+    s.document().unwrap().copies().into_iter().map(|c| c.id).collect()
+}
+
+#[test]
+fn a_placed_level_opens_whole() {
+    let Some(root) = content() else { return };
+    let (_t, dir) = placed_level(&root);
+    let (_t2, s) = editor_at(&root, &dir);
+    assert!(!s.dirty(), "{:?}", s.status().message);
+    assert_eq!(copy_ids(&s), ["ground", "ceiling-lamp", "torch", "strip-light"]);
+    let doc = s.document().unwrap();
+    use olr_format::levels::AssetOrigin;
+    assert_eq!(doc.copy_origin("torch"), Some(AssetOrigin::Builtin("torch".into())));
+    assert_eq!(doc.copy_origin("strip-light"), Some(AssetOrigin::Own));
+    assert_eq!(doc.copy_box("torch").map(|b| b.1), Some((28, 32)));
+    assert_eq!(ids(&s), ["base", "tiny", "gradient", "badge", "tunnels", "wall"], "the ground's layers");
+    // The bake is the placement's, byte for byte.
+    let pack = olr_edit::pack::load(&dir).unwrap();
+    let olr_edit::pack::Source::Level(stored) = &pack.source else { panic!() };
+    let l = doc.level();
+    assert!(l.material == stored.material, "material");
+    assert!(l.front == stored.front, "front");
+    assert!(l.back == stored.back, "back");
+    assert_eq!(doc.placed_look(), Some(&stored.look), "the gathered look");
+    assert_eq!(doc.playable().glow, stored.glow);
+    // Saved unchanged, its files as they were.
+    let out = tempfile::tempdir().unwrap();
+    let to = out.path().join("level");
+    std::fs::create_dir_all(&to).unwrap();
+    olr_edit::pack::save(&to, &doc.to_pack()).unwrap();
+    let (want, got) = (tree(&dir), tree(&to));
+    assert_eq!(want.keys().collect::<Vec<_>>(), got.keys().collect::<Vec<_>>());
+    for (name, bytes) in &want {
+        assert!(&got[name] == bytes, "{name} differs");
     }
 }

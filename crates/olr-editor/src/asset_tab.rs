@@ -303,6 +303,8 @@ impl Document {
             asset: Some(Box::new(parts)),
             canvas_look: None,
             ground: false,
+            copy_cache: Default::default(),
+            placed_look: None,
         };
         doc.rebake(doc.all());
         Ok(doc)

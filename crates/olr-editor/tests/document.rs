@@ -672,18 +672,3 @@ fn opening_a_02_level_converts_it_unsaved() {
         assert!(saved.get(f) == original.get(f), "{f} as the converted fixture's");
     }
 }
-
-#[test]
-fn a_level_with_placed_assets_is_refused_with_the_reason() {
-    let Some(root) = content() else { return };
-    let (_tmp, dir) = copy_pack(&root, &fixture());
-    let path = dir.join(olr_format::levels::PLACED_FILE);
-    let text = std::fs::read_to_string(&path).unwrap();
-    let mut placed: olr_format::levels::PlacedFile =
-        olr_format::ron_io::from_canonical(olr_format::levels::PLACED_FILE, &text).unwrap();
-    placed.copies.push(olr_format::levels::PlacedCopy::new("ground-2", "ground", (10, 10)));
-    let text = olr_format::ron_io::to_canonical(olr_format::levels::PLACED_FILE, &placed).unwrap();
-    std::fs::write(&path, text).unwrap();
-    let e = Document::open(olr_edit::pack::load(&dir).unwrap(), dir, &catalog(&root)).unwrap_err();
-    assert_eq!(e.to_string(), olr_editor::document::PLACED_ASSETS);
-}

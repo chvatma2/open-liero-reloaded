@@ -118,6 +118,8 @@ impl Document {
             asset: None,
             canvas_look: None,
             ground: true,
+            copy_cache: Default::default(),
+            placed_look: None,
         };
         doc.rebake(doc.all());
         doc

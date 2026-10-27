@@ -144,6 +144,43 @@ pub enum Edit {
         before: Box<GroundSnap>,
         after: Box<GroundSnap>,
     },
+    /// Issue #82: the level's placement (its copies, their scripts, and the
+    /// asset copies a side holds that the other does not), before and
+    /// after (assets shared, counted once by address).
+    Placement {
+        before: Arc<PlacementSnap>,
+        after: Arc<PlacementSnap>,
+    },
+}
+
+/// A side of `Edit::Placement` (issue #82): the placement's file and the
+/// copies' scripts, and the asset copies this side has that the other
+/// lacks or holds otherwise (never the ground: its layers are the items).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlacementSnap {
+    pub file: olr_format::levels::PlacedFile,
+    pub scripts: BTreeMap<String, String>,
+    pub assets: BTreeMap<String, Arc<olr_format::assets::AssetSource>>,
+}
+
+impl PlacementSnap {
+    /// The bytes it holds besides its assets, roughly.
+    fn bytes(&self) -> usize {
+        std::mem::size_of::<PlacementSnap>()
+            + self.file.copies.len() * std::mem::size_of::<olr_format::levels::PlacedCopy>()
+            + self.file.copies.iter().map(|c| c.id.len() + c.asset.len()).sum::<usize>()
+            + self.scripts.values().map(String::len).sum::<usize>()
+    }
+
+    /// Its assets, by address, with their bytes.
+    fn shared(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        self.assets.values().map(|a| {
+            let bytes = a.files.values().map(Vec::len).sum::<usize>()
+                + a.sounds.values().map(|s| s.len()).sum::<usize>()
+                + a.thumb.as_ref().map_or(0, Vec::len);
+            (Arc::as_ptr(a) as usize, bytes)
+        })
+    }
 }
 
 /// The level's ground as the level holds it (issue #81): what the asset
@@ -364,6 +401,7 @@ impl Edit {
             Edit::States { before, after } => before == after,
             Edit::Parts { before, after } => before == after,
             Edit::Ground { before, after } => before == after,
+            Edit::Placement { before, after } => before.file == after.file && before.scripts == after.scripts,
             Edit::Look { before, after } => before == after,
             Edit::Haze { before, after, .. } => before == after,
             Edit::GlowMask { before, after, .. } | Edit::SurfaceMap { before, after, .. } => before == after,
@@ -404,6 +442,8 @@ impl Edit {
             Edit::Parts { before, after } => before.bytes() + after.bytes(),
             // Grids, masks, maps and originals count once each (`grids`).
             Edit::Ground { before, after } => before.bytes() + after.bytes(),
+            // Assets count once each, by address (`grids`).
+            Edit::Placement { before, after } => before.bytes() + after.bytes(),
         }
     }
 
@@ -422,6 +462,7 @@ impl Edit {
             Edit::States { before, after } => before.pictures().chain(after.pictures()).collect(),
             Edit::Parts { before, after } => before.sounds().chain(after.sounds()).collect(),
             Edit::Ground { before, after } => before.shared().chain(after.shared()).collect(),
+            Edit::Placement { before, after } => before.shared().chain(after.shared()).collect(),
             Edit::Layer { before, after, .. } => grids([&**before, &**after].into_iter()).collect(),
             Edit::GlowMask { before, after, .. } | Edit::SurfaceMap { before, after, .. } => {
                 before.iter().chain(after).map(mask).collect()

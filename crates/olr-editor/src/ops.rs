@@ -1594,7 +1594,13 @@ impl Document {
     pub fn apply(&mut self, edit: &Edit, forward: bool) -> Rect {
         self.bake_generation += 1;
         self.touch(edit);
+        // Issue #82: a ground copy laid otherwise than as the level's is
+        // laid again after any change of the ground.
+        if !matches!(edit, Edit::Placement { .. }) {
+            self.copy_cache.ground += 1;
+        }
         let dirty = match edit {
+            Edit::Placement { before, after } => self.set_placement(if forward { after } else { before }),
             Edit::Show { before, after } => {
                 if self.show_state(if forward { *after } else { *before }) {
                     self.all()

@@ -14,10 +14,10 @@ use olr_edit::compose::{
 };
 use olr_edit::folders;
 use olr_edit::level::refresh_thumb;
-use olr_edit::pack::{NOT_THE_GROUND_ALONE, Pack, Source, Verbatim};
+use olr_edit::pack::{Pack, Source, Verbatim};
 use olr_format::levels::{
     Composition, CompositionSource, Element, ElementKind, Folder, GlowBeamMap, GlowLayers, LevelObject,
-    LevelSource, PlacedSource, check_composition, check_elements, element_box, glow_file, image_file,
+    GROUND_KEY, LevelSource, PlacedSource, check_composition, check_elements, element_box, glow_file, image_file,
     surface_back_file, surface_file, surface_map_size,
 };
 use olr_pack::Severity;
@@ -62,10 +62,6 @@ pub enum DocError {
 
 /// The status bar's note on a level `open` converted (issue #74).
 pub const CONVERTED: &str = "Converted from OLR 0.2: save to keep it";
-
-/// Why `open` refuses a level placing assets besides its ground (issue
-/// #74; issue #82's level tab will open it).
-pub const PLACED_ASSETS: &str = "This level has placed assets: the level tab opens it (issue #82)";
 
 /// The open level pack.
 pub struct Document {
@@ -140,6 +136,13 @@ pub struct Document {
     /// Issue #81: the asset tab's copy of a level's ground
     /// (`Document::ground_of`), painted there and applied to the level.
     pub(crate) ground: bool,
+    /// Issue #82: the copies laid and the assets decoded, cached.
+    pub(crate) copy_cache: crate::copies::CopyCache,
+    /// Issue #82: while the level places copies besides its plain ground,
+    /// the look it is baked, played and saved with (its own settings, the
+    /// copies' groups and materials gathered); `level.look` stays its own
+    /// (the ground's groups and materials).
+    pub(crate) placed_look: Option<Option<olr_format::look::LookSource>>,
 }
 
 /// What a plain level brought that its layers cannot bake.
@@ -159,7 +162,7 @@ fn group_ids(l: &LevelSource) -> Vec<String> {
 }
 
 /// The see-through (alpha 0) back art pixels within world rectangle `r`.
-fn holes(back: &RgbaImage, r: Rect, s: u32) -> u64 {
+pub(crate) fn holes(back: &RgbaImage, r: Rect, s: u32) -> u64 {
     let (w, h) = (back.width(), back.height());
     let x1 = r.x.saturating_add(r.w).saturating_mul(s).min(w);
     let y1 = r.y.saturating_add(r.h).saturating_mul(s).min(h);
@@ -188,6 +191,7 @@ pub struct PackSnapshot {
     rebaked: bool,
     glow_masks: GlowMasks,
     surface_maps: PaintedSurfaces,
+    placed_look: Option<Option<olr_format::look::LookSource>>,
 }
 
 impl PackSnapshot {
@@ -206,6 +210,7 @@ impl PackSnapshot {
             self.rebaked,
             &self.glow_masks,
             &self.surface_maps,
+            self.placed_look.as_ref(),
         )
     }
 }
@@ -225,6 +230,7 @@ fn pack_of(
     rebaked: bool,
     glow_masks: &GlowMasks,
     surface_maps: &PaintedSurfaces,
+    placed_look: Option<&Option<olr_format::look::LookSource>>,
 ) -> Pack {
     let mut files = BTreeMap::new();
     for i in items {
@@ -257,6 +263,18 @@ fn pack_of(
         }
     }
     let mut level = level.clone();
+    // Issue #82: a level placing copies saves the gathered look, its
+    // ground the level's own groups and materials.
+    let mut placed = placed.clone();
+    if let Some(look) = placed_look {
+        if let Some(g) = placed.as_mut().and_then(|p| p.assets.get_mut(GROUND_KEY)) {
+            g.file.glow_groups = level.look.as_ref().map(|l| l.glow_groups.clone()).unwrap_or_default();
+            g.file.materials = level.look.as_ref().map(|l| l.materials.clone()).unwrap_or_default();
+        }
+        level.look = look.clone();
+    }
+    // A placement without the ground has no composition.
+    let grounded = placed.as_ref().is_none_or(|p| p.file.assets.iter().any(|a| a.key == GROUND_KEY));
     // A look changes the thumbnail too (drawn lit, the user's note
     // 2026-10-19).
     if rebaked || level.look.is_some() {
@@ -285,8 +303,8 @@ fn pack_of(
     Pack {
         manifest: manifest.clone(),
         source: Source::Level(level),
-        composition: Some(CompositionSource { composition, files }),
-        placed: placed.clone(),
+        composition: grounded.then_some(CompositionSource { composition, files }),
+        placed,
         legacy_composition: false,
         other: other.clone(),
         verbatim: verbatim.clone(),
@@ -340,11 +358,27 @@ impl Document {
         if converted {
             olr_edit::placed::from_composition(&mut pack).map_err(|e| DocError::Bad(e.to_string()))?;
         }
-        if pack.ground_refusal() == Some(NOT_THE_GROUND_ALONE) {
-            return Err(DocError::Bad(PLACED_ASSETS.into()));
-        }
         let Pack { manifest, source, composition, placed, other, verbatim, .. } = pack;
-        let Source::Level(level) = source else { return Err(DocError::NotALevel) };
+        let Source::Level(stored_level) = source else { return Err(DocError::NotALevel) };
+        // Issue #82: a level placing more than its ground opens whole: its
+        // ground's layers are the items, its own look the ground's groups
+        // and materials (the bake gathers the copies' again).
+        let mut level = stored_level.clone();
+        let composition = match (composition, &placed) {
+            (Some(c), _) => Some(c),
+            (None, Some(p)) => {
+                let ground = p.assets.get(GROUND_KEY);
+                let (groups, materials) =
+                    ground.map(|g| (g.file.glow_groups.clone(), g.file.materials.clone())).unwrap_or_default();
+                if level.look.is_some() || !groups.is_empty() || !materials.is_empty() {
+                    let look = level.look.get_or_insert_with(Default::default);
+                    look.glow_groups = groups;
+                    look.materials = materials;
+                }
+                Some(ground.map(olr_edit::pack::ground_composition).unwrap_or_default())
+            }
+            (None, None) => None,
+        };
         let theme = catalog
             .themes
             .iter()
@@ -423,10 +457,13 @@ impl Document {
             asset: None,
             canvas_look: None,
             ground: false,
+            copy_cache: Default::default(),
+            placed_look: None,
         };
+        doc.lay_all()?;
         doc.rebake(doc.all());
         doc.rebaked = (&doc.level.material, &doc.level.front, &doc.level.back)
-            != (&level.material, &level.front, &level.back);
+            != (&stored_level.material, &stored_level.front, &stored_level.back);
         // The look files are baked too (plan 15a): a change of them alone
         // does not touch the thumbnail.
         Ok(doc)
@@ -482,6 +519,11 @@ impl Document {
     /// distant layers makes them again.
     pub fn rebake(&mut self, rect: Rect) {
         self.bake_generation += 1;
+        // Issue #82: a level placing copies bakes them.
+        if self.placed_copies() {
+            return self.rebake_placed(rect);
+        }
+        let rect = self.plain_rect(rect);
         let mut baked = self.baked_elements();
         // Issue #79: an asset's shown state, its values applied where
         // things are.
@@ -695,6 +737,7 @@ impl Document {
             self.rebaked,
             &self.glow_masks,
             &self.surface_maps,
+            self.placed_look.as_ref(),
         )
     }
 
@@ -714,6 +757,7 @@ impl Document {
             rebaked: self.rebaked,
             glow_masks: self.glow_masks.clone(),
             surface_maps: self.surface_maps.clone(),
+            placed_look: self.placed_look.clone(),
         }
     }
 
