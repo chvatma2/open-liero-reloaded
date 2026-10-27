@@ -15,7 +15,8 @@
 #              with its own script;
 #   spot       a rock lamp with a directional background glow (its lens),
 #              the lens's beam direction and spread exposed as beam_dir and
-#              beam_spread (issue #93).
+#              beam_spread, its facing as spot_facing and its lens shown as
+#              lens_on (issue #93).
 # Run from the repository root; OLR picks the binary.
 set -euo pipefail
 OLR=${OLR:-target/debug/olr-cli}
@@ -118,6 +119,8 @@ S value "$A/crate" Wrecked box.visible false
 # The spot: its lens's beam.
 "$OLR" asset expose "$A/spot" beam_dir lens.beam-direction --default 45
 "$OLR" asset expose "$A/spot" beam_spread lens.beam-spread --default 20
+"$OLR" asset expose "$A/spot" spot_facing facing --default false
+"$OLR" asset expose "$A/spot" lens_on lens.visible --default true
 "$OLR" asset check "$A"/*
 
 # The level: a lit cave with a rock floor.

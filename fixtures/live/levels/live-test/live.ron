@@ -449,6 +449,20 @@
                     max: 90,
                     default: 20,
                 ),
+                (
+                    name: "spot_facing",
+                    drives: Facing,
+                    min: 0,
+                    max: 1,
+                    default: 0,
+                ),
+                (
+                    name: "lens_on",
+                    drives: LayerVisible(1),
+                    min: 0,
+                    max: 1,
+                    default: 1,
+                ),
             ],
             pictures: [
                 (
