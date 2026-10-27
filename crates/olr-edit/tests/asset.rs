@@ -1198,7 +1198,7 @@ fn state_values_are_set_and_cleared() {
         StateValue { property: P::GlowColour("lamp".into()), value: V::Colour(colour("#00ff00")) }
     );
     assert_eq!(alarm[1].property, P::GlowStrength("lamp".into()));
-    refused(&a, &["\"Alarm\"", "lamp.glow", "Int"], |a| {
+    refused(&a, &["\"Alarm\"", "lamp.glow", "true is not a whole number"], |a| {
         set_state_value(a, "Alarm", P::GlowStrength("lamp".into()), Some(V::Bool(true)))
     });
     refused(&a, &["lamp.glow", "0 to 100"], |a| {

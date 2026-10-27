@@ -12,8 +12,9 @@ use std::sync::Arc;
 use olr_format::Colour;
 use olr_format::assets::{
     ExposedSource, HealthSource, MAX_ASSET_SOUND_BYTES, MAX_ASSET_SOUNDS, MAX_EXPOSED, MAX_HEALTH,
-    MAX_SCRIPT_BYTES, MAX_SOUND_STEM, MAX_STATES, PropertySource, StateValue, ValueSource, check_asset,
-    check_value, property_key, property_type, valid_exposed_name, valid_sound_name, valid_state_name,
+    MAX_SCRIPT_BYTES, MAX_SOUND_STEM, MAX_STATES, PropertySource, StateValue, ValueKind, ValueSource,
+    check_asset, check_value, property_key, property_type, valid_exposed_name, valid_sound_name,
+    valid_state_name,
 };
 use olr_format::levels::{ElementKind, element_box};
 use olr_format::look::AnimationSource;
@@ -322,6 +323,7 @@ pub fn set_state_value(
         });
     };
     let t = property_type(&file, &property).map_err(|m| bad(format!("state {state:?}: {label}: {m}")))?;
+    of_kind(t.kind, &value).map_err(|m| bad(format!("state {state:?}: {label}: {m}")))?;
     let x = asset.exposed.iter().find(|x| x.property == property);
     let range = t.range.map(|(lo, hi)| x.map_or((lo, hi), |x| (x.min.unwrap_or(lo), x.max.unwrap_or(hi))));
     check_value(t, range, &value, &format!("state {state:?}"), &label).map_err(|e| bad(e.to_string()))?;
@@ -401,6 +403,9 @@ pub fn expose(asset: &mut Asset, mut x: ExposedSource) -> Result<(), AssetError>
         let why = property_type(&file, &x.property).err().unwrap_or_else(|| "not offered".into());
         return Err(bad(format!("{label}: {why}")));
     };
+    if let Some(v) = &x.default {
+        of_kind(offer.kind, v).map_err(|m| bad(format!("{label}'s default: {m}")))?;
+    }
     let key = property_key(&file, &x.property);
     if let Some(e) = asset.exposed.iter().find(|e| property_key(&file, &e.property) == key) {
         let what = match e.property == x.property {
@@ -574,9 +579,26 @@ pub fn set_health(asset: &mut Asset, health: Option<HealthSource>) -> Result<(),
     })
 }
 
+/// Why `v` is not a value of `kind`, if it is not.
+fn of_kind(kind: ValueKind, v: &ValueSource) -> Result<(), String> {
+    if v.kind() == kind {
+        return Ok(());
+    }
+    let what = match kind {
+        ValueKind::Int => "a whole number",
+        ValueKind::Bool => "true or false",
+        ValueKind::Colour => "a colour, #rrggbb",
+        ValueKind::Animation => "an animation, steady or in RON",
+    };
+    Err(format!("{} is not {what}", value_label(v)))
+}
+
+/// A layer property's variant, made from the layer's id.
+type OfLayer = fn(String) -> PropertySource;
+
 /// The layer properties' names in the CLI's syntax (`<layer>.<name>`),
 /// with their variants.
-const LAYER_PROPERTIES: [(&str, fn(String) -> PropertySource); 13] = [
+const LAYER_PROPERTIES: [(&str, OfLayer); 13] = [
     ("x", PropertySource::OffsetX),
     ("y", PropertySource::OffsetY),
     ("visible", PropertySource::LayerVisible),
