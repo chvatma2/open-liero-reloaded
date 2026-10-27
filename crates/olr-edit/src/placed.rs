@@ -282,10 +282,141 @@ fn posed_copy(c: &PlacedCopy, asset: &Asset) -> Result<crate::asset::Posed, Plac
     posed(asset, state, &c.values).map_err(|e| fail(e.to_string()))
 }
 
+/// One piece of a copy laid in the level ([`lay_copy`]): its element (id
+/// `<copy id>.<element id>`, folders folded, distant at the copy's depth),
+/// its data at the level's art scale, its glow mask, painted maps and
+/// opacity. Its glow group and materials are still the asset's ids
+/// ([`CopyIds`] names them in the level).
+#[derive(Clone, Debug, PartialEq)]
+pub struct LaidPiece {
+    pub element: Element,
+    pub decoded: Decoded,
+    pub glow_mask: Option<Arc<Vec<u8>>>,
+    pub surface_map: Option<Arc<Vec<u8>>>,
+    pub back_surface_map: Option<Arc<Vec<u8>>>,
+    pub opacity: u8,
+}
+
+impl LaidPiece {
+    /// Its world box (none for a raster: the level's).
+    pub fn world_box(&self, level: (u32, u32)) -> ((i32, i32), (u32, u32)) {
+        element_box(&self.element.kind, level).unwrap_or(((0, 0), level))
+    }
+}
+
+/// A copy posed and laid in the level (issue #73's steps 1 and 2; issue
+/// #82: the level tab keeps one per copy until the copy or its asset
+/// changes): its pieces bottom to top, and the glow groups and materials
+/// it brings, as posed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LaidCopy {
+    pub pieces: Vec<LaidPiece>,
+    pub groups: Vec<GlowGroupSource>,
+    pub materials: Vec<MaterialSource>,
+}
+
+/// Copy `c` of `asset` posed in its state (none: the asset's start) with
+/// its values (a Live copy as a static one, its `live_refusal` an error
+/// naming it) and laid in a level of art scale `s` ([`bake`]'s placing):
+/// each piece's box mapped by the copy's stretch, its data resampled
+/// nearest, folders folded, ids `<copy id>.<element id>`, distant at the
+/// copy's depth. A piece stretched to nothing is left out.
+pub fn lay_copy(c: &PlacedCopy, asset: &Asset, s: u32) -> Result<LaidCopy, PlacedError> {
+    let p = posed_copy(c, asset)?;
+    let frame =
+        Frame { size: asset.size, art_scale: asset.art_scale, at: c.at, to: c.size.unwrap_or(asset.size), s };
+    let folders = Composition { elements: Vec::new(), folders: asset.folders.clone() };
+    let pieces = p
+        .pieces
+        .iter()
+        .filter_map(|pp| {
+            let (e, decoded, [glow_mask, surface_map, back_surface_map]) = lay(pp, &frame)?;
+            let mut element = crate::folders::fold(&folders, &e);
+            element.folder = None;
+            element.id = format!("{}.{}", c.id, element.id);
+            if let Some(depth) = c.distant {
+                element.distant = Some(depth);
+            }
+            Some(LaidPiece { element, decoded, glow_mask, surface_map, back_surface_map, opacity: pp.opacity })
+        })
+        .collect();
+    Ok(LaidCopy { pieces, groups: p.groups, materials: p.materials })
+}
+
+/// How one copy's glow groups and materials are named in the level
+/// ([`gather_copy`]): by their ids in the asset, and a painted value `v`'s
+/// value in the level (`renumber[v]`, 0 for none).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CopyIds {
+    pub groups: BTreeMap<String, String>,
+    pub materials: BTreeMap<String, String>,
+    pub renumber: Vec<u8>,
+    pub groups_renamed: Vec<Renamed>,
+    pub materials_renamed: Vec<Renamed>,
+}
+
+impl CopyIds {
+    /// `e`'s glow group and surfaces named as in the level.
+    pub fn name(&self, e: &mut Element) {
+        if let Some(g) = e.glow.as_mut() {
+            g.group = self.groups.get(g.group.as_str()).map_or(g.group.clone(), |x| x.to_string());
+        }
+        for m in [&mut e.surface, &mut e.back_surface].into_iter().flatten() {
+            *m = self.materials.get(m.as_str()).map_or(m.clone(), |x| x.to_string());
+        }
+    }
+
+    /// Painted map `m` with the level's values (the same map when no value
+    /// changes).
+    pub fn renumbered(&self, m: &Option<Arc<Vec<u8>>>) -> Option<Arc<Vec<u8>>> {
+        let to = |v: &u8| self.renumber.get(usize::from(*v)).copied().unwrap_or(0);
+        m.as_ref().map(|m| {
+            if m.iter().all(|v| to(v) == *v) { m.clone() } else { Arc::new(m.iter().map(to).collect()) }
+        })
+    }
+}
+
+/// Gathers a copy's glow groups and materials (`groups`, `materials`, as
+/// posed) into the level's (`gathered_groups`, `gathered_materials`, in
+/// copy order: [`gather_groups`], [`gather_materials`]): their names
+/// there, the renames listed against copy `copy`.
+pub fn gather_copy(
+    gathered_groups: &mut Vec<GlowGroupSource>,
+    gathered_materials: &mut Vec<MaterialSource>,
+    copy: &str,
+    groups: &[GlowGroupSource],
+    materials: &[MaterialSource],
+) -> CopyIds {
+    let group_ids = gather_groups(gathered_groups, groups);
+    let material_ids = gather_materials(gathered_materials, materials);
+    let renamed = |ids: &[String], olds: Vec<&String>| -> Vec<Renamed> {
+        olds.into_iter()
+            .zip(ids)
+            .filter(|(a, b)| a != b)
+            .map(|(a, b)| Renamed { copy: copy.into(), from: a.clone(), to: b.clone() })
+            .collect()
+    };
+    // A painted value `v` names the asset's `materials[v - 1]`: in the
+    // level, the gathered one of its id.
+    let mut renumber = vec![0u8; 256];
+    for (i, id) in material_ids.iter().enumerate().take(255) {
+        let at = gathered_materials.iter().position(|m| m.id == *id);
+        renumber[i + 1] = at.and_then(|j| u8::try_from(j + 1).ok()).unwrap_or(0);
+    }
+    CopyIds {
+        groups_renamed: renamed(&group_ids, groups.iter().map(|g| &g.id).collect()),
+        materials_renamed: renamed(&material_ids, materials.iter().map(|m| &m.id).collect()),
+        groups: groups.iter().map(|g| g.id.clone()).zip(group_ids).collect(),
+        materials: materials.iter().map(|m| m.id.clone()).zip(material_ids).collect(),
+        renumber,
+    }
+}
+
 /// Bakes the placement `src` into `level`'s play files (issue #73):
 /// checked first (`check_placed`, then each asset decoded: `Own` ones by
 /// `check_own_asset`, library copies by `check_asset`); each copy posed
-/// in its state (none: the asset's start) with its values (a Live copy as a static one, its
+/// and laid ([`lay_copy`]: in its state (none: the asset's start) with its
+/// values (a Live copy as a static one, its
 /// `live_refusal` an error naming it); placed in level coordinates (art
 /// resampled nearest from the asset's art scale to the level's; a box
 /// `[b, b + n)` of an asset `w` wide placed `W` wide becoming `[at +
@@ -294,7 +425,7 @@ fn posed_copy(c: &PlacedCopy, asset: &Asset) -> Result<crate::asset::Posed, Plac
 /// zero; a distant copy's pieces distant at its depth); flattened, every
 /// distant piece first, then the others, in copy order then piece order,
 /// each element's id `<copy id>.<element id>`; the glow groups and
-/// materials gathered in copy order ([`gather_groups`]: an id kept, shared
+/// materials gathered in copy order ([`gather_copy`]: an id kept, shared
 /// with an equal gathered one, or renamed `<id>-2`, …; the pieces and
 /// painted maps follow) into the level's look (its own settings, the
 /// gathered groups and materials; `LookSource::default()` for a level
@@ -328,62 +459,20 @@ pub fn bake(
     let (mut distant, mut near): (Vec<Flat>, Vec<Flat>) = (Vec::new(), Vec::new());
     for c in &src.file.copies {
         let Some(asset) = assets.get(c.asset.as_str()) else { continue };
-        let p = posed_copy(c, asset)?;
-        // The gathering: the copy's ids in the level's look.
-        let group_ids = gather_groups(&mut groups, &p.groups);
-        let material_ids = gather_materials(&mut materials, &p.materials);
-        let renamed = |ids: &[String], olds: Vec<&String>| -> Vec<Renamed> {
-            olds.into_iter()
-                .zip(ids)
-                .filter(|(a, b)| a != b)
-                .map(|(a, b)| Renamed { copy: c.id.clone(), from: a.clone(), to: b.clone() })
-                .collect()
-        };
-        baked.groups_renamed.extend(renamed(&group_ids, p.groups.iter().map(|g| &g.id).collect()));
-        baked.materials_renamed.extend(renamed(&material_ids, p.materials.iter().map(|m| &m.id).collect()));
-        let group_of: BTreeMap<&str, &str> =
-            p.groups.iter().map(|g| g.id.as_str()).zip(group_ids.iter().map(String::as_str)).collect();
-        let material_of: BTreeMap<&str, &str> =
-            p.materials.iter().map(|m| m.id.as_str()).zip(material_ids.iter().map(String::as_str)).collect();
-        // A painted value `v` names the asset's `materials[v - 1]`: in the
-        // level, the gathered one of its id.
-        let mut renumber = [0u8; 256];
-        for (i, id) in material_ids.iter().enumerate().take(255) {
-            let at = materials.iter().position(|m| m.id == *id);
-            renumber[i + 1] = at.and_then(|j| u8::try_from(j + 1).ok()).unwrap_or(0);
-        }
-        let frame = Frame {
-            size: asset.size,
-            art_scale: asset.art_scale,
-            at: c.at,
-            to: c.size.unwrap_or(asset.size),
-            s,
-        };
-        let folders = Composition { elements: Vec::new(), folders: asset.folders.clone() };
-        for pp in &p.pieces {
-            let Some((mut e, decoded, [glow_mask, front, back])) = lay(pp, &frame) else { continue };
-            e = crate::folders::fold(&folders, &e);
-            e.folder = None;
-            e.id = format!("{}.{}", c.id, e.id);
-            if let Some(g) = e.glow.as_mut() {
-                g.group = group_of.get(g.group.as_str()).map_or(g.group.clone(), |x| x.to_string());
-            }
-            for m in [&mut e.surface, &mut e.back_surface].into_iter().flatten() {
-                *m = material_of.get(m.as_str()).map_or(m.clone(), |x| x.to_string());
-            }
-            let remap = |m: Option<Arc<Vec<u8>>>| {
-                m.map(|m| Arc::new(m.iter().map(|v| renumber[usize::from(*v)]).collect::<Vec<u8>>()))
-            };
-            if let Some(depth) = c.distant {
-                e.distant = Some(depth);
-            }
+        let laid = lay_copy(c, asset, s)?;
+        let ids = gather_copy(&mut groups, &mut materials, &c.id, &laid.groups, &laid.materials);
+        baked.groups_renamed.extend(ids.groups_renamed.iter().cloned());
+        baked.materials_renamed.extend(ids.materials_renamed.iter().cloned());
+        for piece in laid.pieces {
+            let mut e = piece.element;
+            ids.name(&mut e);
             let flat = Flat {
                 element: e,
-                decoded,
-                glow_mask,
-                surface_map: remap(front),
-                back_surface_map: remap(back),
-                opacity: pp.opacity,
+                decoded: piece.decoded,
+                glow_mask: piece.glow_mask,
+                surface_map: ids.renumbered(&piece.surface_map),
+                back_surface_map: ids.renumbered(&piece.back_surface_map),
+                opacity: piece.opacity,
             };
             if flat.element.is_distant() { distant.push(flat) } else { near.push(flat) }
         }
