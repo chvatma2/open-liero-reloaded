@@ -325,6 +325,14 @@ The headless command-line tool. Its commands:
   `cli_saves_and_places_an_asset`: `asset save`, then `level copy add`,
   the copy's folder the saved one but its thumbnail, and a multi-piece
   asset one copy).
+- `olr-cli level check-scripts <pack>` (issue #89, `level_cmd.rs`): the
+  name checks of every script the level runs (`olr_edit::scripts::problems`:
+  the level script, each live copy's default and own script), one line a
+  problem (`crane's script, line 3: copy crane has no exposed value
+  "claw"`), exit 1 when there is one; else `<pack>: N scripts, no
+  problems`. `pack::save` refuses such a level, so a `level copy` or
+  `level script` edit that breaks a script is refused with them. Test:
+  `tests/copy.rs`' `cli_check_scripts_passes_on_the_fixture_and_names_a_broken_line`.
 - `olr-cli level library <pack> [--content DIR] [--user DIR]`, `level
   library update <pack> (<key>… | --all) [--force]`, `level library
   restore <pack> <key>`, `level library adopt <pack> <key>`, `level
@@ -518,8 +526,11 @@ The headless command-line tool. Its commands:
 - `olr-cli match --mod <id> --level <id> [--mode deathmatch] --bots N
   [--locals L] [--difficulty easy|medium|hard|xtreme|mixed] [--personality dm|chaos|idle]
   --seed S --ticks T [--bonus-frequency F] [--kill-limit K] [--time-limit M]
-  [--record f] [--coverage] [--no-verify] [--failures DIR] [--p99-budget-ms B]`
-  plays a headless Deathmatch of bots (spec §7.1); `--locals L` (issue
+  [--record f] [--coverage] [--no-verify] [--failures DIR] [--p99-budget-ms B]
+  [--packs DIR]…` plays a headless Deathmatch of bots (spec §7.1); issue
+  #89's `--packs` lays each directory over the content (the first on top,
+  as `render-match`'s; the live goldens' `fixtures/live/levels`; not in
+  the spec: the golden test opens its content itself); `--locals L` (issue
   #29, 0 to `spec::MAX_LOCALS` 4, also `render-match`'s, where each has
   its crosshair) puts L local human players first (worms 0 to L - 1,
   random weapons as `Player::Human`, the replay's local slots; at least 2
@@ -536,7 +547,8 @@ The headless command-line tool. Its commands:
   `buried_in_rock`), the end, p50/p99/max tick time (bots + sim), the bots'
   work units; then plays it again (determinism) and replays its recording
   from the content (round trip). `--coverage` prints weapons fired, actions
-  triggered, events, bonuses, rope attachments and kills by the killer's
+  triggered, events (`coverage::EVENT_KINDS`, issue #89's `LiveArrived`
+  among them), bonuses, rope attachments and kills by the killer's
   selected weapon. A failure (a panic in a bot or the tick, an invariant, a
   budget, a divergence) writes `<stem>.olrp` and `<stem>.ron` (the spec, so
   the seed, and the tick) to `target/failures/` (spec §7.3) and exits 1.
@@ -1199,8 +1211,14 @@ every tick or once, and nothing hot without the bullets' heat; both play
 through `HeatMatch`) runs in `cargo xtask full` and `check
 --render` (`OLR_GPU_TESTS=1`). `tests/matches.rs` (two 8-bot matches, determinism and
 round trip; failure capture through the binary) and `tests/golden.rs` (the
-golden checksum streams in `fixtures/matches/`; accept a change with `cargo
-xtask bless-regression --reason "<why>"`) run in `check`; `tests/grid.rs`
+golden checksum streams in `fixtures/matches/`; issue #89's
+`live_golden_match_checksums`: those of `fixtures/matches-live/` (Classic,
+4 Deathmatch bots on `fixtures/live/levels`' live-test, 3000 ticks, its
+scripts running) on the fixture levels laid over the content
+(`Content::open_layers`), each also `verify`d (determinism and the replay
+round trip) and its coverage asserting state changes, arrivals and no
+script error; accept a change with `cargo xtask bless-regression --reason
+"<why>"`, which records both directories) run in `check`; `tests/grid.rs`
 (both mods × 4 levels × 3 seeds, chaos and Deathmatch bots, every weapon and
 action kind covered; `long_bot_match_bounded`, 30 minutes) runs in `full`
 (`OLR_FULL_TESTS=1`).

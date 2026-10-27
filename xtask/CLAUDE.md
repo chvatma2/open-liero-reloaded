@@ -535,8 +535,10 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   goldens) and `fixtures/ui/` (the HUD snapshots, `olr-ui`'s
   `hud_snapshots`) with `OLR_BLESS_RENDER=1`; the GPU ones need an adapter.
 - `bless-regression --reason <why> [--from target/failures/<name>.ron]`
-  re-records `fixtures/matches/*.ron` (runs `olr-cli --test golden` with
-  `OLR_BLESS_REGRESSION=1`); `--from` first copies a failure record in as a
+  re-records `fixtures/matches/*.ron` and issue #89's live goldens,
+  `fixtures/matches-live/*.ron` (runs `olr-cli --test golden` with
+  `OLR_BLESS_REGRESSION=1`; both directories snapshotted and logged,
+  `DIRS`); `--from` first copies a failure record in as a
   new golden; a `net-*.ron` record (`olr-cli net-sim`'s) is kept in
   `fixtures/net/cases/` instead (logged with the reason) and `olr-cli --test
   net_cases` runs. Like `bless-render`, it appends the date, the reason and the
@@ -619,6 +621,11 @@ difference). No leg flag means the WASM leg; a flag runs that leg only.
   `aarch64-unknown-linux-gnu` (linker `aarch64-linux-gnu-gcc`, `.cargo/config.toml`)
   under `qemu-aarch64 -L /usr/aarch64-linux-gnu`. Needs `sudo apt install
   qemu-user gcc-aarch64-linux-gnu` and the rustup target.
+Issue #89: every live golden of `fixtures/matches-live/` (`LIVE_MATCHES`)
+is replayed too, in `check` and on every leg, recorded with `--packs
+fixtures/live/levels` and replayed with two `--content` roots
+(`LIVE_LEVELS` laid over the content, `contents`); the Windows leg stages
+the levels as `live-levels/`, WASI reads them preopened.
 Every leg also passes `--bake fixtures/edit/composed-level` (`BAKE`;
 WASI `/fixtures/…`, Windows a copy in the stage's `bake/`), so the last
 line, the level composition's bake digest (plan 14a), must be equal too.

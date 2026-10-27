@@ -9,6 +9,10 @@ when a replay's own recorded checksums do not match. `--bake <pack dir>`
 level's bake (`material.png`, `front.png`, `back.png` as `write_level_files`
 encodes them, each prefixed with its 8-byte little-endian length), the
 back tile from `--content`; without replays it prints only that line.
+Issue #89: `--content` given more than once lays the roots over each
+other (`Content::open_layers`, the first on top), as `olr-cli match
+--packs` does: the live goldens' fixture levels over the content; the
+bake's back tile comes from the last root.
 
 `cargo xtask determinism` records golden bot matches natively and compares
 this tool's stream on native Linux with WASI (`wasm32-wasip1` under Node.js,
