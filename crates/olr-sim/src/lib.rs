@@ -61,8 +61,8 @@ pub use events::{
 };
 pub use input::{KeyLatch, Keys, Latches};
 pub use live::{
-    LIVE_SUBPIXELS, LiveCopy, LiveCopySetup, LiveCopyView, LiveError, LiveHealth, LiveLevel, LivePart,
-    LivePartKind, LiveProp, LiveSolid, LiveState, LiveTarget, LiveView, LiveWire,
+    LIVE_SUBPIXELS, LiveCopy, LiveCopySetup, LiveCopyView, LiveError, LiveHealth, LiveLevel, LiveMotion,
+    LivePart, LivePartKind, LiveProp, LiveSolid, LiveState, LiveTarget, LiveView, LiveWire, MAX_MOTION_SPEED,
 };
 pub use mod_rt::{
     MAX_AMOUNT, MAX_DEPTH, MAX_PROJECTILES, SimMod, SimModError, SimProjectile, SimWeapon, SpawnInfo,

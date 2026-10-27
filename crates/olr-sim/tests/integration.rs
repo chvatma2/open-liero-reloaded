@@ -15,6 +15,7 @@ mod live_level;
 mod director;
 
 mod live;
+mod motion;
 mod script;
 mod snapshot;
 mod state;

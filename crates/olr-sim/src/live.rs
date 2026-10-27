@@ -14,7 +14,9 @@
 //! Issue #86 puts the copies in the world: [`LiveWorld`] holds each
 //! copy's state and values (cloned for rollback, hashed after the rest of
 //! the world, transferred as [`LiveWire`]); [`LiveView`] reads them.
-//! Nothing moves and nothing reads the parts yet (#89-#91).
+//! Issue #89 adds motions ([`LiveMotion`]): a position-like value moving
+//! towards a target at a speed, once a tick before the physics. Nothing
+//! reads the parts yet (#90, #91).
 
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -175,6 +177,16 @@ pub struct LiveCopy {
     prop_names: Vec<(String, u16)>,
 }
 
+/// [`LiveWorld::parts_mut`]: the world's live buffers, the scripts' part
+/// mutable.
+pub(crate) struct LiveParts<'a> {
+    pub states: &'a [u16],
+    pub values: &'a [i64],
+    pub motions: &'a [LiveMotion],
+    pub offsets: &'a [u32],
+    pub script: &'a mut Option<ScriptWorld>,
+}
+
 /// What a live copy holds, before its lookup tables are made.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LiveCopySetup {
@@ -303,6 +315,27 @@ impl LiveTarget {
     }
 }
 
+/// The fastest a motion moves its value (issue #89): 8 world pixels a
+/// tick, in 1/[`LIVE_SUBPIXELS`] pixel. A faster speed is clamped to it.
+pub const MAX_MOTION_SPEED: i64 = 8 * LIVE_SUBPIXELS;
+
+/// A position-like value's motion (issue #89): towards `target` (the
+/// world's units, within the value's limits) by `speed` (1/
+/// [`LIVE_SUBPIXELS`] pixel a tick, 1 to [`MAX_MOTION_SPEED`]) once a
+/// tick. `speed` 0 (and `target` 0) is a value that does not move.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LiveMotion {
+    pub target: i64,
+    pub speed: i64,
+}
+
+impl LiveMotion {
+    /// Whether the value moves.
+    pub fn moving(self) -> bool {
+        self.speed != 0
+    }
+}
+
 /// `v` within `min..=max`, never a panic (`i64::clamp` panics when `min >
 /// max`: a broken setup keeps `max`).
 fn within(v: i64, min: i64, max: i64) -> i64 {
@@ -312,7 +345,7 @@ fn within(v: i64, min: i64, max: i64) -> i64 {
 impl LiveCopy {
     /// Value `prop`'s limits in the world's units: its prop's, a position
     /// in 1/[`LIVE_SUBPIXELS`] pixel, `Health` also within `0..=points`.
-    fn limits(&self, prop: &LiveProp) -> (i64, i64) {
+    pub fn limits(&self, prop: &LiveProp) -> (i64, i64) {
         let (mut min, mut max) = (prop.target.scale(prop.min), prop.target.scale(prop.max));
         if prop.target == LiveTarget::Health
             && let Some(h) = self.health
@@ -346,6 +379,8 @@ pub enum LiveError {
     NoState { copy: u16, state: u16 },
     /// The copy has no such value.
     NoProp { copy: u16, prop: u16 },
+    /// The copy's value is not position-like: it cannot move (#89).
+    NotPosition { copy: u16, prop: u16 },
 }
 
 impl fmt::Display for LiveError {
@@ -354,15 +389,19 @@ impl fmt::Display for LiveError {
             LiveError::NoCopy(c) => write!(f, "no live copy {c}"),
             LiveError::NoState { copy, state } => write!(f, "live copy {copy} has no state {state}"),
             LiveError::NoProp { copy, prop } => write!(f, "live copy {copy} has no value {prop}"),
+            LiveError::NotPosition { copy, prop } => {
+                write!(f, "live copy {copy}'s value {prop} is not a position: it cannot move")
+            }
         }
     }
 }
 
 /// The live copies' part of a world (issue #86): per copy its state and
 /// its values, one `i64` per [`LiveCopy::props`] entry, flat in one
-/// buffer, so nothing a tick does allocates. `LiveWorld` is where #88 adds
-/// script state and #89 motions: each extends this struct, its checksum
-/// ([`LiveWorld::hash`]) and its transfer ([`LiveWire`]).
+/// buffer, so nothing a tick does allocates, and each value's motion
+/// (issue #89) beside it; the scripts' state (issue #88). Each extends
+/// this struct, its checksum ([`LiveWorld::hash`]) and its transfer
+/// ([`LiveWire`]).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LiveWorld {
     /// The setup, shared by every world of the match: never hashed or
@@ -376,6 +415,8 @@ pub(crate) struct LiveWorld {
     /// Every copy's values in the world's units (positions in
     /// 1/[`LIVE_SUBPIXELS`] pixel), within their limits.
     values: Buf<i64>,
+    /// Each value's motion, beside `values` (issue #89).
+    motions: Buf<LiveMotion>,
     /// Setup: where the match's frame clock started (scripts' `time()`).
     pub(crate) start: AbsTime,
     /// The scripts' state (issue #88), present when the setup has a
@@ -402,14 +443,22 @@ impl LiveWorld {
         }
         let mut states = Buf::with_capacity(n);
         states.resize(n, 0);
+        let mut motions = Buf::with_capacity(values.len());
+        motions.resize(values.len(), LiveMotion::default());
         let script = director.map(|d| ScriptWorld::new(d, &level, seed));
-        LiveWorld { level, offsets, states, values, start, script }
+        LiveWorld { level, offsets, states, values, motions, start, script }
     }
 
-    /// Every copy's state, every value, the values' offsets, and the
-    /// scripts' part, borrowed apart.
-    pub(crate) fn parts_mut(&mut self) -> (&[u16], &[i64], &[u32], &mut Option<ScriptWorld>) {
-        (&self.states, &self.values, &self.offsets, &mut self.script)
+    /// Every copy's state, every value and its motion, the values'
+    /// offsets, and the scripts' part, borrowed apart.
+    pub(crate) fn parts_mut(&mut self) -> LiveParts<'_> {
+        LiveParts {
+            states: &self.states,
+            values: &self.values,
+            motions: &self.motions,
+            offsets: &self.offsets,
+            script: &mut self.script,
+        }
     }
 
     /// At setup: every copy enters its starting state (an event each, with
@@ -439,6 +488,12 @@ impl LiveWorld {
     /// Copy `copy`'s values.
     pub(crate) fn values(&self, copy: u16) -> &[i64] {
         &self.values[self.range(copy)]
+    }
+
+    /// Copy `copy`'s values' motions.
+    pub(crate) fn motions(&self, copy: u16) -> &[LiveMotion] {
+        let r = self.range(copy);
+        self.motions.get(r).unwrap_or(&[])
     }
 
     /// Sets value `prop` of `copy` to `v` (the world's units), clamped
@@ -488,22 +543,97 @@ impl LiveWorld {
         Ok(())
     }
 
-    /// [`crate::World::set_live_value`].
+    /// [`crate::World::set_live_value`]: also stops the value's motion
+    /// (a state change does not).
     pub(crate) fn set_value(&mut self, copy: u16, prop: u16, value: i64) -> Result<(), LiveError> {
         let c = self.level.copies.get(usize::from(copy)).ok_or(LiveError::NoCopy(copy))?;
         if usize::from(prop) >= c.props.len() {
             return Err(LiveError::NoProp { copy, prop });
         }
         self.put(copy, prop, value);
+        self.set_motion(copy, prop, LiveMotion::default());
         Ok(())
     }
 
+    fn set_motion(&mut self, copy: u16, prop: u16, m: LiveMotion) {
+        let r = self.range(copy);
+        if let Some(slot) = self.motions.get_mut(r).and_then(|m| m.get_mut(usize::from(prop))) {
+            *slot = m;
+        }
+    }
+
+    /// Value `prop` of `copy` (position-like) starts moving towards
+    /// `target` (the world's units, clamped into its limits) by `speed` a
+    /// tick (clamped into 1..=[`MAX_MOTION_SPEED`]), in place of a motion
+    /// it had (issue #89).
+    pub(crate) fn move_value(
+        &mut self,
+        copy: u16,
+        prop: u16,
+        target: i64,
+        speed: i64,
+    ) -> Result<(), LiveError> {
+        let c = self.level.copies.get(usize::from(copy)).ok_or(LiveError::NoCopy(copy))?;
+        let p = c.props.get(usize::from(prop)).ok_or(LiveError::NoProp { copy, prop })?;
+        if !p.target.is_position() {
+            return Err(LiveError::NotPosition { copy, prop });
+        }
+        let m = LiveMotion { target: c.clamped(p, target), speed: within(speed, 1, MAX_MOTION_SPEED) };
+        self.set_motion(copy, prop, m);
+        Ok(())
+    }
+
+    /// Value `prop` of `copy` stops where it is.
+    pub(crate) fn stop_value(&mut self, copy: u16, prop: u16) -> Result<(), LiveError> {
+        let c = self.level.copies.get(usize::from(copy)).ok_or(LiveError::NoCopy(copy))?;
+        if usize::from(prop) >= c.props.len() {
+            return Err(LiveError::NoProp { copy, prop });
+        }
+        self.set_motion(copy, prop, LiveMotion::default());
+        Ok(())
+    }
+
+    /// The motions' step (issue #89), once a tick before the physics: in
+    /// level and value order, each moving value goes towards its target by
+    /// its speed, clamped into its limits; one that reaches it stops and
+    /// emits [`EventKind::LiveArrived`]. Integers only.
+    pub(crate) fn step_motions(&mut self, events: &mut TickEvents) {
+        if self.motions.iter().all(|m| !m.moving()) {
+            return;
+        }
+        let level = self.level.clone();
+        for (i, c) in level.copies.iter().enumerate() {
+            let Ok(copy) = u16::try_from(i) else { break };
+            let r = self.range(copy);
+            for (k, p) in c.props.iter().enumerate().take(r.len()) {
+                let at = r.start + k;
+                let m = self.motions[at];
+                if !m.moving() {
+                    continue;
+                }
+                let v = self.values[at];
+                let next = if v < m.target {
+                    v.saturating_add(m.speed).min(m.target)
+                } else {
+                    v.saturating_sub(m.speed).max(m.target)
+                };
+                let next = c.clamped(p, next);
+                self.values[at] = next;
+                if next == m.target {
+                    self.motions[at] = LiveMotion::default();
+                    events.push(EventKind::LiveArrived { copy, prop: k as u16 });
+                }
+            }
+        }
+    }
+
     /// The live part of [`crate::World::checksum`]: every copy's state,
-    /// then every value, after their counts.
-    /// then, in a world with scripts (only then, so a level without them
-    /// hashes as before), the scripts' state (issue #88).
+    /// then every value, after their counts; then, in a world with
+    /// scripts (only then, so a level without them hashes as before), the
+    /// scripts' state (issue #88) and every value's motion (issue #89:
+    /// only scripts start one).
     pub(crate) fn hash(&self, h: &mut Fnv) {
-        let LiveWorld { level: _, offsets: _, states, values, start: _, script } = self;
+        let LiveWorld { level: _, offsets: _, states, values, motions, start: _, script } = self;
         h.usize(states.len());
         for &s in states.iter() {
             h.bytes(&s.to_le_bytes());
@@ -514,47 +644,64 @@ impl LiveWorld {
         }
         if let Some(s) = script {
             s.hash(h);
+            for m in motions.iter() {
+                h.u64(m.target as u64);
+                h.u64(m.speed as u64);
+            }
         }
     }
 
     /// The live part of [`crate::World::state`].
     pub(crate) fn wire(&self) -> LiveWire {
-        let LiveWorld { level: _, offsets: _, states, values, start: _, script } = self;
+        let LiveWorld { level: _, offsets: _, states, values, motions, start: _, script } = self;
         LiveWire {
             states: states.to_vec(),
             values: values.to_vec(),
+            motions: motions.to_vec(),
             script: script.as_ref().map(|s| s.wire()),
         }
     }
 
     /// Whether `w` fits this world's setup: as many copies and values,
-    /// each state one of its copy's, each value within its limits, and a
-    /// scripts' part exactly when this world has one, fitting it
-    /// (`ScriptWorld::can_load`).
+    /// each state one of its copy's, each value within its limits, a
+    /// motion per value (a moving one position-like, its target within
+    /// the limits, its speed 1 to [`MAX_MOTION_SPEED`]; none in a world
+    /// without scripts), and a scripts' part exactly when this world has
+    /// one, fitting it (`ScriptWorld::can_load`).
     pub(crate) fn can_load(&self, w: &LiveWire) -> bool {
-        let LiveWire { states, values, script } = w;
+        let LiveWire { states, values, motions, script } = w;
         let script_ok = match (&self.script, script) {
             (None, None) => true,
             (Some(s), Some(w)) => s.can_load(w, &self.level),
             _ => false,
         };
+        let motion_ok = |c: &LiveCopy, p: &LiveProp, m: &LiveMotion| {
+            *m == LiveMotion::default()
+                || (self.script.is_some()
+                    && p.target.is_position()
+                    && (1..=MAX_MOTION_SPEED).contains(&m.speed)
+                    && c.clamped(p, m.target) == m.target)
+        };
         script_ok
             && states.len() == self.states.len()
             && values.len() == self.values.len()
+            && motions.len() == self.values.len()
             && self.level.copies.iter().enumerate().all(|(i, c)| {
                 let Ok(copy) = u16::try_from(i) else { return false };
                 let r = self.range(copy);
                 states.get(i).is_some_and(|&s| usize::from(s) < c.states.len())
                     && r.len() == c.props.len()
-                    && values[r].iter().zip(&c.props).all(|(&v, p)| c.clamped(p, v) == v)
+                    && values[r.clone()].iter().zip(&c.props).all(|(&v, p)| c.clamped(p, v) == v)
+                    && motions[r].iter().zip(&c.props).all(|(m, p)| motion_ok(c, p, m))
             })
     }
 
     /// Takes `w`, checked by [`LiveWorld::can_load`]; keeps every buffer.
     pub(crate) fn load(&mut self, w: LiveWire) {
-        let LiveWire { states, values, script } = w;
+        let LiveWire { states, values, motions, script } = w;
         self.states.copy_from_slice(&states);
         self.values.copy_from_slice(&values);
+        self.motions.copy_from_slice(&motions);
         if let (Some(s), Some(w)) = (&mut self.script, script) {
             s.load(w);
         }
@@ -562,12 +709,13 @@ impl LiveWorld {
 }
 
 /// The live copies' part of a [`crate::WorldState`]: each copy's state and
-/// every value, as [`LiveWorld`] holds them, and the scripts' state in a
-/// world with scripts (issue #88).
+/// every value and its motion (issue #89), as [`LiveWorld`] holds them,
+/// and the scripts' state in a world with scripts (issue #88).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LiveWire {
     states: Vec<u16>,
     values: Vec<i64>,
+    motions: Vec<LiveMotion>,
     script: Option<ScriptWire>,
 }
 
@@ -577,6 +725,15 @@ impl LiveWire {
     #[doc(hidden)]
     pub fn script_mut_for_test(&mut self) -> &mut Option<ScriptWire> {
         &mut self.script
+    }
+
+    /// Sets value `i`'s motion (flat), for tests of
+    /// [`crate::World::load_state`]'s checks.
+    #[doc(hidden)]
+    pub fn edit_motion_for_test(&mut self, i: usize, m: LiveMotion) {
+        if let Some(x) = self.motions.get_mut(i) {
+            *x = m;
+        }
     }
 
     /// Sets copy `copy`'s state and value `i` (flat), for tests of
@@ -626,7 +783,13 @@ impl<'a> LiveView<'a> {
     pub fn copy(&self, copy: u16) -> Option<LiveCopyView<'a>> {
         let setup = self.world.level.copies.get(usize::from(copy))?;
         let state = self.world.states.get(usize::from(copy)).copied().unwrap_or(0);
-        Some(LiveCopyView { index: copy, setup, state, values: self.world.values(copy) })
+        Some(LiveCopyView {
+            index: copy,
+            setup,
+            state,
+            values: self.world.values(copy),
+            motions: self.world.motions(copy),
+        })
     }
 
     /// Copy `id`.
@@ -648,6 +811,7 @@ pub struct LiveCopyView<'a> {
     setup: &'a LiveCopy,
     state: u16,
     values: &'a [i64],
+    motions: &'a [LiveMotion],
 }
 
 /// Whole world pixels of a position in 1/[`LIVE_SUBPIXELS`] pixel, rounded
@@ -692,6 +856,11 @@ impl<'a> LiveCopyView<'a> {
     /// Its value named `name` (an exposed name).
     pub fn value(&self, name: &str) -> Option<i64> {
         self.values.get(usize::from(self.setup.prop(name)?)).copied()
+    }
+
+    /// Its values' motions (issue #89), by [`LiveCopy::props`] index.
+    pub fn motions(&self) -> &'a [LiveMotion] {
+        self.motions
     }
 
     /// The value driving `target` (the first value that does), in the

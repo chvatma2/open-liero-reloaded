@@ -138,6 +138,8 @@ fn class(kind: &EventKind, next: Option<&EventKind>) -> Option<u64> {
         EventKind::LiveState { copy, state } => h.words(&[11, copy.into(), state.into()]),
         // Issue #88: by its script instance.
         EventKind::ScriptError { instance } => h.words(&[12, instance.into()]),
+        // Issue #89: by its copy and value.
+        EventKind::LiveArrived { copy, prop } => h.words(&[13, copy.into(), prop.into()]),
     }
     Some(h.0)
 }

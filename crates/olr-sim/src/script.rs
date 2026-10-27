@@ -30,7 +30,7 @@ use crate::World;
 use crate::buf::Buf;
 use crate::checksum::Fnv;
 use crate::events::{EventKind, TickEvents};
-use crate::live::{LiveLevel, LiveView, LiveWorld};
+use crate::live::{LiveLevel, LiveMotion, LiveParts, LiveView, LiveWorld};
 use crate::worm::Worm;
 
 /// The most timers an instance has at once.
@@ -261,6 +261,13 @@ pub enum LiveCommand {
     SetValue { copy: u16, prop: u16, value: i64 },
     /// Instance `instance` is switched off for the match.
     SwitchOff { instance: u16 },
+    /// Copy `copy`'s position-like value `prop` moves towards `target`
+    /// (the world's units, clamped into its limits) by `speed` a tick
+    /// (1/[`crate::LIVE_SUBPIXELS`] pixel, clamped into 1 to
+    /// [`crate::MAX_MOTION_SPEED`]), in place of its motion (issue #89).
+    Move { copy: u16, prop: u16, target: i64, speed: i64 },
+    /// Copy `copy`'s value `prop` stops moving.
+    Stop { copy: u16, prop: u16 },
 }
 
 /// An event a script's handlers see ([`LiveCtx::events`]): positions in
@@ -271,6 +278,11 @@ pub enum ScriptEvent {
     Entered {
         copy: u16,
         state: u16,
+    },
+    /// Copy `copy`'s value `prop` reached its motion's target (issue #89).
+    Arrived {
+        copy: u16,
+        prop: u16,
     },
     Spawned {
         worm: i32,
@@ -297,6 +309,7 @@ impl ScriptEvent {
         let px = |v: f32| v as i64;
         Some(match *e {
             EventKind::LiveState { copy, state } => ScriptEvent::Entered { copy, state },
+            EventKind::LiveArrived { copy, prop } => ScriptEvent::Arrived { copy, prop },
             EventKind::Spawned { worm } => ScriptEvent::Spawned { worm },
             EventKind::Kill { victim, killer } => ScriptEvent::Killed { victim, killer },
             EventKind::Explosion { pos, damage, .. } => {
@@ -319,12 +332,13 @@ pub struct ScriptPeak {
 }
 
 /// What a run reads of the world, moved into the run's API object and
-/// back (no copy a run): every copy's state and values, the worms, the
-/// clocks. [`LiveCtx::take_reads`] gives it up to date.
+/// back (no copy a run): every copy's state, values and their motions,
+/// the worms, the clocks. [`LiveCtx::take_reads`] gives it up to date.
 #[derive(Clone, Debug, Default)]
 pub struct LiveReads {
     states: Vec<u16>,
     values: Vec<i64>,
+    motions: Vec<LiveMotion>,
     offsets: Vec<u32>,
     worms: Vec<(bool, i64, i64)>,
     /// Milliseconds since the match started (the frame clock).
@@ -341,12 +355,21 @@ impl LiveReads {
         self.states.get(usize::from(copy)).copied().unwrap_or(0)
     }
 
-    /// Copy `copy`'s values in the world's units, by prop index.
-    pub fn values(&self, copy: u16) -> &[i64] {
+    fn span(&self, copy: u16) -> core::ops::Range<usize> {
         let i = usize::from(copy);
         let at = |k: usize| self.offsets.get(k).map_or(0, |&o| o as usize);
         let (s, e) = (at(i), at(i + 1));
-        self.values.get(s..e.max(s)).unwrap_or(&[])
+        s..e.max(s)
+    }
+
+    /// Copy `copy`'s values in the world's units, by prop index.
+    pub fn values(&self, copy: u16) -> &[i64] {
+        self.values.get(self.span(copy)).unwrap_or(&[])
+    }
+
+    /// Copy `copy`'s values' motions, by prop index (issue #89).
+    pub fn motions(&self, copy: u16) -> &[LiveMotion] {
+        self.motions.get(self.span(copy)).unwrap_or(&[])
     }
 
     /// The worms: alive, and their position in whole pixels (truncated).
@@ -354,15 +377,18 @@ impl LiveReads {
         &self.worms
     }
 
-    /// Copies copy `copy`'s state and values from the world's.
-    fn sync_copy(&mut self, states: &[u16], values: &[i64], offsets: &[u32], copy: u16) {
+    /// Copies copy `copy`'s state, values and motions from the world's.
+    fn sync_copy(&mut self, w: &LiveParts<'_>, copy: u16) {
         let i = usize::from(copy);
-        if let (Some(d), Some(&s)) = (self.states.get_mut(i), states.get(i)) {
+        if let (Some(d), Some(&s)) = (self.states.get_mut(i), w.states.get(i)) {
             *d = s;
         }
-        let at = |k: usize| offsets.get(k).map_or(0, |&o| o as usize);
+        let at = |k: usize| w.offsets.get(k).map_or(0, |&o| o as usize);
         let r = at(i)..at(i + 1).max(at(i));
-        if let (Some(d), Some(s)) = (self.values.get_mut(r.clone()), values.get(r)) {
+        if let (Some(d), Some(s)) = (self.values.get_mut(r.clone()), w.values.get(r.clone())) {
+            d.copy_from_slice(s);
+        }
+        if let (Some(d), Some(s)) = (self.motions.get_mut(r.clone()), w.motions.get(r)) {
             d.copy_from_slice(s);
         }
     }
@@ -699,14 +725,16 @@ impl<'a> LiveCtx<'a> {
     /// Makes what a run reads anew from the world (when a run lost it).
     pub fn rebuild_reads(&mut self) {
         let (worms, time_ms, frame, game_over) = (self.worms, self.time_ms, self.frame, self.game_over);
-        let (states, values, offsets, script) = self.live.parts_mut();
-        let r = &mut script.as_mut().expect("a script part").phase.0.reads;
+        let w = self.live.parts_mut();
+        let r = &mut w.script.as_mut().expect("a script part").phase.0.reads;
         r.states.clear();
-        r.states.extend_from_slice(states);
+        r.states.extend_from_slice(w.states);
         r.values.clear();
-        r.values.extend_from_slice(values);
+        r.values.extend_from_slice(w.values);
+        r.motions.clear();
+        r.motions.extend_from_slice(w.motions);
         r.offsets.clear();
-        r.offsets.extend_from_slice(offsets);
+        r.offsets.extend_from_slice(w.offsets);
         r.worms.clear();
         r.worms.extend(worms.iter().map(|w| (w.alive, w.pos.x as i64, w.pos.y as i64)));
         (r.time_ms, r.frame, r.game_over) = (time_ms, frame, game_over);
@@ -857,13 +885,22 @@ impl<'a> LiveCtx<'a> {
                 }
                 ok
             }
+            LiveCommand::Move { copy, prop, target, speed } => {
+                self.live.move_value(copy, prop, target, speed).is_ok()
+            }
+            LiveCommand::Stop { copy, prop } => self.live.stop_value(copy, prop).is_ok(),
         };
         if ok {
             self.commands += 1;
-            if let LiveCommand::SetState { copy, .. } | LiveCommand::SetValue { copy, .. } = c {
-                let (states, values, offsets, script) = self.live.parts_mut();
-                let reads = &mut script.as_mut().expect("a script part").phase.0.reads;
-                reads.sync_copy(states, values, offsets, copy);
+            if let LiveCommand::SetState { copy, .. }
+            | LiveCommand::SetValue { copy, .. }
+            | LiveCommand::Move { copy, .. }
+            | LiveCommand::Stop { copy, .. } = c
+            {
+                let w = self.live.parts_mut();
+                let mut reads = core::mem::take(&mut w.script.as_mut().expect("a script part").phase.0.reads);
+                reads.sync_copy(&w, copy);
+                w.script.as_mut().expect("a script part").phase.0.reads = reads;
             }
         }
         ok

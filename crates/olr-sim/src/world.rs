@@ -480,6 +480,12 @@ impl World {
         for (i, latch) in self.latches.iter_mut().enumerate() {
             latch.set(keys.get(i).copied().unwrap_or(Keys(0)));
         }
+        // Issue #89: the live copies' motions, once a tick before the first
+        // sub-step (so #90's solid parts move between the worms' sub-steps
+        // alike every tick); none in a frozen world.
+        if !frozen && let Some(live) = &mut self.live {
+            live.step_motions(&mut self.draws.events);
+        }
         let step = self.physics_dt();
         let step_clock = self.step_clock();
         let frame = self.frame_dt();

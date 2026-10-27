@@ -214,6 +214,10 @@ pub enum EventKind {
     /// script instances in run order (`olr_sim::live_instances`). No OLX
     /// counterpart.
     ScriptError { instance: u16 },
+    /// Live copy `copy`'s value `prop` (a [`crate::LiveCopy::props`]
+    /// index) reached its motion's target (issue #89), in the motions'
+    /// step before the frame's first physics sub-step. No OLX counterpart.
+    LiveArrived { copy: u16, prop: u16 },
 }
 
 impl EventKind {
