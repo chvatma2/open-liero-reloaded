@@ -228,6 +228,44 @@ The headless command-line tool. Its commands:
   round trip, bad folders and arguments refused; issue #59's
   `cli_places_a_multi_piece_asset_in_a_folder`; issue #71's
   `asset_check_counts_states`).
+  Issue #72 (`olr_edit::asset`'s operations): `asset state add <dir>
+  <name> [--from <state>]` (`added state <name>`), `state remove <dir>
+  <name>`, `state set <dir> <name> [--name <new>] [--start] [--loop-sound
+  <sound>|none] [--enter-sound <sound>|none]` (sounds, then the start,
+  then the name; `state <name> loops|enters <sound>`, `state <name> is the
+  start`, `renamed state <a> to <b>`), `state value <dir> <state>
+  <property> <value>|none` (`state <s>: <property> = <value>` or `…
+  cleared`), `state picture <dir> <state> <layer> (--art <png> [--material
+  <png>] [--back <png>] [--glow <png>] | --follow)` (the box at art
+  resolution; cells, back art and mask the start's unless given; a misfit
+  file names the size it should be), `expose <dir> <name> <property>
+  [--default <value>] [--min <n>] [--max <n>]` (`exposed <name>:
+  <property>`), `unexpose <dir> <name>`, `sound add <dir> <file> [--name
+  <name>]` (default the file's name lower-cased; `added sound <name>: 1.4
+  s`), `sound remove <dir> <name>`, `script <dir> (--set <file> |
+  --clear)` and `health <dir> (--points <n> --at-zero <state> | --clear)`
+  edit the folder in place (`edit`: `load_dir`, one operation, `encode`,
+  `save_dir`); a refusal prints `<dir>: <why>` on stderr, exits 1 and
+  leaves the folder byte for byte. Input files are read bounded
+  (`read_bounded`: a sound at `MAX_ASSET_SOUND_BYTES`, a script at
+  `MAX_SCRIPT_BYTES`, a PNG at `MAX_FILE_BYTES`, refused past it before it
+  is read whole). Properties and values are `olr_edit::asset::
+  parse_property`/`parse_value` (STATUS.md: `x`, `y`, `visible`,
+  `facing`, `health`, `<layer>.<x|y|visible|opacity|glow|glow-colour|
+  light|reach|animation|beam-direction|beam-spread|glass-opacity|
+  glass-tint>` split at the last dot; a whole number, `true`/`false`,
+  `#rrggbb`, `steady` or RON). `asset info <dir>` reads the folder whole
+  and prints one item a line: `"<name>", W × H, art scale S, N
+  elements`, `layer <id>: <material>[, back art][, glows in <g>[ (also:
+  …)]][, glass]`, `state <name>[ ★][: owns …; <property> = <value>; loops
+  …; enters …]`, `exposed <name>: <property>, default <v>[, lo to hi]`,
+  `sound <name>: <s> s`, `health <n>, at 0 <state>`, `script: N lines`.
+  Tests: `tests/asset.rs`' `cli_builds_a_lamp_with_states_sounds_and_a_script`
+  (a level the test makes, saved, given states, a picture, a value, a
+  sound, an exposed glow and a script; `info`'s lines; Off made the start
+  keeps every state's look; the same edits the same bytes) and
+  `cli_refuses_and_leaves_the_folder`; `asset_cmd.rs`'
+  `cli_parses_property_and_value_syntax` (every form, a dotted id).
 - `olr-cli skin new <out-dir> [--from <skin>] [--double] --name <name>
   [--id ID]`, `skin double <skin> --out <dir> [--name N] [--id ID]`,
   `skin check <dir>…` and `skin preview <skin> --colour RRGGBB --out

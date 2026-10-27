@@ -376,6 +376,47 @@ operations.
   `offers_follow_the_design`, `asset_sound_limit_is_the_mods`,
   `landing_a_stated_asset_lands_its_start`; `glass.rs`'
   `an_asset_of_glass_keeps_its_glass`.
+  Issue #72 (`asset/edit.rs`; STATUS.md "Asset-based levels"): the
+  operations the asset tab (#79, #80) and `olr-cli asset` share, each on
+  `&mut Asset` through `commit` (a copy edited, kept only when the folder
+  `encode` would write, without its thumbnail (`unchecked_files`), passes
+  `check_asset`; a refusal is `AssetError::Bad` naming the state, layer,
+  property or sound, the asset unchanged): `add_state(name, from)` (none:
+  the start's values, owning nothing, no sounds; `from`: that state's
+  values, pictures and sounds; returns the index), `remove_state` (never
+  the start: "make another state the start first", nor `health.at_zero`'s),
+  `rename_state` (the start and `at_zero` follow), `set_start` (every
+  state's look kept: the old start owns the base, followers a copy, an
+  owner without a mask the old base's mask, the base becomes the new
+  start's picture), `set_state_sounds` (`None` leaves, `Some(None)`
+  clears), `own_picture` (the box at art scale, cells for a mixed layer
+  only, back art iff the layer has it, a mask only on a masked layer;
+  never the start, an image, a raster or a distant layer), `follow_start`,
+  `set_state_value` (`None` clears; a value of the same `property_key`
+  replaced in place; the type said plainly), `forget_layer` (`Forgotten {
+  own, values, exposed }`, for #79's removal, merge and split; not
+  checked), `expose` (one of `offers`, an `Int`'s `min`/`max` filled from
+  its range, a position needing both, one entry per glow group, an `Own`
+  colour needing a default, `Health`'s default its points),
+  `unexpose`, `rename_exposed`, `add_sound` (`valid_sound_name`, new case
+  aside, `is_sound` and `check_sound`), `remove_sound` (refused while a
+  state plays it), `set_script` (`MAX_SCRIPT_BYTES`, not parsed) and
+  `set_health` (`at_zero` a state; an exposed `Health` follows the points;
+  clearing it while exposed: "unexpose health first"). The CLI's syntax:
+  `parse_property`/`property_label` (`x`, `<layer>.glow-colour`, …, split
+  at the last dot) and `parse_value`/`value_label` (the type from the
+  form; an animation one line of RON); `default_value` (the exposed
+  default, else the own setting). The thumbnail is already the start posed
+  with its defaults (`landed_pieces`). Tests: `asset.rs`'
+  `a_new_state_copies_the_start`, the proptest
+  `set_start_keeps_every_states_look`, `removing_states_is_refused_when_needed`,
+  `renaming_a_state_follows_start_and_health`,
+  `own_picture_checks_fit_and_kind`, `state_values_are_set_and_cleared`,
+  `forget_layer_drops_every_reference`,
+  `expose_offers_only_what_offers_lists`,
+  `sounds_are_checked_and_kept_while_named`,
+  `health_needs_its_state_and_unexposing_first`,
+  `the_thumbnail_shows_the_starting_state`.
 - **Issue #16, the mod operations** (`mods`; `olr-cli mod`; STATUS.md
   "Mod editing operations (issue #16)"), on a loaded mod `Pack`
   (`source(pack)`, else `ModError::NotAMod`):
