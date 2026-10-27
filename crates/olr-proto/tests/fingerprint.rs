@@ -38,3 +38,10 @@ fn the_fingerprint_hashes_the_simulation_and_session_sources() {
     let refs: Vec<(&str, &[u8])> = bodies.iter().map(|(a, b)| (a.as_str(), b.as_slice())).collect();
     assert_eq!(fingerprint_impl::fingerprint(&refs), olr_proto::FINGERPRINT);
 }
+
+/// Issue #86: the state transfer's live copies changed every state's
+/// encoding.
+#[test]
+fn the_protocol_version_is_7() {
+    assert_eq!(olr_proto::PROTOCOL_VERSION, 7);
+}

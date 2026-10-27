@@ -103,10 +103,11 @@ fn admit_checks_version_fingerprint_and_capacity() {
 /// host builds no link for it.
 #[test]
 fn a_protocol_2_client_is_refused_at_the_handshake() {
-    assert_eq!(olr_proto::PROTOCOL_VERSION, 6, "protocol 6: the Weapon 1-5 keys (issue #48)");
+    assert_eq!(olr_proto::PROTOCOL_VERSION, 7, "protocol 7: the state transfer's live copies (issue #86)");
     let core = Core::new(CoreConfig::host(), Instant::now());
-    for (protocol, fingerprint) in
-        [2, 3, 4, 5].into_iter().flat_map(|p| [(p, olr_proto::FINGERPRINT), (p, olr_proto::FINGERPRINT ^ 1)])
+    for (protocol, fingerprint) in [2, 3, 4, 5, 6]
+        .into_iter()
+        .flat_map(|p| [(p, olr_proto::FINGERPRINT), (p, olr_proto::FINGERPRINT ^ 1)])
     {
         let old = olr_proto::Signal::Offer { protocol, fingerprint, sdp: String::new() };
         assert_eq!(core.admit(&old), Err(olr_proto::Refusal::Version), "{protocol} {fingerprint}");
