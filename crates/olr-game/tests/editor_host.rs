@@ -55,6 +55,13 @@ fn digest(dir: &Path) -> BTreeMap<String, (u64, u64)> {
     out
 }
 
+/// A level tab's edit (issue #81: its layers are the asset tab's): the
+/// level's notes one character longer, one step.
+fn edit(h: &EditorHost) -> A {
+    let meta = h.state().document().expect("a level").meta();
+    A::Meta(olr_editor::LevelMeta { notes: format!("{}+", meta.notes), ..meta })
+}
+
 fn new_level(name: &str) -> AppCommand {
     AppCommand::NewLevel { name: name.into(), size: (120, 80), theme: "olx-theme-dirt".into() }
 }
@@ -97,7 +104,8 @@ fn a_bundled_level_is_edited_as_a_copy() {
     assert!(messages(&out).is_empty(), "{out:?}");
     let dir = tmp.path().join("packs/dirt-copy");
     assert_eq!(open_dir(&h), dir);
-    h.act(vec![A::AddLayer]);
+    let e = edit(&h);
+    h.act(vec![e]);
     assert!(h.state().dirty());
     let out = h.act(vec![A::Save]);
     assert!(messages(&out).is_empty(), "{out:?}");
@@ -125,7 +133,8 @@ fn recovery_is_written_while_unsaved_and_dropped_on_save() {
     h.tick(start);
     h.tick(start + RECOVERY_INTERVAL * 2);
     assert!(!recovery.exists());
-    h.act(vec![A::AddLayer]);
+    let e = edit(&h);
+    h.act(vec![e]);
     let t0 = start + RECOVERY_INTERVAL * 3;
     h.tick(t0);
     h.tick(t0 + RECOVERY_INTERVAL - Duration::from_secs(1));
@@ -148,7 +157,8 @@ fn recovery_is_written_while_unsaved_and_dropped_on_save() {
 fn recovery_survives_a_missing_original() {
     let Some((tmp, root, mut h)) = host() else { return };
     h.open_from_menu(&new_level("Office"));
-    h.act(vec![A::AddLayer]);
+    let e = edit(&h);
+    h.act(vec![e]);
     let t0 = Instant::now();
     h.tick(t0);
     h.tick(t0 + RECOVERY_INTERVAL);
@@ -163,8 +173,9 @@ fn recovery_survives_a_missing_original() {
     assert!(out.contains(&HostOut::FullUpload), "{out:?}");
     assert!(h.state().dirty(), "recovered changes are unsaved");
     assert_eq!(open_dir(&h), packs.join("office"));
-    let layers = h.state().document().unwrap().items().len();
-    assert_eq!(layers, 4, "the three layers and the one added");
+    let doc = h.state().document().unwrap();
+    assert_eq!(doc.items().len(), 3, "the three layers");
+    assert_eq!(doc.meta().notes, "+", "and the edit");
     h.act(vec![A::Save]);
     assert_eq!(h.state().dialog(), None);
     assert!(packs.join("office/pack.ron").is_file(), "Save makes the pack again");
@@ -271,7 +282,8 @@ fn closing_the_window_asks_when_unsaved() {
     assert_eq!(on_close_request(Some(&mut h)), CloseDecision::Quit, "nothing unsaved");
     let Some((_tmp, _root, mut h)) = host() else { return };
     h.open_from_menu(&new_level("Office"));
-    h.act(vec![A::AddLayer]);
+    let e = edit(&h);
+    h.act(vec![e]);
     assert_eq!(on_close_request(Some(&mut h)), CloseDecision::Wait);
     assert!(
         matches!(h.state().dialog(), Some(olr_editor::Dialog::Unsaved { then: olr_editor::Pending::Close })),
@@ -284,7 +296,8 @@ fn closing_the_window_asks_when_unsaved() {
     // While Play runs, the play ends first, then the editor asks.
     let Some((_tmp, _root, mut h)) = host() else { return };
     h.open_from_menu(&new_level("Office"));
-    h.act(vec![A::AddLayer, A::Play]);
+    let e = edit(&h);
+    h.act(vec![e, A::Play]);
     assert!(h.state().playing());
     assert_eq!(on_close_request(Some(&mut h)), CloseDecision::Wait);
     assert!(!h.state().playing());
@@ -298,7 +311,8 @@ fn closing_the_window_asks_when_unsaved() {
 fn a_later_session_keeps_the_crash_copy() {
     let Some((tmp, root, mut h)) = host() else { return };
     h.open_from_menu(&new_level("Office"));
-    h.act(vec![A::AddLayer]);
+    let e = edit(&h);
+    h.act(vec![e]);
     let t0 = Instant::now();
     h.tick(t0);
     h.tick(t0 + RECOVERY_INTERVAL);
@@ -310,7 +324,8 @@ fn a_later_session_keeps_the_crash_copy() {
     let packs = store.packs_dir().unwrap();
     let mut h = EditorHost::new(&mut store, &[packs.as_path(), root.as_path()]).unwrap();
     h.open_from_menu(&AppCommand::EditLevel("office".into()));
-    h.act(vec![A::AddLayer]);
+    let e = edit(&h);
+    h.act(vec![e]);
     h.tick(t0);
     h.tick(t0 + RECOVERY_INTERVAL);
     h.wait_recovery();
@@ -335,7 +350,8 @@ fn quitting_without_asking_keeps_a_recovery_copy() {
     h.open_from_menu(&new_level("Office"));
     h.flush_recovery();
     assert!(list_recoveries(&tmp.path().join("recovery")).is_empty(), "nothing unsaved");
-    h.act(vec![A::AddLayer]);
+    let e = edit(&h);
+    h.act(vec![e]);
     h.flush_recovery();
     assert_eq!(list_recoveries(&tmp.path().join("recovery")).len(), 1);
 }
@@ -467,7 +483,8 @@ fn recovering_never_overwrites_another_pack() {
     let Some((tmp, root, mut h)) = host() else { return };
     let packs = tmp.path().join("packs");
     h.open_from_menu(&new_level("Office"));
-    h.act(vec![A::AddLayer]);
+    let e = edit(&h);
+    h.act(vec![e]);
     let t0 = Instant::now();
     h.tick(t0);
     h.tick(t0 + RECOVERY_INTERVAL);
@@ -499,7 +516,8 @@ fn recovering_never_overwrites_another_pack() {
 fn a_recovery_write_cleans_its_leftovers() {
     let Some((tmp, _root, mut h)) = host() else { return };
     h.open_from_menu(&new_level("Office"));
-    h.act(vec![A::AddLayer]);
+    let e = edit(&h);
+    h.act(vec![e]);
     let rec = tmp.path().join("recovery");
     for d in [".replaced-office", ".replaced-office~1", ".import-office", ".replaced-other"] {
         std::fs::create_dir_all(rec.join(d)).unwrap();
@@ -523,7 +541,8 @@ fn the_recovery_copy_is_written_off_the_ui_thread() {
         size: (2048, 2048),
         theme: "olx-theme-dirt".into(),
     });
-    h.act(vec![A::AddLayer]);
+    let e = edit(&h);
+    h.act(vec![e]);
     let t0 = Instant::now();
     h.tick(t0);
     h.tick(t0 + RECOVERY_INTERVAL);
@@ -569,7 +588,8 @@ fn the_editor_screen_follows_what_happened() {
 fn an_interrupted_copy_is_listed_again() {
     let Some((tmp, _root, mut h)) = host() else { return };
     h.open_from_menu(&new_level("Office"));
-    h.act(vec![A::AddLayer]);
+    let e = edit(&h);
+    h.act(vec![e]);
     h.flush_recovery();
     let rec = tmp.path().join("recovery");
     std::fs::rename(rec.join("office"), rec.join(".import-office")).unwrap();
@@ -806,6 +826,12 @@ fn assets_are_listed_saved_placed_and_removed() {
     let built_in = root.parent().unwrap().join("assets");
     let before = digest(&built_in);
     h.open_from_menu(&new_level("Hall"));
+    // Issue #81: the ground's layers are the asset tab's.
+    h.act(vec![
+        A::Select(olr_editor::Selection::Copy(olr_editor::ground::GROUND_COPY.into())),
+        A::EditGround,
+    ]);
+    assert!(h.state().ground_open());
     h.act(vec![A::Select(olr_editor::Selection::Element("dirt".into()))]);
     h.act(vec![A::SaveAsAsset]);
     h.act(vec![A::NameAsset("Hall dirt".into())]);
@@ -813,6 +839,7 @@ fn assets_are_listed_saved_placed_and_removed() {
     assert!(lib.join("hall-dirt/asset.ron").is_file());
     assert_eq!(h.state().picked_asset(), Some(&key(false, "hall-dirt")));
     // Placing a built-in one reads it whole and lands it in the level.
+    h.act(vec![A::ShowTab(olr_editor::DocTab::Level)]);
     let n = h.state().document().unwrap().items().len();
     h.act(vec![A::PlaceAsset { key: key(true, "torch"), at: (10, 10) }]);
     assert_eq!(h.state().document().unwrap().items().len(), n + 1);
