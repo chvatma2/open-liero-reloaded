@@ -153,7 +153,8 @@ fn a_listing_error_keeps_the_old_listing() {
 fn opening_a_pack_through_the_browser_asks_when_unsaved() {
     let Some((_doc, t, mut state)) = browsing(Purpose::OpenPack) else { return };
     host(&mut state, A::CloseBrowser);
-    host(&mut state, A::AddLayer);
+    let rename = crate::common::rename_level(&state, "Caves");
+    host(&mut state, rename);
     assert!(state.dirty());
     host(&mut state, A::Browse(Purpose::OpenPack));
     host(&mut state, A::BrowseTo(t.path().to_path_buf()));
@@ -179,11 +180,13 @@ fn recovered_documents_are_unsaved() {
 fn saving_or_closing_drops_the_recovery() {
     let Some(root) = content() else { return };
     let (_tmp, mut state) = editor(&root);
-    host(&mut state, A::AddLayer);
+    let rename = crate::common::rename_level(&state, "Caves");
+    host(&mut state, rename);
     let cmds = host(&mut state, A::Save);
     assert!(cmds.contains(&C::RecoveryDone), "{cmds:?}");
     assert!(!state.dirty());
-    host(&mut state, A::AddLayer);
+    let rename = crate::common::rename_level(&state, "Caves 2");
+    host(&mut state, rename);
     let cmds = state.update(A::Close);
     assert!(cmds.is_empty(), "the dialog asks first");
     let cmds = state.update(A::Choose(olr_editor::Choice::Discard));
@@ -199,7 +202,7 @@ struct App {
 
 fn harness(state: EditorState) -> Harness<'static, App> {
     let app = App { state, data: EditorData::default(), commands: Vec::new() };
-    Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(
+    Harness::builder().with_size(egui::vec2(1280.0, 720.0)).with_max_steps(16).build_ui_state(
         |ui, app: &mut App| {
             for a in ui::show(ui, &app.state, &mut app.data) {
                 let c = host(&mut app.state, a);
@@ -213,7 +216,9 @@ fn harness(state: EditorState) -> Harness<'static, App> {
 #[test]
 fn the_browser_by_label() {
     let Some(root) = content() else { return };
-    let (_doc, state) = editor(&root);
+    let (_doc, mut state) = editor(&root);
+    // Issue #81: Import image… is the asset tab's (the ground's layers).
+    crate::common::edit_ground(&mut state);
     let t = tree();
     let mut h = harness(state);
     h.run();
@@ -249,7 +254,9 @@ fn the_browser_by_label() {
     h.run();
     assert!(h.state().commands.contains(&C::ReadImage(t.path().join("x.PNG"))), "{:?}", h.state().commands);
     assert!(h.state().state.browser().is_none());
-    // Open… and Close are in the File menu.
+    // Open… and Close are in the level tab's File menu.
+    h.get_by_label(labels::LEVEL_TAB).click();
+    h.run();
     h.get_by_label(labels::FILE).click();
     h.run();
     h.get_by_label(labels::OPEN).click();

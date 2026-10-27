@@ -5,6 +5,7 @@
 use egui::accesskit::Role;
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
+use olr_editor::ground::GROUND_COPY;
 use olr_editor::tools::{PaintChoice, TextureRef, Tool};
 use olr_editor::ui::{self, EditorData, labels};
 use olr_editor::{EditorAction as A, EditorCommand as C, EditorState, PanelTab, Selection};
@@ -27,19 +28,37 @@ fn harness(state: EditorState) -> Harness<'static, App> {
 /// `harness` whose frames are `step_dt` seconds apart.
 fn harness_at(state: EditorState, step_dt: f32) -> Harness<'static, App> {
     let app = App { state, data: EditorData::default(), commands: Vec::new() };
-    Harness::builder().with_size(egui::vec2(1280.0, 720.0)).with_step_dt(step_dt).build_ui_state(
-        |ui, app: &mut App| {
-            for a in ui::show(ui, &app.state, &mut app.data) {
-                let c = run(&mut app.state, a);
-                app.commands.extend(c);
-            }
-        },
-        app,
-    )
+    // Issue #81: the asset tab follows a focus moved by key for a few
+    // passes.
+    Harness::builder()
+        .with_size(egui::vec2(1280.0, 720.0))
+        .with_step_dt(step_dt)
+        .with_max_steps(16)
+        .build_ui_state(
+            |ui, app: &mut App| {
+                for a in ui::show(ui, &app.state, &mut app.data) {
+                    let c = run(&mut app.state, a);
+                    app.commands.extend(c);
+                }
+            },
+            app,
+        )
 }
 
-/// The fixture open in a harness, run until it settles.
+/// The fixture open in a harness, its ground in the asset tab (issue #81:
+/// the layer flows), run until it settles.
 fn opened() -> Option<(tempfile::TempDir, Harness<'static, App>)> {
+    let root = content()?;
+    let (tmp, mut state) = editor(&root);
+    crate::common::edit_ground(&mut state);
+    let mut h = harness(state);
+    h.run();
+    Some((tmp, h))
+}
+
+/// The fixture open in a harness in the level tab (issue #81: the level's
+/// own flows: its look, size, spawns and Play).
+fn opened_level() -> Option<(tempfile::TempDir, Harness<'static, App>)> {
     let root = content()?;
     let (tmp, state) = editor(&root);
     let mut h = harness(state);
@@ -55,7 +74,7 @@ fn act(h: &mut Harness<'static, App>, action: A) {
 }
 
 fn pixel_size(h: &Harness<'static, App>, id: &str) -> u32 {
-    let d = h.state().state.document().unwrap();
+    let d = h.state().state.active_document().unwrap();
     match &d.items()[d.index_of(id).unwrap()].element.kind {
         ElementKind::Image { pixel_size, .. } => *pixel_size,
         _ => panic!("an image"),
@@ -63,7 +82,7 @@ fn pixel_size(h: &Harness<'static, App>, id: &str) -> u32 {
 }
 
 fn ids(h: &Harness<'static, App>) -> Vec<String> {
-    h.state().state.document().unwrap().items().iter().map(|i| i.element.id.clone()).collect()
+    h.state().state.active_document().unwrap().items().iter().map(|i| i.element.id.clone()).collect()
 }
 
 /// A point of the canvas, `d` points from its centre.
@@ -121,7 +140,7 @@ fn paint_with_the_brush() {
     h.key_press(egui::Key::B);
     h.run();
     assert_eq!(h.state().state.tool(), Tool::Brush);
-    let before = h.state().state.document().unwrap().layer_art("tunnels").unwrap().clone();
+    let before = h.state().state.active_document().unwrap().layer_art("tunnels").unwrap().clone();
     let start = canvas_point(&h, (-40.0, 0.0));
     hover(&mut h, start);
     press(&mut h, start, true);
@@ -131,16 +150,16 @@ fn paint_with_the_brush() {
     }
     let end = canvas_point(&h, (40.0, 5.0));
     press(&mut h, end, false);
-    let after = h.state().state.document().unwrap().layer_art("tunnels").unwrap().clone();
+    let after = h.state().state.active_document().unwrap().layer_art("tunnels").unwrap().clone();
     assert!(after != before, "the stroke painted");
     h.get_by_label(labels::UNDO).click();
     h.run();
-    assert!(*h.state().state.document().unwrap().layer_art("tunnels").unwrap() == before, "one undo");
+    assert!(*h.state().state.active_document().unwrap().layer_art("tunnels").unwrap() == before, "one undo");
 }
 
 #[test]
 fn place_a_spawn() {
-    let Some((_tmp, mut h)) = opened() else { return };
+    let Some((_tmp, mut h)) = opened_level() else { return };
     let before = h.query_all_by_label_contains(" at (").count();
     h.key_press(egui::Key::P);
     h.run();
@@ -197,12 +216,12 @@ fn reorder_by_drag() {
 #[test]
 fn save_then_check_the_files() {
     let Some((_tmp, mut h)) = opened() else { return };
-    let dir = h.state().state.document().unwrap().dir().to_path_buf();
+    let dir = h.state().state.active_document().unwrap().dir().to_path_buf();
     h.get_by_label(labels::ADD_LAYER).click();
     h.run();
-    assert!(h.state().state.dirty());
+    assert!(h.state().state.active_dirty());
     file(&mut h, labels::SAVE);
-    assert!(!h.state().state.dirty());
+    assert!(!h.state().state.active_dirty());
     let ron = std::fs::read_to_string(dir.join("editor/asset.ron")).unwrap();
     assert!(ron.contains("id: \"layer\""), "{ron}");
     let errors: Vec<_> = olr_pack::validate(&olr_vfs::DirFs::new(&dir))
@@ -229,7 +248,9 @@ fn close_with_unsaved_changes() {
 #[test]
 fn shortcuts_select_tools() {
     let Some((_tmp, mut h)) = opened() else { return };
-    for tool in Tool::ALL {
+    // Issue #81: the asset tab's tools; Spawn and the Haze brush are the
+    // level tab's (`the_level_tabs_shortcuts`).
+    for tool in offered(&h) {
         let key = egui::Key::from_name(&tool.key().to_string()).unwrap();
         h.key_press(key);
         h.run();
@@ -259,11 +280,11 @@ fn a_release_while_panning_ends_the_stroke() {
     h.key_up(egui::Key::Space);
     h.run();
     assert!(h.state().state.can_undo(), "the stroke was recorded on its release");
-    let after_stroke = h.state().state.document().unwrap().layer_art("tunnels").unwrap().clone();
+    let after_stroke = h.state().state.active_document().unwrap().layer_art("tunnels").unwrap().clone();
     let q = canvas_point(&h, (60.0, 30.0));
     hover(&mut h, q);
     assert!(
-        *h.state().state.document().unwrap().layer_art("tunnels").unwrap() == after_stroke,
+        *h.state().state.active_document().unwrap().layer_art("tunnels").unwrap() == after_stroke,
         "a hover paints nothing"
     );
 }
@@ -276,7 +297,7 @@ fn a_typed_value_commits_before_the_toolbar_click() {
     act(&mut h, A::Select(Selection::Element("gradient".into())));
     act(&mut h, A::Nudge { dx: 1, dy: 0 });
     let at = |h: &Harness<'static, App>| {
-        let d = h.state().state.document().unwrap();
+        let d = h.state().state.active_document().unwrap();
         match &d.items()[d.index_of("gradient").unwrap()].element.kind {
             ElementKind::Image { at, .. } => *at,
             _ => panic!(),
@@ -327,14 +348,14 @@ fn delete_waits_while_a_field_is_dragged() {
     h.key_press(egui::Key::Delete);
     h.run();
     press(&mut h, x + egui::vec2(20.0, 0.0), false);
-    assert!(h.state().state.document().unwrap().index_of("gradient").is_some());
+    assert!(h.state().state.active_document().unwrap().index_of("gradient").is_some());
 }
 
 /// The resize fields follow the level's size (after a resize elsewhere, or
 /// an undo): Resize with nothing changed changes nothing.
 #[test]
 fn the_resize_fields_follow_the_level() {
-    let Some((_tmp, mut h)) = opened() else { return };
+    let Some((_tmp, mut h)) = opened_level() else { return };
     act(&mut h, A::Select(Selection::None));
     let black = olr_data::image::Rgba::BLACK;
     act(
@@ -348,7 +369,7 @@ fn the_resize_fields_follow_the_level() {
     );
     h.get_by_label("Resize").click();
     h.run();
-    assert_eq!(h.state().state.document().unwrap().level().size, (600, 400));
+    assert_eq!(h.state().state.active_document().unwrap().level().size, (600, 400));
 }
 
 /// Each wheel event zooms one step, however many arrive in a frame.
@@ -395,7 +416,7 @@ fn escape_reverts_a_text_field() {
     h.run();
     h.key_press(egui::Key::Escape);
     h.run();
-    let d = h.state().state.document().unwrap();
+    let d = h.state().state.active_document().unwrap();
     assert_eq!(d.items()[d.index_of("tiny").unwrap()].element.name, "Tiny");
 }
 
@@ -410,7 +431,7 @@ fn a_raster_splits_by_its_button() {
     h.get_by_label(labels::SPLIT).click();
     h.run();
     assert_eq!(ids(&h)[..3], ["background", "dirt", "rock"]);
-    assert!(h.state().state.dirty());
+    assert!(h.state().state.active_dirty());
     h.get_by_label(labels::UNDO).click();
     h.run();
     assert_eq!(ids(&h)[0], "base", "one undo puts the raster back");
@@ -423,23 +444,28 @@ fn theme(h: &mut Harness<'static, App>) {
     h.run();
 }
 
-/// The session bar's and the rail's controls: always shown.
-const BARS: [&str; 14] = [
+/// The level tab's session bar's and rail's controls: always shown (issue
+/// #81: the rail keeps Select, the Haze brush and Spawn).
+const BARS: [&str; 9] = [
     labels::FILE,
     labels::UNDO,
     labels::REDO,
     labels::VIEW,
     labels::PLAY,
     labels::PLAY_OPTIONS,
-    labels::IMPORT_IMAGE,
     "Select",
-    labels::DRAW,
-    labels::PIXELS,
-    labels::TOOL_GLOW,
-    labels::TOOL_SURFACE,
     labels::TOOL_HAZE,
     "Spawn",
 ];
+
+/// The asset tab's rail (issue #81: the layer tools).
+const ASSET_RAIL: [&str; 6] =
+    ["Select", labels::IMPORT_IMAGE, labels::DRAW, labels::PIXELS, labels::TOOL_GLOW, labels::TOOL_SURFACE];
+
+/// The tools the shown tab offers.
+fn offered(h: &Harness<'static, App>) -> Vec<Tool> {
+    Tool::ALL.into_iter().filter(|t| h.state().state.offers(*t)).collect()
+}
 
 /// The tool options bar's controls for `tool` (issue #8): the brush for the
 /// tools that dab with it, the paint for those that lay it, then its own.
@@ -514,7 +540,8 @@ fn the_toolbar_stays_in_the_window_and_in_place() {
         assert!(canvas.width() >= 500.0 && canvas.height() >= 400.0, "a usable canvas {at}: {canvas:?}");
         // Each tool's options, where they first showed.
         let mut first = Vec::new();
-        for tool in Tool::ALL {
+        let tools = offered(&h);
+        for &tool in &tools {
             act(&mut h, A::Tool(tool));
             let names = options_of(tool);
             inside(&h, &names);
@@ -523,7 +550,8 @@ fn the_toolbar_stays_in_the_window_and_in_place() {
         }
         // Nothing moves with the unsaved mark, a mod, a size, a texture, a
         // crater, nor "By colour"'s tolerance shown.
-        act(&mut h, A::AddLayer);
+        let rename = crate::common::rename_level(&h.state().state, "Moved");
+        act(&mut h, rename);
         act(&mut h, A::PlayMod("olx-mw-1-0".into()));
         let brush = h.state().state.brush();
         act(&mut h, A::Brush(olr_editor::tools::Brush { size: 64, ..brush }));
@@ -535,18 +563,14 @@ fn the_toolbar_stays_in_the_window_and_in_place() {
         );
         act(&mut h, A::SelectByColour(true));
         act(&mut h, A::GlowByColour(true));
-        for (tool, first) in Tool::ALL.into_iter().zip(&first) {
+        for (&tool, first) in tools.iter().zip(&first) {
             act(&mut h, A::Tool(tool));
             assert_eq!(&rects(&h, &options_of(tool)), first, "{}'s options moved {at}", tool.name());
             assert_eq!(rects(&h, &BARS), bars, "the bars moved {at} with {}", tool.name());
         }
         // The brush sits in one place for every tool that dabs with it.
-        let brushes: Vec<Vec<egui::Rect>> = Tool::ALL
-            .into_iter()
-            .zip(&first)
-            .filter(|(t, _)| t.uses_brush())
-            .map(|(_, r)| r[..4].to_vec())
-            .collect();
+        let brushes: Vec<Vec<egui::Rect>> =
+            tools.iter().zip(&first).filter(|(t, _)| t.uses_brush()).map(|(_, r)| r[..4].to_vec()).collect();
         assert!(brushes.windows(2).all(|w| w[0] == w[1]), "the brush moved between tools {at}");
     }
 }
@@ -556,7 +580,7 @@ fn the_toolbar_stays_in_the_window_and_in_place() {
 /// under the game's theme.
 #[test]
 fn a_toolbar_row_is_one_straight_line() {
-    let Some((_tmp, mut h)) = opened() else { return };
+    let Some((_tmp, mut h)) = opened_level() else { return };
     theme(&mut h);
     let line = |h: &Harness<'static, App>, names: &[&str]| {
         let c: Vec<(String, f32)> = names
@@ -569,7 +593,7 @@ fn a_toolbar_row_is_one_straight_line() {
         }
     };
     line(&h, &BARS[..6]);
-    for tool in Tool::ALL {
+    for tool in offered(&h) {
         act(&mut h, A::Tool(tool));
         let names = options_of(tool);
         if !names.is_empty() {
@@ -667,24 +691,34 @@ fn a_group_button_brings_back_its_last_tool() {
 #[test]
 fn the_rail_highlights_the_chosen_tool() {
     let Some((_tmp, mut h)) = opened() else { return };
-    act(&mut h, A::Select(Selection::Element("tunnels".into())));
     let button = |tool: Tool| match tool.group() {
         Some(g) => g.name(),
         None => tool.name(),
     };
-    for tool in Tool::ALL {
-        let key = egui::Key::from_name(&tool.key().to_string()).unwrap();
-        h.key_press(key);
-        h.run();
-        assert_eq!(h.state().state.tool(), tool);
-        for name in BARS {
-            let node = h.get_by_label(name);
-            if let Some(selected) = node.accesskit_node().is_selected() {
-                assert_eq!(selected, name == button(tool), "{name} with {}", tool.name());
+    let check = |h: &mut Harness<'static, App>, names: &[&str]| {
+        for tool in offered(h) {
+            let key = egui::Key::from_name(&tool.key().to_string()).unwrap();
+            h.key_press(key);
+            h.run();
+            assert_eq!(h.state().state.tool(), tool);
+            for &name in names {
+                let node = h.get_by_label(name);
+                if let Some(selected) = node.accesskit_node().is_selected() {
+                    assert_eq!(selected, name == button(tool), "{name} with {}", tool.name());
+                }
+            }
+            if let Some(glow) = h.query_by_label(labels::GLOW) {
+                assert!(glow.accesskit_node().is_selected().is_none(), "the checkbox");
             }
         }
-        assert!(h.get_by_label(labels::GLOW).accesskit_node().is_selected().is_none(), "the checkbox");
-    }
+    };
+    // The asset tab's layer tools (issue #81), an element's Glow shown.
+    act(&mut h, A::Select(Selection::Element("tunnels".into())));
+    assert!(h.query_by_label(labels::GLOW).is_some());
+    check(&mut h, &ASSET_RAIL);
+    // The level tab's.
+    act(&mut h, A::ShowTab(olr_editor::DocTab::Level));
+    check(&mut h, &BARS);
 }
 
 #[test]
@@ -707,7 +741,7 @@ fn merge_down_from_the_properties() {
 fn the_tool_options_follow_the_tool() {
     let Some((_tmp, mut h)) = opened() else { return };
     let every: std::collections::BTreeSet<&str> = Tool::ALL.into_iter().flat_map(options_of).collect();
-    for tool in Tool::ALL {
+    for tool in offered(&h) {
         act(&mut h, A::Tool(tool));
         let shown = options_of(tool);
         for name in &every {
@@ -818,7 +852,7 @@ fn the_group_panel_shows_the_count() {
     // Hiding from the panel hides both, one step.
     h.get_by_label(labels::VISIBLE).click();
     h.run();
-    let d = h.state().state.document().unwrap();
+    let d = h.state().state.active_document().unwrap();
     for id in ["tiny", "gradient"] {
         assert!(!d.items()[d.index_of(id).unwrap()].element.visible, "{id} hidden");
     }
@@ -928,6 +962,7 @@ fn theme_swatches_follow_the_theme() {
     catalog.themes.push(other);
     let mut state = EditorState::new(olr_editor::EditorSettings::default(), catalog);
     run(&mut state, A::Open(dir));
+    crate::common::edit_ground(&mut state);
     let mut h = harness(state);
     h.run();
     // The palette shows with a tool that paints (issue #8).
@@ -936,9 +971,12 @@ fn theme_swatches_follow_the_theme() {
     h.run();
     let keys = |h: &Harness<'static, App>| h.state().data.swatch_keys();
     assert!(keys(&h).iter().any(|k| k == "theme/olx-theme-dirt/front"), "{:?}", keys(&h));
-    let mut meta = h.state().state.document().unwrap().meta();
+    let mut meta = h.state().state.active_document().unwrap().meta();
     meta.theme = "olx-theme-castle".into();
+    // The theme is the level's (issue #81): the ground follows it.
+    act(&mut h, A::ShowTab(olr_editor::DocTab::Level));
     act(&mut h, A::Meta(meta));
+    act(&mut h, A::ShowTab(olr_editor::DocTab::Asset));
     h.get_by_label(labels::TEXTURES).click();
     h.run();
     let k = keys(&h);
@@ -962,7 +1000,7 @@ fn glow_an_element_and_save() {
     h.run();
     h.get_by_label(labels::GLOW).click();
     h.run();
-    let doc = h.state().state.document().unwrap();
+    let doc = h.state().state.active_document().unwrap();
     let e = &doc.items()[doc.index_of("tunnels").unwrap()].element;
     assert_eq!(e.glow.as_ref().map(|g| g.group.as_str()), Some("tunnels"));
     let dir = doc.dir().to_path_buf();
@@ -988,7 +1026,7 @@ fn paint_glow_with_the_brush() {
     let end = canvas_point(&h, (20.0, 0.0));
     hover(&mut h, end);
     press(&mut h, end, false);
-    assert!(h.state().state.document().unwrap().glow_mask("tunnels").is_some());
+    assert!(h.state().state.active_document().unwrap().glow_mask("tunnels").is_some());
     assert!(h.state().state.can_undo());
 }
 
@@ -1013,32 +1051,40 @@ fn glow_pixels_picked_by_colour() {
     assert!(h.state().state.pixel_region().is_some(), "picked by colour");
     h.get_by_label(labels::GLOW_SELECTION).click();
     h.run();
-    assert!(h.state().state.document().unwrap().glow_mask("tunnels").is_some());
+    assert!(h.state().state.active_document().unwrap().glow_mask("tunnels").is_some());
     assert!(h.state().state.can_undo());
 }
 
 #[test]
 fn edit_the_look_panel() {
-    let Some((_tmp, mut h)) = opened() else { return };
+    let Some((_tmp, mut h)) = opened_level() else { return };
     // Tall enough that the level panel's Look section is in view.
     h.set_size(egui::vec2(1280.0, 1800.0));
     act(&mut h, A::Select(Selection::None));
     h.get_by_label(labels::ADD_LOOK).click();
     h.run();
-    assert!(h.state().state.document().unwrap().level().look.is_some());
+    assert!(h.state().state.active_document().unwrap().level().look.is_some());
     type_number(&mut h, labels::LOOK_AMBIENT, "40");
-    let look = h.state().state.document().unwrap().level().look.clone().unwrap();
+    let look = h.state().state.active_document().unwrap().level().look.clone().unwrap();
     assert_eq!(look.ambient.intensity, 40);
+    // Issue #81: the glow groups are the ground's, in the asset tab.
+    assert!(h.query_by_label(labels::ADD_GROUP).is_none(), "no groups in the level tab");
+    crate::common::edit_ground(&mut h.state_mut().state);
+    h.run();
+    assert_eq!(
+        h.state().state.active_document().unwrap().level().look.clone().unwrap().ambient.intensity,
+        40
+    );
     h.get_by_label(labels::ADD_GROUP).click();
     h.run();
-    let look = h.state().state.document().unwrap().level().look.clone().unwrap();
+    let look = h.state().state.active_document().unwrap().level().look.clone().unwrap();
     assert_eq!(look.glow_groups.iter().map(|g| g.id.as_str()).collect::<Vec<_>>(), ["group-1"]);
     type_number(&mut h, labels::GROUP_INTENSITY, "300");
-    let look = h.state().state.document().unwrap().level().look.clone().unwrap();
+    let look = h.state().state.active_document().unwrap().level().look.clone().unwrap();
     assert_eq!(look.glow_groups[0].intensity, 300);
     h.get_by_label(labels::UNDO).click();
     h.run();
-    let look = h.state().state.document().unwrap().level().look.clone().unwrap();
+    let look = h.state().state.active_document().unwrap().level().look.clone().unwrap();
     assert_eq!(look.glow_groups[0].intensity, 100);
 }
 
@@ -1047,7 +1093,7 @@ fn edit_the_look_panel() {
 /// field then shows, and 0 removes it.
 #[test]
 fn set_the_occlusion() {
-    let Some((_tmp, mut h)) = opened() else { return };
+    let Some((_tmp, mut h)) = opened_level() else { return };
     h.set_size(egui::vec2(1280.0, 1800.0));
     act(&mut h, A::Select(Selection::None));
     h.get_by_label(labels::ADD_LOOK).click();
@@ -1056,7 +1102,7 @@ fn set_the_occlusion() {
     assert!(h.query_by_label(labels::LOOK_OCCLUSION).is_some(), "not under Fine tuning");
     assert!(h.query_by_label(labels::LOOK_OCCLUSION_REACH).is_none(), "no reach while off");
     let occlusion = |h: &Harness<'static, App>| {
-        h.state().state.document().unwrap().level().look.clone().unwrap().occlusion
+        h.state().state.active_document().unwrap().level().look.clone().unwrap().occlusion
     };
     type_number(&mut h, labels::LOOK_OCCLUSION, "60");
     let on = olr_format::look::OcclusionSource { strength: 60, reach: 12 };
@@ -1090,7 +1136,7 @@ fn toggle_views_and_scrub_the_clock() {
     assert!(!h.state().state.clock_running());
     type_number(&mut h, labels::CLOCK_SCRUB, "750");
     assert_eq!(h.state().state.clock_ms(), 750.0);
-    assert!(!h.state().state.dirty());
+    assert!(!h.state().state.active_dirty());
 }
 
 /// Issue #66: View ▾ Preview parallax, off at first, turns on and off by
@@ -1108,7 +1154,7 @@ fn preview_parallax_in_the_view_menu() {
         assert_eq!(h.state().state.preview_parallax(), on);
     }
     let s = h.state();
-    assert!(!s.state.dirty());
+    assert!(!s.state.active_dirty());
     assert!(!s.commands.iter().any(|c| matches!(c, C::SaveSettings(_))), "not a setting");
 }
 
@@ -1139,15 +1185,15 @@ fn more_and_fine_tuning_fold_and_are_remembered() {
     }
     act(&mut h, A::Select(Selection::Element("tunnels".into())));
     assert!(h.query_by_label(labels::LOCKED).is_some(), "More stays open");
-    // The level's lighting: ambient and groups shown, the rest folded
-    // (tall enough that Fine tuning is in view below the occlusion).
+    // The level's lighting (the level tab's, issue #81): ambient shown,
+    // the rest folded (tall enough that Fine tuning is in view below the
+    // occlusion).
     h.set_size(egui::vec2(1280.0, 1800.0));
+    act(&mut h, A::ShowTab(olr_editor::DocTab::Level));
     act(&mut h, A::Select(Selection::None));
     h.get_by_label(labels::ADD_LOOK).click();
     h.run();
-    assert!(
-        h.query_by_label(labels::LOOK_AMBIENT).is_some() && h.query_by_label(labels::ADD_GROUP).is_some()
-    );
+    assert!(h.query_by_label(labels::LOOK_AMBIENT).is_some());
     assert!(h.query_by_label(labels::LOOK_MAX_LIGHT).is_none(), "under Fine tuning");
     assert!(!h.state().state.settings().fine_tuning_open);
     h.get_by_label(labels::FINE_TUNING).click();
@@ -1173,14 +1219,14 @@ fn make_parts_glow() {
     hover(&mut h, at);
     press(&mut h, at, true);
     press(&mut h, at, false);
-    let d = h.state().state.document().unwrap();
+    let d = h.state().state.active_document().unwrap();
     assert!(d.items()[d.index_of("tunnels").unwrap()].element.glow.is_some(), "the element glows");
     assert!(d.glow_mask("tunnels").is_some(), "in parts");
     // What the e2e script asserts.
     assert!(h.query_by_label("painted with the Glow brush (H)").is_some());
     h.get_by_label(labels::UNDO).click();
     h.run();
-    let d = h.state().state.document().unwrap();
+    let d = h.state().state.active_document().unwrap();
     assert!(d.items()[d.index_of("tunnels").unwrap()].element.glow.is_none(), "one step");
 }
 
@@ -1188,7 +1234,7 @@ fn make_parts_glow() {
 /// changes by hand; Assets is the asset library (issue #9).
 #[test]
 fn the_tab_follows_the_selection() {
-    let Some((_tmp, mut h)) = opened() else { return };
+    let Some((_tmp, mut h)) = opened_level() else { return };
     assert_eq!(h.state().state.tab(), PanelTab::Elements);
     h.get_by_label(labels::ASSETS).click();
     h.run();
@@ -1196,17 +1242,16 @@ fn the_tab_follows_the_selection() {
     h.get_by_label(labels::SPAWNS).click();
     h.run();
     assert_eq!(h.state().state.tab(), PanelTab::Spawns);
-    assert!(h.query_by_label("Tunnels").is_none(), "the element list is hidden");
-    // An element selected on the canvas shows Elements.
+    assert!(
+        h.query_by_label(labels::COPIES).is_some() && h.query_by_label("Ground").is_none(),
+        "the copies are hidden"
+    );
+    // The ground selected on the canvas shows Copies (issue #81).
     act(&mut h, A::Tool(Tool::Select));
-    let d = h.state().state.document().unwrap();
-    let ElementKind::Image { at, .. } = d.items()[d.index_of("gradient").unwrap()].element.kind else {
-        panic!("an image")
-    };
     for kind in [olr_editor::tools::PointerKind::Down, olr_editor::tools::PointerKind::Up] {
-        act(&mut h, A::Pointer { kind, world: (at.0 + 1, at.1 + 1), shift: false, toggle: false });
+        act(&mut h, A::Pointer { kind, world: (1, 1), shift: false, toggle: false });
     }
-    assert_eq!(h.state().state.selection(), &Selection::Element("gradient".into()));
+    assert_eq!(h.state().state.selection(), &Selection::Copy(GROUND_COPY.into()));
     assert_eq!(h.state().state.tab(), PanelTab::Elements);
     let at = canvas_point(&h, (0.0, 0.0));
     // A spawn placed shows Spawns; the selection dropped changes nothing.
@@ -1217,9 +1262,25 @@ fn the_tab_follows_the_selection() {
     assert_eq!(h.state().state.tab(), PanelTab::Spawns);
     act(&mut h, A::Select(Selection::None));
     assert_eq!(h.state().state.tab(), PanelTab::Spawns);
-    // An element selected otherwise (the list, a shortcut's action) shows Elements.
-    act(&mut h, A::Select(Selection::Element("tiny".into())));
+    // The ground selected otherwise (its row, an action) shows Copies.
+    act(&mut h, A::Select(Selection::Copy(GROUND_COPY.into())));
     assert_eq!(h.state().state.tab(), PanelTab::Elements);
+}
+
+/// Issue #81: the level tab's shortcuts choose its tools; the layer tools'
+/// say they are the asset tab's.
+#[test]
+fn the_level_tabs_shortcuts() {
+    let Some((_tmp, mut h)) = opened_level() else { return };
+    for tool in [Tool::Spawn, Tool::Haze, Tool::Select] {
+        let key = egui::Key::from_name(&tool.key().to_string()).unwrap();
+        h.key_press(key);
+        h.run();
+        assert_eq!(h.state().state.tool(), tool, "{}", tool.key());
+    }
+    h.key_press(egui::Key::B);
+    h.run();
+    assert_eq!(h.state().state.tool(), Tool::Select, "no brush in the level tab");
 }
 
 /// Issue #43 through the panels, by label: a material added from the
@@ -1230,7 +1291,7 @@ fn the_tab_follows_the_selection() {
 fn materials_through_the_panels() {
     let Some((_tmp, mut h)) = opened() else { return };
     let materials = |h: &Harness<'static, App>| -> Vec<String> {
-        h.state().state.document().unwrap().materials().iter().map(|m| m.id.clone()).collect()
+        h.state().state.active_document().unwrap().materials().iter().map(|m| m.id.clone()).collect()
     };
     // Nothing selected: the level's panel, its Materials last.
     for name in ["Stone", "Wood"] {
@@ -1256,7 +1317,7 @@ fn materials_through_the_panels() {
     picker(&mut h, labels::SURFACE, "Stone");
     picker(&mut h, labels::BACK_SURFACE, "Wood");
     let wall = |h: &Harness<'static, App>| {
-        let d = h.state().state.document().unwrap();
+        let d = h.state().state.active_document().unwrap();
         d.items()[d.index_of("wall").unwrap()].element.clone()
     };
     assert_eq!(
@@ -1286,7 +1347,7 @@ fn materials_through_the_panels() {
         press(h, end, false);
     };
     let maps = |h: &Harness<'static, App>| {
-        let d = h.state().state.document().unwrap();
+        let d = h.state().state.active_document().unwrap();
         let e = wall(h);
         (d.surface_map(&e, false).is_some(), d.surface_map(&e, true).is_some())
     };
@@ -1318,7 +1379,7 @@ fn materials_through_the_panels() {
 
     // Saved and opened again: the maps baked and kept.
     act(&mut h, A::Save);
-    let doc = h.state().state.document().unwrap();
+    let doc = h.state().state.active_document().unwrap();
     let (dir, baked) = (doc.dir().to_path_buf(), doc.level().surface.clone());
     assert!(baked.is_some(), "the bake has surfaces");
     let root = content().unwrap();
@@ -1353,7 +1414,8 @@ fn nested() -> Option<(tempfile::TempDir, Harness<'static, App>, String, String)
 
 /// `nested` in `harness_at(step_dt)`.
 fn nested_at(step_dt: f32) -> Option<(tempfile::TempDir, Harness<'static, App>, String, String)> {
-    let (tmp, state) = editor(&content()?);
+    let (tmp, mut state) = editor(&content()?);
+    crate::common::edit_ground(&mut state);
     let mut h = harness_at(state, step_dt);
     h.run();
     let outer = make_folder(&mut h, &["tiny", "gradient", "badge"], "Outer");
@@ -1363,7 +1425,7 @@ fn nested_at(step_dt: f32) -> Option<(tempfile::TempDir, Harness<'static, App>, 
 }
 
 fn folder_of(h: &Harness<'static, App>, id: &str) -> Option<String> {
-    let d = h.state().state.document().unwrap();
+    let d = h.state().state.active_document().unwrap();
     d.items()[d.index_of(id).unwrap()].element.folder.clone()
 }
 
@@ -1389,13 +1451,13 @@ fn the_list_shows_the_folder_tree() {
     // A folder's eye and lock act on its members.
     h.get_by_label(&labels::folder_visible("Inner")).click();
     h.run();
-    let d = h.state().state.document().unwrap();
+    let d = h.state().state.active_document().unwrap();
     let i = d.index_of("gradient").unwrap();
     assert!(!d.shown_at(i) && d.items()[i].element.visible, "hidden by Inner");
     assert!(d.shown_at(d.index_of("tiny").unwrap()));
     h.get_by_label(&labels::folder_locked("Outer")).click();
     h.run();
-    let d = h.state().state.document().unwrap();
+    let d = h.state().state.active_document().unwrap();
     assert!(d.locked_at(d.index_of("tiny").unwrap()) && d.locked_at(d.index_of("badge").unwrap()));
     // A click on a folder's row selects it, Ctrl adds.
     h.get_by_label("Inner").click();
@@ -1414,12 +1476,15 @@ fn rows_drag_into_out_of_and_between_folders() {
     // Onto a folder's row: into it, on top.
     drag_row(&mut h, "Tunnels", "Inner");
     assert_eq!(folder_of(&h, "tunnels").as_deref(), Some(inner.as_str()));
-    let d = h.state().state.document().unwrap();
+    let d = h.state().state.active_document().unwrap();
     assert_eq!(d.children(Some(&inner)).last().map(String::as_str), Some("tunnels"), "at its top");
     // Between two members: reordered among them.
     drag_row(&mut h, "Tunnels", "Gradient");
     assert_eq!(folder_of(&h, "tunnels").as_deref(), Some(inner.as_str()));
-    assert_eq!(h.state().state.document().unwrap().children(Some(&inner)), ["tunnels", "gradient", "badge"]);
+    assert_eq!(
+        h.state().state.active_document().unwrap().children(Some(&inner)),
+        ["tunnels", "gradient", "badge"]
+    );
     // Onto a row of the top level: out to it, in that row's place.
     drag_row(&mut h, "Tunnels", "Wall");
     assert_eq!(folder_of(&h, "tunnels"), None);
@@ -1463,7 +1528,7 @@ fn shift_selects_the_rows_shown() {
 /// The canvas point showing world pixel `w`.
 fn screen_of(h: &Harness<'static, App>, w: (i32, i32)) -> egui::Pos2 {
     let s = &h.state().state;
-    let p = s.view().to_screen(w, s.document().unwrap().level().art_scale);
+    let p = s.view().to_screen(w, s.active_document().unwrap().level().art_scale);
     h.state().data.canvas_rect().unwrap().min + egui::vec2(p[0] + 1.0, p[1] + 1.0)
 }
 
@@ -1522,22 +1587,22 @@ fn ctrl_g_groups_and_ctrl_shift_g_ungroups() {
     assert!(h.query_by_label(&labels::fold(&f)).is_none() && h.query_by_label("Folder 1").is_some());
     h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
     h.run();
-    assert!(h.state().state.document().unwrap().folders().is_empty(), "undone");
+    assert!(h.state().state.active_document().unwrap().folders().is_empty(), "undone");
     h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Y);
     h.run();
     act(&mut h, A::Select(Selection::Folder(f.clone())));
     h.key_press_modifiers(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, egui::Key::G);
     h.run();
-    assert!(h.state().state.document().unwrap().folders().is_empty(), "ungrouped");
+    assert!(h.state().state.active_document().unwrap().folders().is_empty(), "ungrouped");
     assert_eq!(h.state().state.tool(), Tool::Select);
     h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
     h.run();
-    assert_eq!(h.state().state.document().unwrap().folders().len(), 1, "regrouped by undo");
+    assert_eq!(h.state().state.active_document().unwrap().folders().len(), 1, "regrouped by undo");
     // The list's button and the panel's Ungroup.
     act(&mut h, A::Select(Selection::Folder(f)));
     h.get_by_label(labels::UNGROUP).click();
     h.run();
-    assert!(h.state().state.document().unwrap().folders().is_empty());
+    assert!(h.state().state.active_document().unwrap().folders().is_empty());
     act(&mut h, A::Select(Selection::Element("wall".into())));
     h.get_by_label(labels::NEW_FOLDER).click();
     h.run();
@@ -1553,7 +1618,7 @@ fn a_folders_panel_renames_it() {
     h.get_by_role_and_label(Role::TextInput, labels::NAME).type_text(" desk");
     h.run();
     let name = |h: &Harness<'static, App>| {
-        h.state().state.document().unwrap().folders().into_iter().find(|f| f.id == outer).unwrap().name
+        h.state().state.active_document().unwrap().folders().into_iter().find(|f| f.id == outer).unwrap().name
     };
     assert_eq!(name(&h), "Outer", "not while typing");
     h.key_press(egui::Key::Enter);
@@ -1572,7 +1637,7 @@ fn make_an_element_glass() {
     let Some((_tmp, mut h)) = opened() else { return };
     h.set_size(egui::vec2(1280.0, 1800.0));
     let glass = |h: &Harness<'static, App>| {
-        let d = h.state().state.document().unwrap();
+        let d = h.state().state.active_document().unwrap();
         d.items()[d.index_of("tunnels").unwrap()].element.glass
     };
     act(&mut h, A::Select(Selection::Element("badge".into())));
@@ -1601,7 +1666,7 @@ fn make_an_element_glass() {
     act(&mut h, A::Set("base".into(), olr_edit::element::Property::Visible(false)));
     act(&mut h, A::Select(Selection::Element("tunnels".into())));
     assert!(h.query_by_label(labels::GLASS_HINT).is_none());
-    let back = &h.state().state.document().unwrap().level().back;
+    let back = &h.state().state.active_document().unwrap().level().back;
     let glassy = (0..back.height())
         .flat_map(|y| (0..back.width()).map(move |x| (x, y)))
         .filter(|&(x, y)| back.get(x, y).a == 89)
@@ -1631,12 +1696,11 @@ fn a_group_casts_filtered() {
     let Some((_tmp, mut h)) = opened() else { return };
     h.set_size(egui::vec2(1280.0, 1800.0));
     act(&mut h, A::Select(Selection::None));
-    h.get_by_label(labels::ADD_LOOK).click();
-    h.run();
+    assert!(h.query_by_label(labels::ADD_LOOK).is_none(), "the ground's look is the level's");
     h.get_by_label(labels::ADD_GROUP).click();
     h.run();
     let colour = |h: &Harness<'static, App>| {
-        h.state().state.document().unwrap().level().look.clone().unwrap().glow_groups[0].colour
+        h.state().state.active_document().unwrap().level().look.clone().unwrap().glow_groups[0].colour
     };
     h.get_by_label(labels::FILTERED).click();
     h.run();
@@ -1662,7 +1726,7 @@ fn make_a_glow_directional() {
     let Some((_tmp, mut h)) = opened() else { return };
     h.set_size(egui::vec2(1280.0, 1800.0));
     let beam = |h: &Harness<'static, App>, id: &str| {
-        let d = h.state().state.document().unwrap();
+        let d = h.state().state.active_document().unwrap();
         d.items()[d.index_of(id).unwrap()].element.glow.as_ref().and_then(|g| g.beam)
     };
     h.get_by_label("Tunnels").click();
@@ -1683,7 +1747,7 @@ fn make_a_glow_directional() {
     assert_eq!(beam(&h, "tunnels"), at(166, 35));
     type_number(&mut h, labels::SPREAD, "15");
     assert_eq!(beam(&h, "tunnels"), at(166, 15));
-    let d = h.state().state.document().unwrap();
+    let d = h.state().state.active_document().unwrap();
     let maps = d.level().glow_beams.as_ref().expect("the bake has beams");
     let spreads = |l: &[u8]| l.chunks(2).filter(|t| t[1] == 15).count();
     assert!(spreads(&maps.front) + spreads(&maps.back) > 0, "beam texels");
@@ -1696,7 +1760,7 @@ fn make_a_glow_directional() {
     assert!(
         h.state()
             .state
-            .document()
+            .active_document()
             .unwrap()
             .items()
             .iter()
@@ -1715,17 +1779,17 @@ fn make_a_glow_directional() {
 /// The level's Haze % sets `look.haze`.
 #[test]
 fn set_the_haze() {
-    let Some((_tmp, mut h)) = opened() else { return };
+    let Some((_tmp, mut h)) = opened_level() else { return };
     h.set_size(egui::vec2(1280.0, 1800.0));
     act(&mut h, A::Select(Selection::None));
     h.get_by_label(labels::ADD_LOOK).click();
     h.run();
     type_number(&mut h, labels::HAZE, "40");
-    let look = h.state().state.document().unwrap().level().look.clone().unwrap();
+    let look = h.state().state.active_document().unwrap().level().look.clone().unwrap();
     assert_eq!(look.haze, 40);
     h.get_by_label(labels::UNDO).click();
     h.run();
-    let look = h.state().state.document().unwrap().level().look.clone().unwrap();
+    let look = h.state().state.active_document().unwrap().level().look.clone().unwrap();
     assert_eq!(look.haze, 0);
 }
 
@@ -1743,7 +1807,7 @@ fn paint_haze() {
         run(s, at((101, 100), Move));
         run(s, at((101, 100), Up));
     };
-    let haze = |s: &EditorState| s.document().unwrap().level().haze.clone();
+    let haze = |s: &EditorState| s.active_document().unwrap().level().haze.clone();
     run(&mut s, A::Tool(Tool::Haze));
     // 100 % over a new map changes nothing: no map, no step.
     stroke(&mut s);
@@ -1752,7 +1816,7 @@ fn paint_haze() {
     run(&mut s, A::HazeStrength(50));
     stroke(&mut s);
     let map = haze(&s).expect("the stroke made a map");
-    let (w, h) = s.document().unwrap().level().size;
+    let (w, h) = s.active_document().unwrap().level().size;
     assert_eq!(map.len(), (w * h) as usize);
     let i = (100 * w + 100) as usize;
     assert_eq!((map[i], map[0], map[map.len() - 1]), (128, 255, 255));
@@ -1815,7 +1879,7 @@ fn paint_an_asset(narrow: bool) {
     h.run();
     let assets = crate::common::set_library(&crate::common::built_in_assets(), &tmp.path().join("yours"));
     act(&mut h, A::AssetsChanged(assets));
-    let level = h.state().state.document().unwrap().to_asset();
+    let level = h.state().state.active_document().unwrap().to_asset();
     // The Asset switch waits for an asset.
     assert!(h.get_by_role_and_label(Role::Button, labels::ASSET_TAB).accesskit_node().is_disabled());
     let pick = |h: &mut Harness<'static, App>, role: Option<Role>, label: &str| {
@@ -2067,4 +2131,45 @@ fn expose_a_claw_and_give_states_values() {
         back.script.as_deref(),
         Some(format!("{}let x = 1;", olr_editor::parts_ops::NEW_SCRIPT).as_str())
     );
+}
+
+/// Issue #81's flow: the ground selected by its row in Copies, Edit in
+/// level, a stroke painted in the asset tab; the level tab shows it,
+/// unsaved, and Save keeps it.
+#[test]
+fn paint_the_ground_from_the_level() {
+    let Some((_tmp, mut h)) = opened_level() else { return };
+    let dir = h.state().state.document().unwrap().dir().to_path_buf();
+    h.get_by_label(labels::COPIES).click();
+    h.run();
+    h.get_by_label("Ground").click();
+    h.run();
+    h.get_by_label(labels::EDIT_IN_LEVEL).click();
+    h.run();
+    assert_eq!(h.state().state.doc_tab(), olr_editor::DocTab::Asset);
+    h.get_by_label("Tunnels").click();
+    h.run();
+    h.get_by_label(labels::DRAW).click();
+    h.run();
+    assert_eq!(h.state().state.tool(), Tool::Brush);
+    let before = h.state().state.document().unwrap().layer_art("tunnels").unwrap().clone();
+    let (from, to) = (canvas_point(&h, (-10.0, 0.0)), canvas_point(&h, (10.0, 0.0)));
+    hover(&mut h, from);
+    press(&mut h, from, true);
+    hover(&mut h, to);
+    press(&mut h, to, false);
+    let painted = h.state().state.active_document().unwrap().layer_art("tunnels").unwrap().clone();
+    assert_ne!(painted, before, "the stroke painted");
+    assert!(!h.state().state.dirty(), "the level not yet");
+    h.get_by_label(labels::LEVEL_TAB).click();
+    h.run();
+    let s = &h.state().state;
+    assert_eq!(s.doc_tab(), olr_editor::DocTab::Level);
+    assert_eq!(s.document().unwrap().layer_art("tunnels").unwrap(), &painted, "the paint shows");
+    assert!(s.dirty(), "the level unsaved");
+    file(&mut h, labels::SAVE);
+    assert!(!h.state().state.dirty());
+    let pack = olr_edit::pack::load(&dir).unwrap();
+    let saved = olr_editor::Document::open(pack, dir, h.state().state.catalog()).unwrap();
+    assert_eq!(saved.layer_art("tunnels").unwrap(), &painted);
 }

@@ -7,7 +7,7 @@ use olr_editor::view::{View, ZOOMS};
 use olr_editor::{EditorAction as A, EditorState, Selection};
 use olr_format::levels::{ElementKind, LevelObject};
 
-use crate::common::{content, editor, editor_at, run};
+use crate::common::{content, edit_ground, editor, ground, ground_at, run};
 
 fn pointer(s: &mut EditorState, kind: PointerKind, world: (i32, i32), shift: bool) {
     run(s, A::Pointer { kind, world, shift, toggle: false });
@@ -20,7 +20,7 @@ fn drag(s: &mut EditorState, from: (i32, i32), to: (i32, i32), shift: bool) {
 }
 
 fn image_box(s: &EditorState, id: &str) -> ((i32, i32), (u32, u32)) {
-    let d = s.document().unwrap();
+    let d = s.active_document().unwrap();
     match &d.items()[d.index_of(id).unwrap()].element.kind {
         ElementKind::Image { at, size, .. } => (*at, *size),
         _ => panic!("an image"),
@@ -28,7 +28,7 @@ fn image_box(s: &EditorState, id: &str) -> ((i32, i32), (u32, u32)) {
 }
 
 fn layer(s: &EditorState, id: &str) -> olr_data::image::RgbaImage {
-    s.document().unwrap().layer_art(id).unwrap().clone()
+    s.active_document().unwrap().layer_art(id).unwrap().clone()
 }
 
 #[test]
@@ -63,7 +63,7 @@ fn view_maps_both_ways_and_zooms_about_the_cursor() {
 #[test]
 fn a_brush_stroke_is_one_step() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     run(&mut s, A::AddLayer);
     let Selection::Element(id) = s.selection().clone() else { panic!("the new layer is selected") };
     run(&mut s, A::Tool(Tool::Brush));
@@ -80,7 +80,7 @@ fn a_brush_stroke_is_one_step() {
 #[test]
 fn a_stroke_off_the_level_is_clipped() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     run(&mut s, A::AddLayer);
     let Selection::Element(id) = s.selection().clone() else { panic!() };
     run(&mut s, A::Tool(Tool::Brush));
@@ -100,8 +100,8 @@ fn a_stroke_off_the_level_is_clipped() {
 #[test]
 fn moving_an_image_is_live_and_one_step() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
-    let processed = s.document().unwrap().cache_processed();
+    let (_tmp, mut s) = ground(&root);
+    let processed = s.active_document().unwrap().cache_processed();
     let (at, _) = image_box(&s, "tiny");
     pointer(&mut s, PointerKind::Down, (50, 40), false);
     assert_eq!(s.selection(), &Selection::Element("tiny".into()));
@@ -110,7 +110,7 @@ fn moving_an_image_is_live_and_one_step() {
     pointer(&mut s, PointerKind::Move, (55, 43), false);
     pointer(&mut s, PointerKind::Up, (55, 43), false);
     assert_eq!(image_box(&s, "tiny").0, (at.0 + 5, at.1 + 3));
-    assert_eq!(s.document().unwrap().cache_processed(), processed);
+    assert_eq!(s.active_document().unwrap().cache_processed(), processed);
     run(&mut s, A::Undo);
     assert_eq!(image_box(&s, "tiny").0, at);
     assert!(!s.can_undo(), "one step");
@@ -119,7 +119,7 @@ fn moving_an_image_is_live_and_one_step() {
 #[test]
 fn resizing_previews_then_applies() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     let (at, size) = image_box(&s, "tiny");
     run(&mut s, A::Select(Selection::Element("tiny".into())));
     let corner = (at.0 + size.0 as i32, at.1 + size.1 as i32);
@@ -143,9 +143,9 @@ fn resizing_previews_then_applies() {
 #[test]
 fn locked_elements_are_not_changed_by_the_canvas() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     run(&mut s, A::Set("tiny".into(), Property::Locked(true)));
-    let items = s.document().unwrap().items().to_vec();
+    let items = s.active_document().unwrap().items().to_vec();
     let refused = |s: &EditorState| s.status().message.clone().unwrap_or_default().contains("locked");
     drag(&mut s, (50, 40), (60, 50), false);
     assert!(refused(&s));
@@ -153,7 +153,7 @@ fn locked_elements_are_not_changed_by_the_canvas() {
     assert!(refused(&s));
     run(&mut s, A::Remove);
     assert!(refused(&s));
-    assert!(s.document().unwrap().items() == items.as_slice());
+    assert!(s.active_document().unwrap().items() == items.as_slice());
     run(&mut s, A::Undo);
     assert!(!s.can_undo(), "no step was recorded after the lock");
 
@@ -169,17 +169,22 @@ fn locked_elements_are_not_changed_by_the_canvas() {
 #[test]
 fn spawn_and_eyedropper() {
     let Some(root) = content() else { return };
+    // Issue #81: spawns are the level tab's, the paint the asset tab's.
     let (_tmp, mut s) = editor(&root);
-    let spawns = |s: &EditorState| s.document().unwrap().level().objects.len();
+    let spawns = |s: &EditorState| s.active_document().unwrap().level().objects.len();
     let n = spawns(&s);
     run(&mut s, A::Tool(Tool::Spawn));
     pointer(&mut s, PointerKind::Down, (50, 60), false);
     pointer(&mut s, PointerKind::Up, (50, 60), false);
     assert_eq!(spawns(&s), n + 1);
-    assert!(matches!(s.document().unwrap().level().objects[n], LevelObject::Spawn { at: (50, 60), .. }));
+    assert!(matches!(
+        s.active_document().unwrap().level().objects[n],
+        LevelObject::Spawn { at: (50, 60), .. }
+    ));
     run(&mut s, A::Undo);
     assert_eq!(spawns(&s), n);
 
+    edit_ground(&mut s);
     run(&mut s, A::Select(Selection::Element("tunnels".into())));
     run(&mut s, A::Tool(Tool::Brush));
     run(&mut s, A::Paint(PaintChoice::Colour(Rgba::rgb(1, 2, 3))));
@@ -194,7 +199,7 @@ fn spawn_and_eyedropper() {
 #[test]
 fn shapes_paint_on_release() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     run(&mut s, A::Select(Selection::Element("tunnels".into())));
     run(&mut s, A::Tool(Tool::Ellipse));
     let before = layer(&s, "tunnels");
@@ -213,7 +218,7 @@ fn shapes_paint_on_release() {
 #[test]
 fn pointers_report_the_cursor_and_material() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     pointer(&mut s, PointerKind::Move, (60, 50), false);
     assert_eq!(s.status().cursor, Some((60, 50)));
     assert!(s.status().material.is_some());
@@ -243,9 +248,9 @@ fn brush_dab_speed() {
 #[test]
 fn a_remove_mid_drag_records_the_move_first() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     let ids = |s: &EditorState| -> Vec<String> {
-        s.document().unwrap().items().iter().map(|i| i.element.id.clone()).collect()
+        s.active_document().unwrap().items().iter().map(|i| i.element.id.clone()).collect()
     };
     let start = ids(&s);
     let (at, _) = image_box(&s, "tiny");
@@ -265,7 +270,7 @@ fn a_remove_mid_drag_records_the_move_first() {
 #[test]
 fn an_undo_mid_stroke_ends_the_stroke_first() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     run(&mut s, A::Select(Selection::Element("tunnels".into())));
     run(&mut s, A::Tool(Tool::Brush));
     let before = layer(&s, "tunnels");
@@ -283,12 +288,12 @@ fn an_undo_mid_stroke_ends_the_stroke_first() {
 #[test]
 fn a_tool_change_mid_drag_keeps_the_move_undoable() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     let (at, _) = image_box(&s, "tiny");
     pointer(&mut s, PointerKind::Down, (50, 40), false);
     pointer(&mut s, PointerKind::Move, (60, 50), false);
     run(&mut s, A::Tool(Tool::Brush));
-    assert!(s.dirty() && s.can_undo());
+    assert!(s.active_dirty() && s.can_undo());
     run(&mut s, A::Undo);
     assert_eq!(image_box(&s, "tiny").0, at);
 }
@@ -309,28 +314,28 @@ fn view_maps_the_largest_levels() {
 
 /// The plain Dirt Level open: three layers.
 fn dirt_level() -> Option<(tempfile::TempDir, EditorState)> {
-    Some(editor_at(&content()?, std::path::Path::new("olx-level-dirt-level")))
+    Some(ground_at(&content()?, std::path::Path::new("olx-level-dirt-level")))
 }
 
 /// A world pixel of `m` in the bake.
 fn pixel_of(s: &EditorState, m: olr_data::level::Material) -> (i32, i32) {
-    let l = s.document().unwrap().level();
+    let l = s.active_document().unwrap().level();
     let i = l.material.iter().position(|c| *c == m).unwrap();
     ((i % l.size.0 as usize) as i32, (i / l.size.0 as usize) as i32)
 }
 
 fn material_at(s: &EditorState, (x, y): (i32, i32)) -> olr_data::level::Material {
-    let l = s.document().unwrap().level();
+    let l = s.active_document().unwrap().level();
     l.material[y as usize * l.size.0 as usize + x as usize]
 }
 
 fn bake(s: &EditorState) -> (Vec<olr_data::level::Material>, olr_data::image::RgbaImage) {
-    let l = s.document().unwrap().level();
+    let l = s.active_document().unwrap().level();
     (l.material.clone(), l.front.clone())
 }
 
 fn kind(s: &EditorState, id: &str) -> ElementKind {
-    let d = s.document().unwrap();
+    let d = s.active_document().unwrap();
     d.items()[d.index_of(id).unwrap()].element.kind.clone()
 }
 
@@ -357,7 +362,7 @@ fn a_stroke_of_rock_into_dirt_is_one_step() {
 #[test]
 fn the_eraser_masks_a_selected_image() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     let start = bake(&s);
     run(&mut s, A::Select(Selection::Element("tiny".into())));
     run(&mut s, A::Tool(Tool::Eraser));
@@ -372,7 +377,7 @@ fn the_eraser_masks_a_selected_image() {
 #[test]
 fn the_wand_removes_a_colour() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     let start = bake(&s);
     run(&mut s, A::Select(Selection::Element("gradient".into())));
     run(&mut s, A::Tool(Tool::Wand));
@@ -418,7 +423,7 @@ fn arrows_nudge_a_selected_drawn_layer() {
 fn a_stroke_that_changes_nothing_leaves_no_step() {
     use olr_format::levels::ElementMaterial;
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     run(&mut s, A::Select(Selection::Element("tiny".into())));
     run(&mut s, A::Tool(Tool::Eraser));
     drag(&mut s, (400, 300), (410, 300), false);
@@ -426,14 +431,14 @@ fn a_stroke_that_changes_nothing_leaves_no_step() {
     run(&mut s, A::Restore(true));
     drag(&mut s, (60, 45), (70, 45), false);
     assert!(matches!(kind(&s, "tiny"), ElementKind::Image { mask: false, .. }), "nothing to restore");
-    assert!(!s.can_undo() && !s.dirty());
+    assert!(!s.can_undo() && !s.active_dirty());
     let Some((_tmp, mut s)) = dirt_level() else { return };
     run(&mut s, A::Select(Selection::Element("dirt".into())));
     run(&mut s, A::Tool(Tool::Brush));
     run(&mut s, A::PaintMaterial(Some(ElementMaterial::Rock)));
     drag(&mut s, (-50, -50), (-40, -50), false);
     assert!(matches!(kind(&s, "dirt"), ElementKind::Drawn { mixed: false, .. }));
-    assert!(!s.can_undo() && !s.dirty());
+    assert!(!s.can_undo() && !s.active_dirty());
 }
 
 /// Batch C review 2: erasing a picture that lies off the level is still
@@ -441,14 +446,14 @@ fn a_stroke_that_changes_nothing_leaves_no_step() {
 #[test]
 fn masking_a_picture_off_the_level_is_recorded() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     run(&mut s, A::Set("tiny".into(), Property::At((-200, -200))));
     run(&mut s, A::Select(Selection::Element("tiny".into())));
     run(&mut s, A::Tool(Tool::Eraser));
     drag(&mut s, (-180, -180), (-170, -175), false);
     assert!(matches!(kind(&s, "tiny"), ElementKind::Image { mask: true, .. }));
     let erased = |s: &EditorState| {
-        let d = s.document().unwrap();
+        let d = s.active_document().unwrap();
         match &d.items()[d.index_of("tiny").unwrap()].decoded {
             olr_edit::compose::Decoded::Image { mask: Some(m), .. } => {
                 m.keep.iter().filter(|k| **k == 0).count()
@@ -476,7 +481,7 @@ fn masking_a_picture_off_the_level_is_recorded() {
 fn layer_move_speed() {
     let Some(root) = content() else { return };
     for id in ["olx-level-castlestrike", "olx-level-liero-factory"] {
-        let (_tmp, mut s) = editor_at(&root, std::path::Path::new(id));
+        let (_tmp, mut s) = ground_at(&root, std::path::Path::new(id));
         run(&mut s, A::Select(Selection::Element("rock".into())));
         run(&mut s, A::Nudge { dx: 1, dy: 0 });
         let start = std::time::Instant::now();
@@ -492,16 +497,16 @@ fn layer_move_speed() {
 #[test]
 fn the_wand_changes_nothing_twice() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     run(&mut s, A::Tool(Tool::Wand));
     drag(&mut s, (340, 230), (340, 230), false);
     assert!(s.status().message.as_deref().is_some_and(|m| m.contains("picture")), "{:?}", s.status().message);
     run(&mut s, A::Select(Selection::Element("gradient".into())));
     drag(&mut s, (340, 230), (340, 230), false);
     run(&mut s, A::Save);
-    assert!(!s.dirty());
+    assert!(!s.active_dirty());
     drag(&mut s, (340, 230), (340, 230), false);
-    assert!(!s.dirty(), "a second click on the removed region is no change");
+    assert!(!s.active_dirty(), "a second click on the removed region is no change");
 }
 
 /// Plan 14e R3: a texture repeats from the level's art origin, wherever the
@@ -510,7 +515,7 @@ fn the_wand_changes_nothing_twice() {
 fn a_texture_paints_in_step_with_the_world() {
     use olr_editor::tools::TextureRef;
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     run(&mut s, A::AddLayer);
     let Selection::Element(id) = s.selection().clone() else { panic!("the new layer is selected") };
     run(&mut s, A::Set(id.clone(), Property::At((3, 2))));
@@ -518,7 +523,7 @@ fn a_texture_paints_in_step_with_the_world() {
     run(&mut s, A::Paint(PaintChoice::Texture(TextureRef::Builtin(3))));
     drag(&mut s, (50, 50), (60, 52), false);
     let art = layer(&s, &id);
-    let sc = s.document().unwrap().level().art_scale;
+    let sc = s.active_document().unwrap().level().art_scale;
     let tile = olr_edit::textures::builtin().remove(3).image;
     let mut painted = 0;
     for ay in 0..art.height() {
@@ -536,7 +541,7 @@ fn a_texture_paints_in_step_with_the_world() {
 #[test]
 fn the_fill_tool_fills_one_step() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     run(&mut s, A::Select(Selection::Element("tunnels".into())));
     run(&mut s, A::Tool(Tool::Fill));
     run(&mut s, A::Paint(PaintChoice::Colour(Rgba::rgb(1, 2, 3))));
@@ -557,7 +562,7 @@ fn the_fill_tool_fills_one_step() {
 #[test]
 fn a_crater_brush_paints_the_hole_shape() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     let mask = s.catalog().themes[0].holes[0].clone();
     let (w, h) = mask.size;
     run(&mut s, A::AddLayer);
@@ -568,7 +573,7 @@ fn a_crater_brush_paints_the_hole_shape() {
     pointer(&mut s, PointerKind::Down, p, false);
     pointer(&mut s, PointerKind::Up, p, false);
     let art = layer(&s, &id);
-    let sc = s.document().unwrap().level().art_scale;
+    let sc = s.active_document().unwrap().level().art_scale;
     let (x0, y0) = (p.0 as u32 - w / 2, p.1 as u32 - h / 2);
     let mut painted = 0;
     for y in 0..art.height() / sc {
@@ -587,7 +592,7 @@ fn a_crater_brush_paints_the_hole_shape() {
 #[test]
 fn fill_on_a_picture_is_refused() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     run(&mut s, A::Select(Selection::Element("tiny".into())));
     run(&mut s, A::Tool(Tool::Fill));
     let start = bake(&s);
@@ -611,7 +616,7 @@ fn ctrl_click(s: &mut EditorState, world: (i32, i32)) {
 #[test]
 fn ctrl_clicks_build_a_group_on_the_canvas() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     run(&mut s, A::Tool(Tool::Select));
     ctrl_click(&mut s, (50, 40));
     ctrl_click(&mut s, (310, 210));
@@ -632,7 +637,7 @@ fn ctrl_clicks_build_a_group_on_the_canvas() {
 /// A covered pixel of `tunnels` with a 10 × 10 square from it inside the level.
 fn tunnel_square(s: &EditorState) -> (i32, i32) {
     let art = layer(s, "tunnels");
-    let sc = s.document().unwrap().level().art_scale;
+    let sc = s.active_document().unwrap().level().art_scale;
     let (w, h) = (art.width() / sc, art.height() / sc);
     (0..h.saturating_sub(10))
         .flat_map(|y| (0..w.saturating_sub(10)).map(move |x| (x, y)))
@@ -656,13 +661,13 @@ fn select_pixels(s: &mut EditorState, p: (i32, i32)) {
 #[test]
 fn pixels_copied_paste_as_a_layer() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     let p = tunnel_square(&s);
     select_pixels(&mut s, p);
     run(&mut s, A::Copy);
     run(&mut s, A::Paste);
     let Selection::Element(id) = s.selection().clone() else { panic!("{:?}", s.selection()) };
-    let d = s.document().unwrap();
+    let d = s.active_document().unwrap();
     let e = &d.items().last().unwrap().element;
     assert_eq!((e.id.as_str(), e.name.as_str()), (id.as_str(), "Pasted"));
     let ElementKind::Drawn { at, size, .. } = e.kind else { panic!("{:?}", e.kind) };
@@ -675,21 +680,21 @@ fn pixels_copied_paste_as_a_layer() {
         }
     }
     run(&mut s, A::Undo);
-    assert!(s.document().unwrap().index_of(&id).is_none(), "one step");
+    assert!(s.active_document().unwrap().index_of(&id).is_none(), "one step");
 }
 
 #[test]
 fn cut_pixels_erases_them_in_one_step() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     let p = tunnel_square(&s);
     let before = layer(&s, "tunnels");
     select_pixels(&mut s, p);
     run(&mut s, A::Cut);
-    let sc = s.document().unwrap().level().art_scale;
+    let sc = s.active_document().unwrap().level().art_scale;
     assert_eq!(layer(&s, "tunnels").get(p.0 as u32 * sc, p.1 as u32 * sc).a, 0, "cut out");
     run(&mut s, A::Paste);
-    assert!(s.document().unwrap().items().last().unwrap().element.name == "Pasted");
+    assert!(s.active_document().unwrap().items().last().unwrap().element.name == "Pasted");
     run(&mut s, A::Undo);
     run(&mut s, A::Undo);
     assert!(layer(&s, "tunnels") == before, "the cut is one step");
@@ -698,20 +703,20 @@ fn cut_pixels_erases_them_in_one_step() {
 #[test]
 fn delete_erases_the_pixel_rectangle() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     let p = tunnel_square(&s);
-    let n = s.document().unwrap().items().len();
+    let n = s.active_document().unwrap().items().len();
     select_pixels(&mut s, p);
     run(&mut s, A::Remove);
-    let sc = s.document().unwrap().level().art_scale;
+    let sc = s.active_document().unwrap().level().art_scale;
     assert_eq!(layer(&s, "tunnels").get(p.0 as u32 * sc, p.1 as u32 * sc).a, 0);
-    assert_eq!(s.document().unwrap().items().len(), n, "the layer stays");
+    assert_eq!(s.active_document().unwrap().items().len(), n, "the layer stays");
 }
 
 #[test]
 fn escape_drops_the_pixel_rectangle() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     let p = tunnel_square(&s);
     select_pixels(&mut s, p);
     assert!(s.overlays().iter().any(|o| matches!(o, Overlay::Outline { .. })), "its outline is drawn");
@@ -727,14 +732,14 @@ fn escape_drops_the_pixel_rectangle() {
 #[test]
 fn the_pixel_rectangle_follows_the_selection() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     let p = tunnel_square(&s);
     let before = layer(&s, "tunnels");
     select_pixels(&mut s, p);
     run(&mut s, A::Select(Selection::Element("tiny".into())));
     assert!(s.pixel_rect().is_none(), "another element chosen");
     run(&mut s, A::Remove);
-    assert!(s.document().unwrap().index_of("tiny").is_none(), "Delete deleted the selected element");
+    assert!(s.active_document().unwrap().index_of("tiny").is_none(), "Delete deleted the selected element");
     assert!(layer(&s, "tunnels") == before);
     // A rectangle on a pasted layer, the paste undone.
     run(&mut s, A::Undo);
@@ -754,7 +759,7 @@ fn the_pixel_rectangle_follows_the_selection() {
 #[test]
 fn a_stroke_keeps_its_paint() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     run(&mut s, A::AddLayer);
     let Selection::Element(id) = s.selection().clone() else { panic!() };
     run(&mut s, A::Tool(Tool::Brush));
@@ -764,7 +769,7 @@ fn a_stroke_keeps_its_paint() {
     run(&mut s, A::Paint(PaintChoice::Colour(Rgba::rgb(200, 0, 0))));
     pointer(&mut s, PointerKind::Move, (60, 20), false);
     pointer(&mut s, PointerKind::Up, (60, 20), false);
-    let sc = s.document().unwrap().level().art_scale;
+    let sc = s.active_document().unwrap().level().art_scale;
     assert_eq!(layer(&s, &id).get(60 * sc, 20 * sc), first);
 }
 
@@ -778,6 +783,7 @@ fn sparse_crater_editor(root: &std::path::Path) -> (tempfile::TempDir, EditorSta
     catalog.themes[0].holes = vec![std::sync::Arc::new(olr_edit::level::StampMask { size: (9, 9), cover })];
     let mut s = EditorState::new(olr_editor::EditorSettings::default(), catalog);
     run(&mut s, A::Open(dir));
+    edit_ground(&mut s);
     (tmp, s)
 }
 
@@ -792,7 +798,7 @@ fn crater_joins_are_half_a_crater_apart() {
     run(&mut s, A::Brush(Brush { shape: BrushShape::Crater(0), size: 9 }));
     drag(&mut s, (100, 100), (107, 100), false);
     let art = layer(&s, &id);
-    let sc = s.document().unwrap().level().art_scale;
+    let sc = s.active_document().unwrap().level().art_scale;
     let xs: Vec<u32> = (90..120).filter(|x| art.get(x * sc, 100 * sc).a != 0).collect();
     assert_eq!((xs.first(), xs.last()), (Some(&100), Some(&107)));
     for w in xs.windows(2) {
@@ -823,7 +829,7 @@ fn crater_scale_is_clamped_and_a_missing_hole_dabs_round() {
     pointer(&mut s, PointerKind::Down, (50, 50), false);
     pointer(&mut s, PointerKind::Up, (50, 50), false);
     let art = layer(&s, &id);
-    let sc = s.document().unwrap().level().art_scale;
+    let sc = s.active_document().unwrap().level().art_scale;
     let painted = (40..60)
         .flat_map(|y| (40..60).map(move |x| (x, y)))
         .filter(|&(x, y)| art.get(x * sc, y * sc).a != 0)
@@ -836,7 +842,7 @@ fn crater_scale_is_clamped_and_a_missing_hole_dabs_round() {
 #[test]
 fn the_pixel_rectangle_is_the_layers() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     run(&mut s, A::Select(Selection::Element("wall".into())));
     run(&mut s, A::Tool(Tool::SelectPixels));
     // While dragging, the outline is the clipped rectangle too.
@@ -855,12 +861,12 @@ fn the_pixel_rectangle_is_the_layers() {
 #[test]
 fn a_raster_in_a_group_stays_put() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     let t = image_box(&s, "tiny").0;
     run(&mut s, A::Select(Selection::Many(vec!["base".into(), "tiny".into()])));
     run(&mut s, A::Nudge { dx: 1, dy: 0 });
     assert_eq!(image_box(&s, "tiny").0, (t.0 + 1, t.1));
-    assert!(matches!(s.document().unwrap().items()[0].element.kind, ElementKind::Raster));
+    assert!(matches!(s.active_document().unwrap().items()[0].element.kind, ElementKind::Raster));
     run(&mut s, A::Undo);
     assert_eq!(image_box(&s, "tiny").0, t);
 }
@@ -870,7 +876,7 @@ fn a_raster_in_a_group_stays_put() {
 #[test]
 fn copying_pixels_of_nothing_says_so() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     let p = tunnel_square(&s);
     select_pixels(&mut s, p);
     // The layer moved away: the rectangle no longer covers it.

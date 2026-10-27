@@ -29,6 +29,14 @@ fn with_library() -> Option<(tempfile::TempDir, EditorState)> {
     Some((tmp, s))
 }
 
+/// `with_library`, the level's ground open in the asset tab (issue #81:
+/// Save as asset cuts its layers there).
+fn with_ground_library() -> Option<(tempfile::TempDir, EditorState)> {
+    let (tmp, mut s) = with_library()?;
+    crate::common::edit_ground(&mut s);
+    Some((tmp, s))
+}
+
 fn yours(id: &str) -> AssetKey {
     AssetKey { builtin: false, id: id.into() }
 }
@@ -44,13 +52,13 @@ fn drag(s: &mut EditorState, from: (i32, i32), to: (i32, i32)) {
 }
 
 fn top_ids(s: &EditorState, n: usize) -> Vec<String> {
-    let items = s.document().unwrap().items();
+    let items = s.active_document().unwrap().items();
     items[items.len() - n..].iter().map(|i| i.element.id.clone()).collect()
 }
 
 #[test]
 fn saving_the_selection_asks_its_name_and_writes_it_into_yours() {
-    let Some((tmp, mut s)) = with_library() else { return };
+    let Some((tmp, mut s)) = with_ground_library() else { return };
     // Nothing selected: nothing to save, said.
     run(&mut s, A::SaveAsAsset);
     assert!(s.dialog().is_none());
@@ -91,7 +99,7 @@ fn saving_the_selection_asks_its_name_and_writes_it_into_yours() {
 
 #[test]
 fn a_pixel_rectangle_saves_its_world_rectangle_of_every_visible_layer() {
-    let Some((_tmp, mut s)) = with_library() else { return };
+    let Some((_tmp, mut s)) = with_ground_library() else { return };
     // The wall's box starts at x 4: the rectangle shown is clipped to it,
     // the one saved is not.
     run(&mut s, A::Select(Selection::Element("wall".into())));
@@ -130,15 +138,15 @@ fn a_pixel_rectangle_saves_its_world_rectangle_of_every_visible_layer() {
 
 #[test]
 fn placing_is_one_step_that_selects_the_new_elements_and_adds_lighting() {
-    let Some((_tmp, mut s)) = with_library() else { return };
-    let before = s.document().unwrap().items().len();
-    assert_eq!(s.document().unwrap().level().look, None);
+    let Some((_tmp, mut s)) = with_ground_library() else { return };
+    let before = s.active_document().unwrap().items().len();
+    assert_eq!(s.active_document().unwrap().level().look, None);
     run(&mut s, A::PickAsset(Some(built_in("control-desk"))));
     assert!(s.placing());
     let cmds = run(&mut s, A::PlaceAsset { key: built_in("control-desk"), at: (100, 120) });
     assert!(cmds.iter().any(|c| matches!(c, C::ReadAsset { .. })), "{cmds:?}");
     assert!(!s.placing(), "placed once");
-    let doc = s.document().unwrap();
+    let doc = s.active_document().unwrap();
     assert_eq!(doc.items().len(), before + 3);
     let ids = top_ids(&s, 3);
     assert_eq!(ids, ["control-desk-background", "control-desk-screens", "control-desk-displays"]);
@@ -160,7 +168,7 @@ fn placing_is_one_step_that_selects_the_new_elements_and_adds_lighting() {
     assert_eq!(s.status().message.as_deref(), Some(olr_editor::asset_ops::ADDED_LIGHTING));
     // Placed where asked: the desk's box starts at the point.
     let at = |id: &str| {
-        let d = s.document().unwrap();
+        let d = s.active_document().unwrap();
         olr_format::levels::element_box(&d.items()[d.index_of(id).unwrap()].element.kind, d.level().size)
             .unwrap()
             .0
@@ -168,10 +176,10 @@ fn placing_is_one_step_that_selects_the_new_elements_and_adds_lighting() {
     assert_eq!(at("control-desk-background"), (100, 120));
     // One undo takes the elements and the look away together.
     run(&mut s, A::Undo);
-    assert_eq!(s.document().unwrap().items().len(), before);
-    assert_eq!(s.document().unwrap().level().look, None);
+    assert_eq!(s.active_document().unwrap().items().len(), before);
+    assert_eq!(s.active_document().unwrap().level().look, None);
     run(&mut s, A::Redo);
-    assert_eq!(s.document().unwrap().items().len(), before + 3);
+    assert_eq!(s.active_document().unwrap().items().len(), before + 3);
 }
 
 #[test]
@@ -251,7 +259,7 @@ fn placing_joins_or_adds_materials_and_lands_painted_maps() {
 
 #[test]
 fn removing_asks_first_and_only_yours() {
-    let Some((tmp, mut s)) = with_library() else { return };
+    let Some((tmp, mut s)) = with_ground_library() else { return };
     run(&mut s, A::Select(Selection::Element("tunnels".into())));
     run(&mut s, A::SaveAsAsset);
     run(&mut s, A::NameAsset("Tunnels".into()));
@@ -290,9 +298,9 @@ struct App {
 
 #[test]
 fn save_and_place_through_the_panels() {
-    let Some((tmp, state)) = with_library() else { return };
+    let Some((tmp, state)) = with_ground_library() else { return };
     let app = App { state, data: EditorData::default() };
-    let mut h = Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(
+    let mut h = Harness::builder().with_size(egui::vec2(1280.0, 720.0)).with_max_steps(16).build_ui_state(
         |ui, app: &mut App| {
             for a in ui::show(ui, &app.state, &mut app.data) {
                 run(&mut app.state, a);
@@ -310,6 +318,11 @@ fn save_and_place_through_the_panels() {
     h.get_by_label(labels::SAVE).click();
     h.run();
     assert!(tmp.path().join("yours/tunnels-pit/asset.ron").is_file());
+    // Issue #81: the level tab places it (into the ground, for now).
+    h.get_by_label(labels::LEVEL_TAB).click();
+    h.run();
+    h.get_by_label(labels::ASSETS).click();
+    h.run();
     // The Assets tab shows it under Yours, with the built-in ones.
     assert_eq!(h.state().state.tab(), PanelTab::Assets);
     h.get_by_label(labels::YOURS);
@@ -332,7 +345,8 @@ fn save_and_place_through_the_panels() {
     }
     let s = &h.state().state;
     assert_eq!(s.document().unwrap().items().len(), before + 1);
-    assert_eq!(s.selection(), &Selection::Element(top_ids(s, 1)[0].clone()));
+    // Issue #81: the level tab selects the ground it landed in.
+    assert_eq!(s.selection(), &Selection::Copy(olr_editor::ground::GROUND_COPY.into()));
     assert_eq!(top_ids(s, 1), ["tunnels-pit"]);
     assert!(!s.placing());
 }

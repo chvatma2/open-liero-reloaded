@@ -11,6 +11,7 @@ mod fits;
 mod flows;
 mod folders;
 mod history;
+mod level_tab;
 mod look;
 mod materials;
 mod properties;

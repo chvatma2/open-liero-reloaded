@@ -11,7 +11,7 @@ use olr_editor::tools::{PointerKind, Tool};
 use olr_editor::{DocError, Document, EditorAction as A, Selection};
 use olr_format::levels::{ElementMaterial, Folder};
 
-use crate::common::{catalog, content, copy_pack, editor_at, files, fixture, open_fixture, run, tree};
+use crate::common::{catalog, content, copy_pack, files, fixture, ground_at, open_fixture, run, tree};
 
 /// One step of `edits` recorded, undone and redone: each comes back to the
 /// same files. Returns the step's edits.
@@ -235,12 +235,12 @@ fn a_hidden_folder_hides_its_members() {
         run(s, A::Pointer { kind: PointerKind::Up, world: (70, 52), shift: false, toggle: false });
         s.selection().clone()
     };
-    let (_t, mut s) = editor_at(&root, &dir);
+    let (_t, mut s) = ground_at(&root, &dir);
     // A click selects the folder holding it (issue #61).
     assert_eq!(click(&mut s), Selection::Folder(f.clone()));
     olr_edit::element::set(&mut pack, &f, Property::Visible(false)).unwrap();
     olr_edit::pack::save(&dir, &pack).unwrap();
-    let (_t, mut s) = editor_at(&root, &dir);
+    let (_t, mut s) = ground_at(&root, &dir);
     assert_ne!(click(&mut s), Selection::Folder(f), "a hidden folder's member is not hit");
 }
 
@@ -333,12 +333,12 @@ fn the_editor_copies_a_filled_folder() {
     let mut pack = olr_edit::pack::load(&dir).unwrap();
     olr_edit::element::group(&mut pack, &ids(&["gradient", "badge"]), "Two").unwrap();
     olr_edit::pack::save(&dir, &pack).unwrap();
-    let (_t, mut s) = editor_at(&root, &dir);
+    let (_t, mut s) = ground_at(&root, &dir);
     run(&mut s, A::Select(Selection::Element("gradient".into())));
     run(&mut s, A::SelectToggle("badge".into()));
     run(&mut s, A::Copy);
     run(&mut s, A::Paste);
-    let doc = s.document().unwrap();
+    let doc = s.active_document().unwrap();
     assert_eq!(doc.folders().len(), 2, "the folder pasted anew");
     // The new folder is selected whole (issue #61).
     let Selection::Folder(new) = s.selection().clone() else { panic!("the copy selected") };
@@ -351,7 +351,7 @@ fn the_editor_copies_a_filled_folder() {
 /// images), with "Outer" holding tiny and "Inner" (gradient, badge), made
 /// through the editor's own actions.
 fn nested_editor(root: &Path) -> (tempfile::TempDir, olr_editor::EditorState, String, String) {
-    let (tmp, mut s) = crate::common::editor(root);
+    let (tmp, mut s) = crate::common::ground(root);
     for id in ["tunnels", "wall"] {
         run(&mut s, A::Set(id.into(), Property::Visible(false)));
     }
@@ -369,7 +369,7 @@ fn nested_editor(root: &Path) -> (tempfile::TempDir, olr_editor::EditorState, St
 }
 
 fn at(s: &olr_editor::EditorState, id: &str) -> (i32, i32) {
-    let d = s.document().unwrap();
+    let d = s.active_document().unwrap();
     match &d.items()[d.index_of(id).unwrap()].element.kind {
         olr_format::levels::ElementKind::Image { at, .. } => *at,
         _ => panic!("an image"),
@@ -445,7 +445,7 @@ fn clicks_select_the_outermost_folder_and_double_clicks_go_inside() {
 #[test]
 fn without_folders_a_click_selects_the_element() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = crate::common::editor(&root);
+    let (_tmp, mut s) = crate::common::ground(&root);
     for id in ["tunnels", "wall"] {
         run(&mut s, A::Set(id.into(), Property::Visible(false)));
     }
@@ -498,7 +498,7 @@ fn a_selected_folder_copies_deletes_and_saves_whole() {
     run(&mut s, A::Select(Selection::Folder(outer.clone())));
     // Its shared fields act on its elements, one step.
     run(&mut s, A::SetMany(vec![outer.clone()], Property::Material(ElementMaterial::Rock)));
-    let d = s.document().unwrap();
+    let d = s.active_document().unwrap();
     assert!(d.folder_members(&outer).iter().all(|m| matches!(
         &d.items()[d.index_of(m).unwrap()].element.kind,
         olr_format::levels::ElementKind::Image { material: ElementMaterial::Rock, .. }
@@ -507,7 +507,7 @@ fn a_selected_folder_copies_deletes_and_saves_whole() {
     // Copy and paste: a new folder with its subfolder, selected.
     run(&mut s, A::Copy);
     run(&mut s, A::Paste);
-    let d = s.document().unwrap();
+    let d = s.active_document().unwrap();
     let Selection::Folder(copy) = s.selection().clone() else { panic!("the pasted folder selected") };
     assert_ne!(copy, outer);
     assert_eq!((d.folder_members(&copy).len(), d.folders().len()), (3, 4));
@@ -515,10 +515,10 @@ fn a_selected_folder_copies_deletes_and_saves_whole() {
     // Delete takes it with its contents; undo brings them back.
     let n = d.items().len();
     run(&mut s, A::Remove);
-    let d = s.document().unwrap();
+    let d = s.active_document().unwrap();
     assert_eq!((d.items().len(), d.folders().len(), s.selection()), (n - 3, 2, &Selection::None));
     run(&mut s, A::Undo);
-    assert_eq!(s.document().unwrap().items().len(), n);
+    assert_eq!(s.active_document().unwrap().items().len(), n);
     // Save as asset: its elements, named after it.
     run(&mut s, A::Select(Selection::Folder(outer.clone())));
     run(&mut s, A::SaveAsAsset);
@@ -534,35 +534,35 @@ fn a_selected_folder_copies_deletes_and_saves_whole() {
 #[test]
 fn group_and_ungroup_the_selection_with_undo() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = crate::common::editor(&root);
+    let (_tmp, mut s) = crate::common::ground(&root);
     run(&mut s, A::GroupSelection);
     assert!(s.status().message.is_some(), "nothing selected: said");
     run(&mut s, A::Select(Selection::Many(ids(&["tiny", "badge"]))));
     run(&mut s, A::GroupSelection);
     let Selection::Folder(f) = s.selection().clone() else { panic!("the new folder selected") };
-    assert_eq!(s.document().unwrap().folder_members(&f), ids(&["tiny", "badge"]));
+    assert_eq!(s.active_document().unwrap().folder_members(&f), ids(&["tiny", "badge"]));
     run(&mut s, A::Undo);
-    assert!(s.document().unwrap().folders().is_empty());
+    assert!(s.active_document().unwrap().folders().is_empty());
     assert_eq!(s.selection(), &Selection::None, "the folder undone");
     run(&mut s, A::Redo);
     run(&mut s, A::Select(Selection::Folder(f.clone())));
     run(&mut s, A::Ungroup);
-    assert!(s.document().unwrap().folders().is_empty());
+    assert!(s.active_document().unwrap().folders().is_empty());
     assert_eq!(s.selection(), &Selection::Many(ids(&["tiny", "badge"])), "its members selected");
     run(&mut s, A::Undo);
-    assert_eq!(s.document().unwrap().folder_members(&f), ids(&["tiny", "badge"]));
+    assert_eq!(s.active_document().unwrap().folder_members(&f), ids(&["tiny", "badge"]));
     run(&mut s, A::Redo);
-    assert!(s.document().unwrap().folders().is_empty());
+    assert!(s.active_document().unwrap().folders().is_empty());
 }
 
 #[test]
 fn placing_a_two_piece_asset_selects_its_folder() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = crate::common::editor(&root);
-    let asset = s.document().unwrap().asset_of_elements(&ids(&["tiny", "gradient"]), "Pair").unwrap();
+    let (_tmp, mut s) = crate::common::ground(&root);
+    let asset = s.active_document().unwrap().asset_of_elements(&ids(&["tiny", "gradient"]), "Pair").unwrap();
     run(&mut s, A::AssetRead { at: (10, 10), asset: Ok(Box::new(asset)) });
     let Selection::Folder(f) = s.selection().clone() else { panic!("its folder selected") };
-    assert_eq!(folder(s.document().unwrap(), &f).name, "Pair");
+    assert_eq!(folder(s.active_document().unwrap(), &f).name, "Pair");
 }
 
 /// The tools that need one element, with a folder selected, refuse as with
@@ -571,7 +571,7 @@ fn placing_a_two_piece_asset_selects_its_folder() {
 fn a_tool_needing_one_element_says_to_double_click_in() {
     let Some(root) = content() else { return };
     let (_tmp, mut s, outer, _) = nested_editor(&root);
-    let before = files(s.document().unwrap());
+    let before = files(s.active_document().unwrap());
     for tool in
         [Tool::Brush, Tool::Eraser, Tool::Fill, Tool::Wand, Tool::Glow, Tool::Surface, Tool::SelectPixels]
     {
@@ -582,5 +582,5 @@ fn a_tool_needing_one_element_says_to_double_click_in() {
         assert!(said.contains(olr_editor::state::DOUBLE_CLICK_INTO), "{}: {said:?}", tool.name());
         assert!(s.pixel_rect().is_none());
     }
-    assert!(files(s.document().unwrap()) == before, "nothing changed");
+    assert!(files(s.active_document().unwrap()) == before, "nothing changed");
 }

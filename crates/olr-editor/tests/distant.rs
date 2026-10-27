@@ -13,7 +13,7 @@ use olr_editor::ui::{self, EditorData, labels};
 use olr_editor::{EditorAction as A, EditorCommand as C, EditorState, Selection};
 use olr_format::levels::ElementKind;
 
-use crate::common::{content, editor, run};
+use crate::common::{content, ground, run};
 
 struct App {
     state: EditorState,
@@ -23,15 +23,20 @@ struct App {
 
 fn harness(state: EditorState) -> Harness<'static, App> {
     let app = App { state, data: EditorData::default(), commands: Vec::new() };
-    Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(
-        |ui, app: &mut App| {
-            for a in ui::show(ui, &app.state, &mut app.data) {
-                let c = run(&mut app.state, a);
-                app.commands.extend(c);
-            }
-        },
-        app,
-    )
+    Harness::builder()
+        .with_size(egui::vec2(1280.0, 720.0))
+        // Issue #81: the asset tab follows a focus moved by key for a few
+        // passes.
+        .with_max_steps(16)
+        .build_ui_state(
+            |ui, app: &mut App| {
+                for a in ui::show(ui, &app.state, &mut app.data) {
+                    let c = run(&mut app.state, a);
+                    app.commands.extend(c);
+                }
+            },
+            app,
+        )
 }
 
 fn act(h: &mut Harness<'static, App>, action: A) {
@@ -42,11 +47,11 @@ fn act(h: &mut Harness<'static, App>, action: A) {
 }
 
 fn ids(state: &EditorState) -> Vec<String> {
-    state.document().unwrap().items().iter().map(|i| i.element.id.clone()).collect()
+    state.active_document().unwrap().items().iter().map(|i| i.element.id.clone()).collect()
 }
 
 fn depth(state: &EditorState, id: &str) -> Option<u8> {
-    let d = state.document().unwrap();
+    let d = state.active_document().unwrap();
     d.items()[d.index_of(id).unwrap()].element.distant
 }
 
@@ -71,7 +76,7 @@ fn sent(commands: &[C]) -> Option<&Vec<olr_data::level::DistantLayer>> {
 #[test]
 fn make_an_imported_image_distant() {
     let Some(root) = content() else { return };
-    let (_tmp, mut state) = editor(&root);
+    let (_tmp, mut state) = ground(&root);
     let id = import(&mut state);
     let mut h = harness(state);
     h.run();
@@ -98,7 +103,7 @@ fn make_an_imported_image_distant() {
     assert_eq!(sent(&h.state().commands).unwrap()[0].depth, 51, "sent again");
     // Hiding the base leaves the back see-through: the hint goes.
     act(&mut h, A::Set("base".into(), Property::Visible(false)));
-    let doc = h.state().state.document().unwrap();
+    let doc = h.state().state.active_document().unwrap();
     assert!(doc.see_through() && doc.has_holes());
     assert!(h.query_by_label(labels::DISTANT_HINT).is_none());
     // Undone, the element is back on top and no longer distant.
@@ -114,7 +119,7 @@ fn make_an_imported_image_distant() {
 #[test]
 fn distant_layers_keep_below_the_rest() {
     let Some(root) = content() else { return };
-    let (_tmp, mut state) = editor(&root);
+    let (_tmp, mut state) = ground(&root);
     let sky = import(&mut state);
     run(&mut state, A::Set(sky.clone(), Property::Material(olr_format::levels::ElementMaterial::Background)));
     run(&mut state, A::Set(sky.clone(), Property::Distant(Some(80))));
@@ -133,7 +138,7 @@ fn distant_layers_keep_below_the_rest() {
     let pasted = ids(&state)[1].clone();
     assert_ne!(pasted, sky);
     assert_eq!(depth(&state, &pasted), Some(80));
-    assert_eq!(state.document().unwrap().level().distant.len(), 2);
+    assert_eq!(state.active_document().unwrap().level().distant.len(), 2);
     // Neither merges nor splits.
     let before = ids(&state);
     run(&mut state, A::MergeDown(pasted.clone()));
@@ -151,7 +156,7 @@ fn distant_layers_keep_below_the_rest() {
 /// A depth-50 background image made distant, alone visible, on an
 /// 800 × 600 canvas: the state, its id, its place and box size.
 fn distant_sky(root: &std::path::Path) -> (tempfile::TempDir, EditorState, String, (i32, i32), (u32, u32)) {
-    let (tmp, mut state) = editor(root);
+    let (tmp, mut state) = ground(root);
     let sky = import(&mut state);
     run(&mut state, A::Set(sky.clone(), Property::Material(olr_format::levels::ElementMaterial::Background)));
     run(&mut state, A::Set(sky.clone(), Property::Distant(Some(50))));
@@ -160,7 +165,8 @@ fn distant_sky(root: &std::path::Path) -> (tempfile::TempDir, EditorState, Strin
         run(&mut state, A::Set(id, Property::Visible(false)));
     }
     run(&mut state, A::Canvas([800.0, 600.0]));
-    let ElementKind::Image { at, size: b, .. } = state.document().unwrap().items()[0].element.kind.clone()
+    let ElementKind::Image { at, size: b, .. } =
+        state.active_document().unwrap().items()[0].element.kind.clone()
     else {
         panic!("an image")
     };
@@ -169,7 +175,7 @@ fn distant_sky(root: &std::path::Path) -> (tempfile::TempDir, EditorState, Strin
 
 /// Where a depth-50 layer placed at `at` shows by the editor's camera.
 fn shown_at(state: &EditorState, at: (i32, i32)) -> (i32, i32) {
-    let size = state.document().unwrap().level().size;
+    let size = state.active_document().unwrap().level().size;
     let camera = state.parallax_camera().expect("a document");
     let d = |c: f32, side: u32| (0.5 * (c - side as f32 / 2.0)).round() as i32;
     (at.0 + d(camera.0, size.0), at.1 + d(camera.1, size.1))
@@ -217,7 +223,8 @@ fn the_canvas_shows_and_hits_distant_layers_where_they_draw() {
     }
     // Preview parallax: the canvas's centre is the camera.
     run(&mut state, A::PreviewParallax(true));
-    let (size, s) = (state.document().unwrap().level().size, state.document().unwrap().level().art_scale);
+    let (size, s) =
+        (state.active_document().unwrap().level().size, state.active_document().unwrap().level().art_scale);
     let centre = state.view().centre([800.0, 600.0], s);
     let level = (size.0 as f32 / 2.0, size.1 as f32 / 2.0);
     assert_eq!(state.parallax_camera(), Some(centre));
@@ -275,7 +282,7 @@ fn zooming_leaves_a_distant_layer_in_place() {
 #[test]
 fn a_distant_layer_glows_and_lights_the_level() {
     let Some(root) = content() else { return };
-    let (_tmp, mut state) = editor(&root);
+    let (_tmp, mut state) = ground(&root);
     let sky = import(&mut state);
     run(&mut state, A::Set(sky.clone(), Property::Material(olr_format::levels::ElementMaterial::Background)));
     run(&mut state, A::Set(sky.clone(), Property::Distant(Some(50))));
@@ -286,12 +293,12 @@ fn a_distant_layer_glows_and_lights_the_level() {
     h.get_by_label(labels::GLOW).click();
     h.run();
     let glow = |h: &Harness<'static, App>| {
-        let d = h.state().state.document().unwrap();
+        let d = h.state().state.active_document().unwrap();
         d.items()[d.index_of(&sky).unwrap()].element.glow.clone()
     };
     let g = glow(&h).expect("the distant layer glows");
     assert_eq!((g.strength, g.mask), (100, false));
-    let doc = h.state().state.document().unwrap();
+    let doc = h.state().state.active_document().unwrap();
     let groups: Vec<_> =
         doc.level().look.iter().flat_map(|l| l.glow_groups.iter().map(|g| g.id.clone())).collect();
     assert_eq!(groups, std::slice::from_ref(&g.group));
@@ -313,7 +320,7 @@ fn a_distant_layer_glows_and_lights_the_level() {
     run(&mut app.state, A::Tool(Tool::Glow));
     run(&mut app.state, A::GlowStrength(0));
     let camera = app.state.parallax_camera().unwrap();
-    let size = app.state.document().unwrap().level().size;
+    let size = app.state.active_document().unwrap().level().size;
     let d = |c: f32, side: u32| (0.5 * (c - side as f32 / 2.0)).round() as i32;
     let shown = (cx as i32 + d(camera.0, size.0), cy as i32 + d(camera.1, size.1));
     for kind in [PointerKind::Down, PointerKind::Up] {
@@ -322,7 +329,7 @@ fn a_distant_layer_glows_and_lights_the_level() {
     }
     let state = &h.state().state;
     assert!(glow(&h).unwrap().mask, "painted");
-    let doc = state.document().unwrap();
+    let doc = state.active_document().unwrap();
     let local = ((cy - at.1 as u32) * s * b.0 * s + (cx - at.0 as u32) * s) as usize;
     assert_eq!(doc.glow_mask(&sky).unwrap()[local], 0);
     assert_eq!(doc.level().glow.as_ref().unwrap().back[(cy * s * aw + cx * s) as usize], 0, "baked dark");
@@ -333,6 +340,6 @@ fn a_distant_layer_glows_and_lights_the_level() {
     assert!(!glow(&h).unwrap().mask);
     act(&mut h, A::Undo);
     assert_eq!(glow(&h), None);
-    assert!(h.state().state.document().unwrap().level().glow.is_none());
+    assert!(h.state().state.active_document().unwrap().level().glow.is_none());
     assert!(sent(&h.state().commands).unwrap()[0].glow.is_none());
 }

@@ -285,3 +285,32 @@ pub fn list_dir(dir: &Path) -> Vec<olr_editor::browser::DirEntry> {
     olr_editor::browser::sort_entries(&mut out);
     out
 }
+
+/// Edit in level (issue #81): the level's ground selected (its row in
+/// Copies) and opened in the asset tab, where its layers are painted.
+pub fn edit_ground(state: &mut olr_editor::EditorState) {
+    use olr_editor::{EditorAction, Selection};
+    run(state, EditorAction::Select(Selection::Copy(olr_editor::ground::GROUND_COPY.into())));
+    run(state, EditorAction::EditGround);
+    assert!(state.ground_open(), "the ground opened in the asset tab");
+}
+
+/// The fixture, copied and opened, its ground in the asset tab (issue
+/// #81: the layer tests' document).
+pub fn ground(root: &Path) -> (tempfile::TempDir, olr_editor::EditorState) {
+    ground_at(root, &fixture())
+}
+
+/// `editor_at`, its ground in the asset tab.
+pub fn ground_at(root: &Path, pack: &Path) -> (tempfile::TempDir, olr_editor::EditorState) {
+    let (tmp, mut state) = editor_at(root, pack);
+    edit_ground(&mut state);
+    (tmp, state)
+}
+
+/// A level tab's edit (issue #81: its layers are the asset tab's): the
+/// level renamed `name`, one step.
+pub fn rename_level(state: &olr_editor::EditorState, name: &str) -> olr_editor::EditorAction {
+    let meta = state.document().expect("a level").meta();
+    olr_editor::EditorAction::Meta(olr_editor::LevelMeta { name: name.into(), ..meta })
+}

@@ -180,7 +180,8 @@ fn the_tabs_keep_their_own_history_and_unsaved_mark() {
     run(&mut s, A::ShowTab(DocTab::Level));
     assert_eq!(s.doc_tab(), DocTab::Level);
     assert!(!s.active_dirty() && !s.can_undo(), "the level's own mark and history");
-    run(&mut s, A::Set("tunnels".into(), Property::Name("Caves".into())));
+    let rename = crate::common::rename_level(&s, "Caves");
+    run(&mut s, rename);
     assert!(s.dirty() && s.can_undo());
     run(&mut s, A::ShowTab(DocTab::Asset));
     assert_eq!(s.selection(), &Selection::Element("rock".into()), "the asset tab's selection");
@@ -188,15 +189,12 @@ fn the_tabs_keep_their_own_history_and_unsaved_mark() {
     run(&mut s, A::Undo);
     assert_eq!(pixel(&s, "rock", (5, 1)), was, "the asset's stroke undone");
     assert!(!s.can_undo());
-    let level = s.document().unwrap();
-    let tunnels = &level.items()[level.index_of("tunnels").unwrap()].element;
-    assert_eq!(tunnels.name, "Caves", "the level's edit stays");
+    assert_eq!(s.document().unwrap().level().name, "Caves", "the level's edit stays");
     assert!(s.dirty());
     run(&mut s, A::ShowTab(DocTab::Level));
     assert!(s.can_undo());
     run(&mut s, A::Undo);
-    let level = s.document().unwrap();
-    assert_eq!(level.items()[level.index_of("tunnels").unwrap()].element.name, "Tunnels");
+    assert_ne!(s.document().unwrap().level().name, "Caves");
 }
 
 #[test]
@@ -206,7 +204,8 @@ fn close_asks_for_each_unsaved_tab() {
     run(&mut s, A::EditAsset(key));
     stroke(&mut s, "rock", PaintChoice::Colour(RED), (5, 1));
     run(&mut s, A::ShowTab(DocTab::Level));
-    run(&mut s, A::Set("tunnels".into(), Property::Name("Caves".into())));
+    let rename = crate::common::rename_level(&s, "Caves");
+    run(&mut s, rename);
     let cmds = run(&mut s, A::Close);
     assert!(cmds.is_empty());
     assert_eq!(s.dialog(), Some(&Dialog::Unsaved { then: Pending::CloseAsset }), "the asset first");
@@ -245,7 +244,8 @@ fn recovery_is_the_levels() {
     assert!(!s.dirty());
     assert!(!s.document().unwrap().is_asset());
     run(&mut s, A::ShowTab(DocTab::Level));
-    run(&mut s, A::Set("tunnels".into(), Property::Name("Caves".into())));
+    let rename = crate::common::rename_level(&s, "Caves");
+    run(&mut s, rename);
     run(&mut s, A::ShowTab(DocTab::Asset));
     // Both unsaved, the asset shown: the level's document and mark.
     assert!(s.active_dirty() && s.dirty());

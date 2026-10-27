@@ -4,12 +4,12 @@
 use olr_edit::element::Property;
 use olr_editor::state::ClockAction;
 use olr_editor::tools::{PointerKind, Tool};
-use olr_editor::{Choice, Dialog, EditorAction as A, EditorCommand as C, Selection};
+use olr_editor::{Choice, Dialog, DocTab, EditorAction as A, EditorCommand as C, Selection};
 use olr_format::levels::{ElementGlow, LevelObject};
 use olr_format::look::{LookSource, ReachSource};
 use olr_look::ViewMode;
 
-use crate::common::{catalog, content, editor, editor_at, run};
+use crate::common::{catalog, content, editor, editor_at, ground, ground_at, run};
 
 fn upload(cmds: &[C]) -> bool {
     cmds.iter().any(|c| matches!(c, C::Upload(_)))
@@ -22,34 +22,34 @@ fn glow_tunnels(s: &mut olr_editor::EditorState) -> Vec<C> {
 }
 
 fn groups(s: &olr_editor::EditorState) -> Vec<String> {
-    let doc = s.document().unwrap();
+    let doc = s.active_document().unwrap();
     doc.level().look.iter().flat_map(|l| l.glow_groups.iter().map(|g| g.id.clone())).collect()
 }
 
 fn element_glow(s: &olr_editor::EditorState, id: &str) -> Option<ElementGlow> {
-    let doc = s.document().unwrap();
+    let doc = s.active_document().unwrap();
     doc.items()[doc.index_of(id).unwrap()].element.glow.clone()
 }
 
 #[test]
 fn a_new_glow_makes_a_group() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     assert!(upload(&glow_tunnels(&mut s)));
     assert_eq!(groups(&s), ["tunnels"]);
     assert_eq!(element_glow(&s, "tunnels").unwrap().group, "tunnels");
-    assert!(s.document().unwrap().level().glow.is_some(), "the bake glows");
+    assert!(s.active_document().unwrap().level().glow.is_some(), "the bake glows");
     // One step: undo takes the glow and its group.
     run(&mut s, A::Undo);
     assert!(groups(&s).is_empty());
     assert_eq!(element_glow(&s, "tunnels"), None);
-    assert!(s.document().unwrap().level().glow.is_none());
+    assert!(s.active_document().unwrap().level().glow.is_none());
 }
 
 #[test]
 fn glow_brush_paints_the_mask_in_one_step() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     glow_tunnels(&mut s);
     run(&mut s, A::Select(Selection::Element("tunnels".into())));
     run(&mut s, A::Tool(Tool::Glow));
@@ -59,7 +59,7 @@ fn glow_brush_paints_the_mask_in_one_step() {
     assert!(upload(&run(&mut s, at((100, 100), Down))));
     run(&mut s, at((140, 100), Move));
     run(&mut s, at((140, 100), Up));
-    let doc = s.document().unwrap();
+    let doc = s.active_document().unwrap();
     let a = doc.level().art_scale;
     let width = doc.level().size.0 * a;
     let mask = doc.glow_mask("tunnels").expect("a painted mask");
@@ -70,14 +70,14 @@ fn glow_brush_paints_the_mask_in_one_step() {
     run(&mut s, A::Undo);
     assert!(!element_glow(&s, "tunnels").unwrap().mask);
     run(&mut s, A::Redo);
-    let doc = s.document().unwrap();
+    let doc = s.active_document().unwrap();
     assert_eq!(doc.glow_mask("tunnels").unwrap()[(100 * a * width + 120 * a) as usize], 0);
 }
 
 #[test]
 fn removing_a_group_unglows_in_one_step() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     glow_tunnels(&mut s);
     assert!(run(&mut s, A::RemoveGroup("tunnels".into())).is_empty(), "asks first");
     assert!(matches!(s.dialog(), Some(Dialog::RemoveGroup { .. })));
@@ -92,22 +92,22 @@ fn removing_a_group_unglows_in_one_step() {
 #[test]
 fn look_edits_undo() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     let mut look = LookSource::default();
     look.ambient.intensity = 30;
     look.light_soak = 4;
-    assert!(s.document().unwrap().level().look.is_none());
+    assert!(s.active_document().unwrap().level().look.is_none());
     run(&mut s, A::SetLook(Some(look.clone())));
-    assert_eq!(s.document().unwrap().level().look, Some(look));
-    assert!(s.dirty());
+    assert_eq!(s.active_document().unwrap().level().look, Some(look));
+    assert!(s.active_dirty());
     run(&mut s, A::Undo);
-    assert_eq!(s.document().unwrap().level().look, None);
+    assert_eq!(s.active_document().unwrap().level().look, None);
 }
 
 #[test]
 fn the_clock_plays_pauses_and_scrubs() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     assert_eq!(s.clock_ms(), 0.0);
     s.advance_clock(16.0);
     assert_eq!(s.clock_ms(), 0.0, "paused at first");
@@ -125,13 +125,13 @@ fn the_clock_plays_pauses_and_scrubs() {
     assert_eq!(s.view_mode(), ViewMode::Lit);
     run(&mut s, A::SetViewMode(ViewMode::LightOnly));
     assert_eq!(s.view_mode(), ViewMode::LightOnly);
-    assert!(!s.dirty(), "the view and the clock are no edits");
+    assert!(!s.active_dirty(), "the view and the clock are no edits");
 }
 
 #[test]
 fn look_survives_save_and_reopen() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     glow_tunnels(&mut s);
     run(&mut s, A::Select(Selection::Element("tunnels".into())));
     run(&mut s, A::Tool(Tool::Glow));
@@ -141,7 +141,7 @@ fn look_survives_save_and_reopen() {
     run(&mut s, at((100, 100), Down));
     run(&mut s, at((100, 100), Up));
     run(&mut s, A::Set("wall".into(), Property::Clear(true)));
-    let before = s.document().unwrap();
+    let before = s.active_document().unwrap();
     let (level, mask) = (before.level().clone(), before.glow_mask("tunnels").unwrap().to_vec());
     let dir = before.dir().to_path_buf();
     run(&mut s, A::Save);
@@ -163,7 +163,7 @@ fn look_survives_save_and_reopen() {
 #[test]
 fn locked_elements_refuse_glow() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     run(&mut s, A::Set("tunnels".into(), Property::Locked(true)));
     assert!(!upload(&glow_tunnels(&mut s)));
     assert_eq!(element_glow(&s, "tunnels"), None);
@@ -177,7 +177,7 @@ fn locked_elements_refuse_glow() {
     use PointerKind::{Down, Up};
     run(&mut s, at((100, 100), Down));
     run(&mut s, at((100, 100), Up));
-    assert!(s.document().unwrap().glow_mask("tunnels").is_none(), "the brush refused");
+    assert!(s.active_document().unwrap().glow_mask("tunnels").is_none(), "the brush refused");
 }
 
 /// Batch A review Important 2: a plain level whose glow and clear solids
@@ -197,7 +197,7 @@ fn a_plain_level_keeps_its_glow_and_clear() {
     src.clear = Some((0..w * h).map(|i| u8::from(i % 3 == 0) * 255).collect());
     olr_format::levels::write_level_files(&mut olr_vfs::DirFs::new(&dir), &src).unwrap();
     let (_t, mut st) = editor_at(&root, &dir);
-    let doc = st.document().unwrap();
+    let doc = st.active_document().unwrap();
     assert!(doc.diagnostics().iter().any(|p| p.text.contains("outside the editor")), "it says so");
     assert_eq!((&doc.level().glow, &doc.level().clear), (&src.glow, &src.clear));
     // The editor opened its own copy: what it saves is there.
@@ -232,7 +232,7 @@ fn a_plain_level_keeps_its_glow_beams() {
     src.glow_beams = Some(beams);
     olr_format::levels::write_level_files(&mut olr_vfs::DirFs::new(&dir), &src).unwrap();
     let (_t, mut st) = editor_at(&root, &dir);
-    let doc = st.document().unwrap();
+    let doc = st.active_document().unwrap();
     assert!(src.glow_beams.is_some() && doc.level().glow_beams == src.glow_beams, "the bake keeps them");
     let saved_dir = doc.dir().to_path_buf();
     let meta = olr_editor::LevelMeta { name: "Renamed".into(), ..doc.meta() };
@@ -252,12 +252,12 @@ fn paint_glow_on(s: &mut olr_editor::EditorState, id: &str, at: (i32, i32)) {
     let p = |kind| A::Pointer { kind, world: at, shift: false, toggle: false };
     run(s, p(PointerKind::Down));
     run(s, p(PointerKind::Up));
-    assert!(s.document().unwrap().glow_mask(id).is_some());
+    assert!(s.active_document().unwrap().glow_mask(id).is_some());
 }
 
 /// The mask fits its element's box (× art scale), and the pack saves clean.
 fn saves_clean(s: &mut olr_editor::EditorState, id: &str) {
-    let doc = s.document().unwrap();
+    let doc = s.active_document().unwrap();
     let e = &doc.items()[doc.index_of(id).unwrap()].element;
     let (_, b) = olr_format::levels::element_box(&e.kind, doc.level().size).unwrap();
     let a = doc.level().art_scale;
@@ -265,7 +265,7 @@ fn saves_clean(s: &mut olr_editor::EditorState, id: &str) {
     assert_eq!(mask.len() as u32, b.0 * a * b.1 * a, "the mask fits the box");
     let dir = doc.dir().to_path_buf();
     let cmds = run(s, A::Save);
-    assert!(!s.dirty(), "saved: {cmds:?} {:?}", s.dialog());
+    assert!(!s.active_dirty(), "saved: {cmds:?} {:?}", s.dialog());
     let errors: Vec<_> = olr_pack::validate(&olr_vfs::DirFs::new(&dir))
         .into_iter()
         .filter(|d| d.severity == olr_pack::Severity::Error)
@@ -277,13 +277,13 @@ fn saves_clean(s: &mut olr_editor::EditorState, id: &str) {
 #[test]
 fn a_resized_masked_image_keeps_its_mask() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     paint_glow_on(&mut s, "badge", (10, 120));
     run(&mut s, A::Set("badge".into(), Property::Size((96, 72))));
     saves_clean(&mut s, "badge");
     run(&mut s, A::Undo);
-    let len = s.document().unwrap().glow_mask("badge").unwrap().len() as u32;
-    let a = s.document().unwrap().level().art_scale;
+    let len = s.active_document().unwrap().glow_mask("badge").unwrap().len() as u32;
+    let a = s.active_document().unwrap().level().art_scale;
     assert_eq!(len, 48 * a * 48 * a, "undo takes the old mask back");
 }
 
@@ -291,9 +291,11 @@ fn a_resized_masked_image_keeps_its_mask() {
 #[test]
 fn a_level_resize_keeps_a_layers_mask() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     paint_glow_on(&mut s, "tunnels", (100, 100));
-    let (w, h) = s.document().unwrap().level().size;
+    // Issue #81: the level tab resizes the level, its ground with it.
+    run(&mut s, A::ShowTab(DocTab::Level));
+    let (w, h) = s.active_document().unwrap().level().size;
     let resize = A::Resize {
         size: (w + 20, h),
         offset: (10, 0),
@@ -301,7 +303,7 @@ fn a_level_resize_keeps_a_layers_mask() {
         colour: olr_data::image::Rgba::BLACK,
     };
     run(&mut s, resize);
-    let doc = s.document().unwrap();
+    let doc = s.active_document().unwrap();
     let a = doc.level().art_scale;
     let mask = doc.glow_mask("tunnels").unwrap();
     assert_eq!(mask[(100 * a * (w + 20) * a + 110 * a) as usize], 0, "the dab moved with the layer");
@@ -312,12 +314,14 @@ fn a_level_resize_keeps_a_layers_mask() {
 #[test]
 fn art_scale_rescales_glow_masks() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     paint_glow_on(&mut s, "tunnels", (100, 100));
-    let a = s.document().unwrap().level().art_scale;
+    // Issue #81: the art scale is the level tab's.
+    run(&mut s, A::ShowTab(DocTab::Level));
+    let a = s.active_document().unwrap().level().art_scale;
     run(&mut s, A::ArtScale(a + 1));
     run(&mut s, A::Choose(Choice::Confirm));
-    assert_eq!(s.document().unwrap().level().art_scale, a + 1);
+    assert_eq!(s.active_document().unwrap().level().art_scale, a + 1);
     saves_clean(&mut s, "tunnels");
 }
 
@@ -325,20 +329,20 @@ fn art_scale_rescales_glow_masks() {
 #[test]
 fn paste_keeps_the_glow_mask() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     paint_glow_on(&mut s, "badge", (10, 120));
-    let mask = s.document().unwrap().glow_mask("badge").unwrap().to_vec();
+    let mask = s.active_document().unwrap().glow_mask("badge").unwrap().to_vec();
     run(&mut s, A::Select(Selection::Element("badge".into())));
     run(&mut s, A::Copy);
     run(&mut s, A::Paste);
     let Selection::Element(id) = s.selection().clone() else { panic!("the paste is selected") };
     assert_ne!(id, "badge");
-    assert_eq!(s.document().unwrap().glow_mask(&id), Some(&mask[..]));
+    assert_eq!(s.active_document().unwrap().glow_mask(&id), Some(&mask[..]));
     saves_clean(&mut s, &id);
     // Removing it, then undoing, keeps its mask too.
     run(&mut s, A::Remove);
     run(&mut s, A::Undo);
-    assert_eq!(s.document().unwrap().glow_mask(&id), Some(&mask[..]));
+    assert_eq!(s.active_document().unwrap().glow_mask(&id), Some(&mask[..]));
 }
 
 /// Batch D review Important 2: a plain level's kept glow follows its look:
@@ -365,18 +369,20 @@ fn a_plain_levels_kept_glow_follows_look_edits() {
     glow.groups.iter_mut().enumerate().for_each(|(i, g)| *g = 1 + (i % 2) as u8);
     src.glow = Some(glow);
     olr_format::levels::write_level_files(&mut olr_vfs::DirFs::new(&dir), &src).unwrap();
-    let (_t, mut st) = editor_at(&root, &dir);
+    let (_t, mut st) = ground_at(&root, &dir);
     run(&mut st, A::RemoveGroup("a".into()));
     run(&mut st, A::Choose(Choice::Confirm));
-    let g = st.document().unwrap().level().glow.clone().unwrap();
+    let g = st.active_document().unwrap().level().glow.clone().unwrap();
     assert!(g.groups.iter().all(|v| *v <= 1), "group b is now 1, a's pixels 0");
     assert!(g.groups.contains(&1) && g.groups.contains(&0));
-    let saved_dir = st.document().unwrap().dir().to_path_buf();
+    let saved_dir = st.active_document().unwrap().dir().to_path_buf();
     run(&mut st, A::Save);
-    assert!(!st.dirty(), "{:?}", st.dialog());
+    assert!(!st.active_dirty(), "{:?}", st.dialog());
     let saved = olr_format::levels::read_level_files(&olr_vfs::DirFs::new(&saved_dir)).unwrap();
     assert_eq!(saved.glow, Some(g));
-    // A resize re-lays the kept glow and clear flags, as `level resize` does.
+    // A resize re-lays the kept glow and clear flags, as `level resize` does
+    // (issue #81: the level tab's).
+    run(&mut st, A::ShowTab(DocTab::Level));
     let resize = A::Resize {
         size: (w + 8, h),
         offset: (0, 0),
@@ -384,7 +390,7 @@ fn a_plain_levels_kept_glow_follows_look_edits() {
         colour: olr_data::image::Rgba::BLACK,
     };
     run(&mut st, resize);
-    let l = st.document().unwrap().level();
+    let l = st.active_document().unwrap().level();
     assert!(l.glow.as_ref().is_some_and(|g| g.world == (w + 8, h)), "kept through the resize");
 }
 
@@ -396,7 +402,7 @@ fn objects_copy_cut_and_paste() {
     let (_tmp, mut s) = editor(&root);
     let at = |world, kind| A::Pointer { kind, world, shift: false, toggle: false };
     let spawns = |s: &olr_editor::EditorState| {
-        s.document()
+        s.active_document()
             .unwrap()
             .level()
             .objects
@@ -413,7 +419,7 @@ fn objects_copy_cut_and_paste() {
     run(&mut s, A::Paste);
     run(&mut s, A::Paste);
     assert_eq!(spawns(&s)[before.len()..], [(54, 64), (58, 68)]);
-    let n = s.document().unwrap().level().objects.len();
+    let n = s.active_document().unwrap().level().objects.len();
     assert_eq!(*s.selection(), Selection::Object(n - 1), "the paste is selected");
     run(&mut s, A::Undo);
     assert_eq!(spawns(&s).len(), before.len() + 1, "one paste, one step");
@@ -430,14 +436,14 @@ fn objects_copy_cut_and_paste() {
 #[test]
 fn the_glow_brush_starts_a_dark_glow() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     run(&mut s, A::Select(Selection::Element("tunnels".into())));
     run(&mut s, A::Tool(Tool::Glow));
     run(&mut s, A::GlowStrength(80));
     let p = |kind| A::Pointer { kind, world: (100, 100), shift: false, toggle: false };
     run(&mut s, p(PointerKind::Down));
     run(&mut s, p(PointerKind::Up));
-    let doc = s.document().unwrap();
+    let doc = s.active_document().unwrap();
     let a = doc.level().art_scale;
     let w = doc.level().size.0 * a;
     let g = element_glow(&s, "tunnels").expect("a glow");
@@ -454,7 +460,7 @@ fn the_glow_brush_starts_a_dark_glow() {
 #[test]
 fn glow_by_colour_lights_alike_pixels() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     // A red square on the Tunnels layer: a "painted lamp".
     run(&mut s, A::Select(Selection::Element("tunnels".into())));
     run(&mut s, A::Tool(Tool::Rect));
@@ -469,7 +475,7 @@ fn glow_by_colour_lights_alike_pixels() {
     run(&mut s, A::GlowStrength(100));
     run(&mut s, at((205, 154), PointerKind::Down));
     run(&mut s, at((205, 154), PointerKind::Up));
-    let doc = s.document().unwrap();
+    let doc = s.active_document().unwrap();
     let a = doc.level().art_scale;
     let w = doc.level().size.0 * a;
     let mask = doc.glow_mask("tunnels").expect("a mask");
@@ -498,7 +504,7 @@ fn red_square(s: &mut olr_editor::EditorState) {
 #[test]
 fn a_colour_selection_takes_a_glow() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     red_square(&mut s);
     run(&mut s, A::Tool(Tool::SelectPixels));
     run(&mut s, A::SelectByColour(true));
@@ -508,7 +514,7 @@ fn a_colour_selection_takes_a_glow() {
     run(&mut s, at((205, 154), PointerKind::Up));
     assert!(s.pixel_rect().is_some(), "selected");
     run(&mut s, A::GlowSelection(70));
-    let doc = s.document().unwrap();
+    let doc = s.active_document().unwrap();
     let a = doc.level().art_scale;
     let w = doc.level().size.0 * a;
     let mask = doc.glow_mask("tunnels").expect("a mask");
@@ -524,7 +530,7 @@ fn a_colour_selection_takes_a_glow() {
 #[test]
 fn ctrl_adds_to_a_colour_selection() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     red_square(&mut s);
     let at = |world, kind, toggle| A::Pointer { kind, world, shift: false, toggle };
     run(&mut s, at((300, 150), PointerKind::Down, false));
@@ -540,7 +546,7 @@ fn ctrl_adds_to_a_colour_selection() {
     run(&mut s, A::Copy);
     assert!(s.status().message.as_deref().is_some_and(|m| m.contains("rectangle")), "copy refused");
     run(&mut s, A::GlowSelection(100));
-    let doc = s.document().unwrap();
+    let doc = s.active_document().unwrap();
     let a = doc.level().art_scale;
     let w = doc.level().size.0 * a;
     let mask = doc.glow_mask("tunnels").expect("a mask");
@@ -555,7 +561,7 @@ fn ctrl_adds_to_a_colour_selection() {
 #[test]
 fn a_colour_selection_survives_an_art_scale_change() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     red_square(&mut s);
     run(&mut s, A::Tool(Tool::SelectPixels));
     run(&mut s, A::SelectByColour(true));
@@ -564,21 +570,25 @@ fn a_colour_selection_survives_an_art_scale_change() {
     run(&mut s, at((205, 154), PointerKind::Down, false));
     run(&mut s, at((205, 154), PointerKind::Up, false));
     assert!(s.pixel_region().is_some());
-    let a = s.document().unwrap().level().art_scale;
+    let a = s.active_document().unwrap().level().art_scale;
+    // Issue #81: the art scale is the level tab's; the ground comes back
+    // to the asset tab made anew.
+    run(&mut s, A::ShowTab(DocTab::Level));
     run(&mut s, A::ArtScale(if a > 1 { a - 1 } else { a + 1 }));
     run(&mut s, A::Choose(Choice::Confirm));
+    run(&mut s, A::ShowTab(DocTab::Asset));
     assert!(s.pixel_rect().is_none(), "a whole change drops the pixel selection");
     run(&mut s, at((205, 154), PointerKind::Down, true));
     run(&mut s, at((205, 154), PointerKind::Up, true));
     run(&mut s, A::GlowSelection(100));
-    assert!(s.document().unwrap().glow_mask("tunnels").is_some());
+    assert!(s.active_document().unwrap().glow_mask("tunnels").is_some());
 }
 
 /// A rectangle of pixels takes a glow too.
 #[test]
 fn a_rectangle_selection_takes_a_glow() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     run(&mut s, A::Select(Selection::Element("tunnels".into())));
     run(&mut s, A::Tool(Tool::SelectPixels));
     let at = |world, kind| A::Pointer { kind, world, shift: false, toggle: false };
@@ -586,7 +596,7 @@ fn a_rectangle_selection_takes_a_glow() {
     run(&mut s, at((60, 50), PointerKind::Move));
     run(&mut s, at((60, 50), PointerKind::Up));
     run(&mut s, A::GlowSelection(100));
-    let doc = s.document().unwrap();
+    let doc = s.active_document().unwrap();
     let a = doc.level().art_scale;
     let w = doc.level().size.0 * a;
     let mask = doc.glow_mask("tunnels").expect("a mask");

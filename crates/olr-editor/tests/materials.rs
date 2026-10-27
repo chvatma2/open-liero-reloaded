@@ -9,10 +9,10 @@ use olr_editor::tools::{PointerKind, Tool};
 use olr_editor::{EditorAction as A, EditorState, Selection};
 use olr_format::levels::surface_file;
 
-use crate::common::{catalog, content, editor, run};
+use crate::common::{catalog, content, ground, run};
 
 fn materials(s: &EditorState) -> Vec<String> {
-    s.document().unwrap().materials().iter().map(|m| m.id.clone()).collect()
+    s.active_document().unwrap().materials().iter().map(|m| m.id.clone()).collect()
 }
 
 fn add(s: &mut EditorState, id: &str) {
@@ -20,13 +20,13 @@ fn add(s: &mut EditorState, id: &str) {
 }
 
 fn element(s: &EditorState, id: &str) -> olr_format::levels::Element {
-    let doc = s.document().unwrap();
+    let doc = s.active_document().unwrap();
     doc.items()[doc.index_of(id).unwrap()].element.clone()
 }
 
 /// Element `id`'s painted map (`back`: its back art's) as it bakes.
 fn map(s: &EditorState, id: &str, back: bool) -> Option<Vec<u8>> {
-    let doc = s.document().unwrap();
+    let doc = s.active_document().unwrap();
     doc.surface_map(&element(s, id), back).map(|m| m.as_ref().clone())
 }
 
@@ -44,9 +44,9 @@ fn message(s: &EditorState) -> String {
 #[test]
 fn materials_come_from_the_library_and_go_when_unused() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     assert!(s.catalog().materials.iter().any(|m| m.builtin && m.material.id == "stone"));
-    assert!(s.document().unwrap().level().look.is_none());
+    assert!(s.active_document().unwrap().level().look.is_none());
     add(&mut s, "stone");
     assert_eq!(materials(&s), ["stone"], "a copy, in a look made for it");
     assert!(message(&s).contains("Stone"), "{}", message(&s));
@@ -62,7 +62,7 @@ fn materials_come_from_the_library_and_go_when_unused() {
     run(&mut s, A::Set("tunnels".into(), Property::Surface(Some("wood".into()))));
     assert_eq!(element(&s, "tunnels").surface.as_deref(), Some("wood"));
     // Wood is used: refused, naming the element; stone goes.
-    assert_eq!(s.document().unwrap().material_users("wood"), ["Tunnels"]);
+    assert_eq!(s.active_document().unwrap().material_users("wood"), ["Tunnels"]);
     run(&mut s, A::RemoveMaterial("wood".into()));
     assert_eq!(materials(&s), ["stone", "wood"]);
     assert!(message(&s).contains("Tunnels"), "{}", message(&s));
@@ -87,7 +87,7 @@ fn materials_come_from_the_library_and_go_when_unused() {
 #[test]
 fn the_surface_brush_paints_front_and_back_one_step_a_stroke() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     add(&mut s, "stone");
     add(&mut s, "wood");
     run(&mut s, A::Tool(Tool::Surface));
@@ -148,7 +148,7 @@ fn the_surface_brush_paints_front_and_back_one_step_a_stroke() {
 #[test]
 fn the_surface_brush_refuses_what_it_cannot_paint() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     add(&mut s, "stone");
     run(&mut s, A::Tool(Tool::Surface));
     run(&mut s, A::SurfacePaint(Some("stone".into())));
@@ -180,14 +180,14 @@ fn the_surface_brush_refuses_what_it_cannot_paint() {
 #[test]
 fn the_materials_view_and_the_collision_view_take_turns() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
+    let (_tmp, mut s) = ground(&root);
     run(&mut s, A::SurfaceView(true));
     assert!(s.surface_view() && !s.material_view());
     run(&mut s, A::MaterialView(true));
     assert!(!s.surface_view() && s.material_view());
     run(&mut s, A::SurfaceView(true));
     assert!(s.surface_view() && !s.material_view());
-    assert!(!s.dirty(), "a view is no change");
+    assert!(!s.active_dirty(), "a view is no change");
     assert_eq!(olr_editor::surface_tint(0), None);
     assert_eq!(olr_editor::surface_tint(1), olr_editor::surface_tint(13), "tints cycle");
 }
@@ -197,8 +197,8 @@ fn the_materials_view_and_the_collision_view_take_turns() {
 #[test]
 fn a_saved_level_keeps_its_materials_and_bakes_them() {
     let Some(root) = content() else { return };
-    let (tmp, mut s) = editor(&root);
-    let dir = s.document().unwrap().dir().to_path_buf();
+    let (tmp, mut s) = ground(&root);
+    let dir = s.active_document().unwrap().dir().to_path_buf();
     add(&mut s, "stone");
     add(&mut s, "metal");
     run(&mut s, A::Set("base".into(), Property::Surface(Some("stone".into()))));
@@ -207,11 +207,11 @@ fn a_saved_level_keeps_its_materials_and_bakes_them() {
     run(&mut s, A::SurfacePaint(Some("metal".into())));
     run(&mut s, A::SurfaceBack(true));
     dab(&mut s, (200, 200));
-    let level = s.document().unwrap().level().clone();
+    let level = s.active_document().unwrap().level().clone();
     let baked = level.surface.clone().expect("the bake has surfaces");
     assert!(baked.front.contains(&1), "stone in front");
     run(&mut s, A::Save);
-    assert!(!s.dirty());
+    assert!(!s.active_dirty());
     let files = crate::common::tree(&dir);
     for f in ["look/surface.png", "look/surface-back.png", "editor/surface/base.back.png"] {
         assert!(files.contains_key(f), "{f} saved");
@@ -220,7 +220,7 @@ fn a_saved_level_keeps_its_materials_and_bakes_them() {
     let pack = olr_edit::pack::load(&dir).unwrap();
     let doc = olr_editor::Document::open(pack, dir, &catalog(&root)).unwrap();
     assert_eq!(doc.level().surface.as_ref(), Some(&baked));
-    assert_eq!(doc.materials(), s.document().unwrap().materials());
+    assert_eq!(doc.materials(), s.active_document().unwrap().materials());
     let base = &doc.items()[doc.index_of("base").unwrap()].element;
     assert_eq!((base.surface.as_deref(), base.back_surface_map), (Some("stone"), true));
     drop(tmp);
@@ -230,8 +230,8 @@ fn a_saved_level_keeps_its_materials_and_bakes_them() {
 #[test]
 fn a_level_without_materials_saves_without_them() {
     let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
-    let dir = s.document().unwrap().dir().to_path_buf();
+    let (_tmp, mut s) = ground(&root);
+    let dir = s.active_document().unwrap().dir().to_path_buf();
     let before = crate::common::tree(&dir);
     run(&mut s, A::Set("tunnels".into(), Property::Name("Tunnels 2".into())));
     run(&mut s, A::Set("tunnels".into(), Property::Name("Tunnels".into())));
