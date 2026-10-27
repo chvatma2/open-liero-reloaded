@@ -1,0 +1,19 @@
+[package]
+name = "olr-script"
+description = "Asset scripts: the Rhai parser (issue #80's syntax check; #88 adds the runtime)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+autotests = false
+
+[dependencies]
+rhai.workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[lints]
+workspace = true

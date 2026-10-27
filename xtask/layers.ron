@@ -18,6 +18,8 @@
         "olr-import": 3,
         "olr-edit": 3,
         "olr-sim": 3,
+        // Asset scripts (issue #80): #88 puts the runtime beside the simulation.
+        "olr-script": 3,
         "olr-modes": 3,
         "olr-bots": 3,
         "olr-replay": 3,
@@ -99,8 +101,8 @@
         // (issue #19).
         ("olr-mod-editor", "olr-skin-editor"),
     ],
-    no_std: ["olr-math", "olr-data", "olr-terrain", "olr-look", "olr-sim", "olr-modes", "olr-bots", "olr-replay", "olr-proto", "olr-netcode", "olr-lobby"],
-    wasm: ["olr-math", "olr-data", "olr-terrain", "olr-look", "olr-sim", "olr-modes", "olr-bots", "olr-replay", "olr-proto", "olr-netcode", "olr-lobby", "olr-vfs", "olr-format", "olr-pack", "olr-import-lgs", "olr-import-lxl", "olr-import-gfx"],
+    no_std: ["olr-math", "olr-data", "olr-terrain", "olr-look", "olr-sim", "olr-script", "olr-modes", "olr-bots", "olr-replay", "olr-proto", "olr-netcode", "olr-lobby"],
+    wasm: ["olr-math", "olr-data", "olr-terrain", "olr-look", "olr-sim", "olr-script", "olr-modes", "olr-bots", "olr-replay", "olr-proto", "olr-netcode", "olr-lobby", "olr-vfs", "olr-format", "olr-pack", "olr-import-lgs", "olr-import-lxl", "olr-import-gfx"],
     forbidden: [
         // The game, the server and the UI ship without legacy importers (spec §5).
         ("olr-game", "olr-import"), ("olr-game", "olr-import-lgs"), ("olr-game", "olr-import-lxl"), ("olr-game", "olr-import-gfx"),

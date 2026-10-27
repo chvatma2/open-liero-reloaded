@@ -50,6 +50,7 @@ olr-online = { path = "crates/olr-online" }
 olr-server = { path = "crates/olr-server" }
 olr-log = { path = "crates/olr-log" }
 olr-update = { path = "crates/olr-update" }
+olr-script = { path = "crates/olr-script" }
 serde = { version = "1.0.229", default-features = false, features = ["derive", "alloc"] }
 ron = "0.12.2"
 # Replays (plan 6): exact pins, the encoding is the replay format.
@@ -57,6 +58,10 @@ postcard = { version = "=1.1.3", default-features = false, features = ["alloc"] 
 bech32 = { version = "=0.12.0", default-features = false, features = ["alloc"] }
 miniz_oxide = { version = "=0.9.1", default-features = false, features = ["with-alloc"] }
 libm = "0.2.16"
+# Asset scripts (issue #80; the runtime is #88's): an exact pin, `no_std`
+# for the simulation, integers only, no modules, closures, custom syntax or
+# clock; `internals` for #88's per-run operation count.
+rhai = { version = "=1.27.0", default-features = false, features = ["no_std", "sync", "no_float", "only_i64", "no_module", "no_custom_syntax", "no_time", "no_closure", "internals"] }
 serde_json = "1.0.151"
 # Exact: encoded PNG bytes are content (hashes).
 png = "=0.18.1"
