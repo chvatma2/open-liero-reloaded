@@ -6755,7 +6755,7 @@ level library|export|import`. The level tab's notice and buttons are
   editable" is met by the export archive, the way levels are shared for
   editing.
 
-## Asset tab (issues #77, #78, #79)
+## Asset tab (issues #77, #78, #79, #80)
 
 No OLX counterpart. The design
 `docs/superpowers/specs/2026-10-26-asset-based-levels-design.md` ("The
@@ -6763,7 +6763,8 @@ asset tab", call 18); the code is `olr-editor`'s `asset_tab.rs` and
 `state.rs`, laid out in `ui/asset.rs` and `ui/previews.rs`. Part 1
 (#77) is the second document on today's layout; #78 moves it to the
 skin editor's layout, #79 adds the states panel (`state_ops.rs`,
-`ui/states.rs`).
+`ui/states.rs`), #80 the Properties, Sounds and Script tabs
+(`parts_ops.rs`, `ui/parts.rs`).
 
 - **Two tabs inside the level editor, not a second editor.** One session
   holds the level and an asset (#81 opens the level's ground in the asset
@@ -6799,7 +6800,7 @@ skin editor's layout, #79 adds the states panel (`state_ops.rs`,
   level's recovery copy as before; the asset tab's unsaved work is not
   recovered after a crash. Close asks once for each tab with unsaved
   changes, the asset first.
-- **Edits that would break exposure are refused, until #80 edits it.**
+- **Edits that would break exposure are refused (#80 edits it).**
   An asset made by #71's commands keeps its states, exposed properties,
   sounds, script and health through an open and a save. Each step the
   asset tab records is checked against them (`Document::asset_refusal`:
@@ -6865,6 +6866,35 @@ skin editor's layout, #79 adds the states panel (`state_ops.rs`,
   GPU work. They approximate the lit canvas (no shadows, soak, softness
   or light steps, as the thumbnail), and are made again only when an
   edit is done, never during a stroke or every frame.
+- **A row shows the value posed in the selected state (#80).** The
+  Properties tab lists each of `olr_edit::asset::offers` once, under its
+  layer (Whole asset first), with the value the selected state poses
+  (`value_in_state`: the state's own value, else the exposed default,
+  else the layer's own setting), marked when the state sets it itself
+  (Clear drops it). A value is edited in the selected state only;
+  exposing one gives it a name (`<layer>_<property>`, unique, at most
+  32 bytes) and the start's value as its default, a position's min and
+  max at that value (widened by hand). Edits a state's value or an
+  exposed default would contradict are refused with the state or name
+  ("Alarm sets claw_x to 40: change it first").
+- **The script commits on a pause (#80).** Typing in the Script tab
+  changes a draft; it becomes one undoable step after about a second of
+  UI time without a keystroke, or when the editor loses the keyboard,
+  so undo takes back a burst of typing rather than a character.
+- **Broken scripts save (#80).** The script's syntax errors are listed
+  (`line:column: message`, a click puts the cursor there) but never
+  refuse an edit or a save: half-written scripts are kept, and nothing
+  runs a script before #88. The check is syntax only (`olr-script`'s
+  `check`, Rhai's parser) until #89 checks the names a script uses.
+- **Rhai is pinned (#80).** `rhai = "=1.27.0"`, default features off,
+  with `no_std`, `sync`, `no_float`, `only_i64`, `no_module`,
+  `no_custom_syntax`, `no_time`, `no_closure` and `internals`: #88's
+  runtime's pin and features exactly, so the editor never parses a
+  script the simulation would read differently. Parsing is bounded
+  (expression depth 32, 16 in a function; strings 4096 bytes; scripts
+  64 KiB).
+- **The script editor does not wrap (#80).** Lines run on and the
+  editor scrolls across, so the line-number gutter stays beside them.
 
 ## Kept OLX quirks
 

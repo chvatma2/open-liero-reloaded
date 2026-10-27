@@ -458,6 +458,19 @@ operations.
   `sounds_are_checked_and_kept_while_named`,
   `health_needs_its_state_and_unexposing_first`,
   `the_thumbnail_shows_the_starting_state`.
+  Issue #80's helpers for the asset tab: `offers_of(&AssetFile)` (what
+  `offers` reads, without pixels), `state_sets(file, state, p)` (the
+  state's own value, by `property_key`), `value_in_state(file, state,
+  p)` (the state's own value, else the exposed default, else
+  `own_value`; none for an `Own` group's colour), `set_exposed(asset,
+  name, ExposedChange::{Default, Min, Max})` (refused when a state's
+  value or the default falls outside, min above max, or outside an
+  Int's range; Health's default refused: it is the points) and
+  `exposed_name(asset, p)` (`<layer>_<property>`, `-` as `_`, lowercase,
+  `_` before a leading digit, at most 32 bytes, made unique with `_2`,
+  `_3`, …). Tests: `exposed_entries_change_within_their_values`,
+  `exposed_names_are_made_from_the_layer_and_the_property`,
+  `a_value_in_a_state_is_its_own_then_the_default_then_the_layers`.
 - **`placed`, issue #73's bake of a level's placed copies** (the format
   is `olr_format::levels`' `PlacedFile`; STATUS.md "Asset-based levels:
   the level format (issues #73, #74); issue #74's pack functions below):

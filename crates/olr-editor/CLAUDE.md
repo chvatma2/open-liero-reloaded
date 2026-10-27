@@ -570,7 +570,9 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     key.
   - **Layout (issue #78)** (`ui/asset.rs`, the skin editor's, issue
     #55's sizing rules): the session bar wrapped to the window (below
-    `ui::NARROW`, 900 points, the `TOOLS_TAB` | `LAYERS_TAB` switch;
+    `ui::NARROW`, 900 points, the `TOOLS_TAB` | `LAYERS_TAB` switch
+(its Layers button relabelled "Layers panel" for AccessKit since #80,
+whose column tab is `LAYERS`);
     Level | Asset, File ▾ with Save and Close, Undo, Redo, "Asset:
     name", the unsaved mark `UNSAVED`, View ▾ without Preview parallax);
     on the left the tools panel (`olr-editor-asset-tools`, 20 % of the
@@ -668,6 +670,66 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   - Tests: `tests/states.rs`, `flows.rs`'s
     `make_an_off_state_and_paint_it`, `fits.rs`' 32 states, and
     `history.rs`' `every_state_operation_undoes_to_the_same_asset`.
+- **Properties, sounds and script (issue #80)** (STATUS.md "Asset tab
+  (issues #77, #78, #79, #80)"; `parts_ops.rs`, `ui/parts.rs`):
+  - **Edits**: `Edit::Parts { before, after }` (`PartsSnap`: the exposed
+    entries, sounds as `Arc<Vec<u8>>` counted once by address, script,
+    health). Each operation runs through `Document::reparts`:
+    `olr_edit::asset`'s operation on `to_asset()`, then an `Edit::States`
+    of the states' values and loop/enter sounds (pictures untouched) and
+    an `Edit::Parts`; a refusal (`AssetError`'s message) changes nothing.
+    Applying either rebakes the whole canvas when the shown state's
+    values, the exposed defaults or health changed.
+  - **Operations** (`EditorAction`): `SetValue { property, value }` (the
+    shown state's; `None` clears), `Expose { property, default }`
+    (`olr_edit::asset::exposed_name`; the start's value as default; a
+    position's min and max at it; an `Own` group's glow colour asks
+    `Dialog::ExposeColour` first, `Document::expose_needs_default`),
+    `Unexpose(name)` (asks `Dialog::Unexpose`: "Copies' values and
+    scripts using <name> will be errors"), `RenameExposed`,
+    `SetExposed { name, change }` (`ExposedChange`), `Destructible(bool)`
+    (`DEFAULT_HEALTH`, At 0 the first state but the start), `SetHealth`,
+    `StateSounds { loop_sound, enter_sound }`, `RemoveSound`,
+    `PlaySound(name)` (view only: `EditorCommand::PlaySound(bytes)`, the
+    host's `HostOut::PlaySound`), `NewScript` (`parts_ops::NEW_SCRIPT`),
+    `RemoveScript` (asks `Dialog::RemoveScript`), `SetScript(text)`.
+    Import sound… is `Browse(Purpose::ImportSound)` (WAV and Ogg
+    listed); the pick sends `EditorCommand::ReadSound(path)`, the host
+    reads at most `MAX_ASSET_SOUND_BYTES` and answers
+    `SoundRead { name, bytes }` (`parts_ops::sound_name`) or
+    `ImportFailed`. Queries: `parts_snap`, `asset_header`, `offers`,
+    `shown_value` (`Shown { value, own }`), `exposed_entry`,
+    `script_issues`, `sound`.
+  - **The column** (`ui::parts::Column`, kept in `EditorData::column`):
+    under the states panel the tabs `LAYERS`, `PROPERTIES`, `SOUNDS`,
+    `SCRIPT`. Properties: `WHOLE_ASSET`'s rows (with `DESTRUCTIBLE`,
+    `HEALTH`, `AT_ZERO`), then the layers top first (folders as
+    headings, dirt layers greyed `NOT_OFFERED_DIRT`); each row
+    `labels::property(owner, name)`, its value field by kind, ● when the
+    state sets it, `clear_value(row)`, `expose(row)` (disabled when the
+    group is exposed through another layer), an exposed row's
+    `exposed_name`, `exposed_default`, an Int's `exposed_min` and
+    `exposed_max`, `UNEXPOSE`, and `ALSO_CHANGES` under a group
+    property. Sounds: each sound's name and length, `play(name)`,
+    `remove_sound(name)`, `IMPORT_SOUND`, the shown state's
+    `LOOP_SOUND` and `ENTER_SOUND` pickers (`NO_SOUND`). Script:
+    `NEW_SCRIPT` | `REMOVE_SCRIPT`, the size against `MAX_SCRIPT_BYTES`,
+    `SCRIPT_NOT_RUN`, the errors as buttons `script_error(issue)`
+    (`line:column: message`, or `NO_SCRIPT_ERRORS`); the central panel
+    becomes `SCRIPT_EDITOR` (a `code_editor` `TextEdit`, unwrapped, a
+    line-number gutter marking the error's line with ▶).
+  - **The script draft** (`ui::parts::ScriptDraft`, `sync_script`):
+    typing changes the draft; it commits as one `SetScript` step after
+    `SCRIPT_PAUSE` (1 s of UI time, `request_repaint_after`) without a
+    keystroke or when the editor loses the keyboard; a document change
+    the draft has not touched resets it. A click on an error sets the
+    cursor (`goto`). Broken scripts save; `olr_script::check` is syntax
+    only.
+  - Tests: `tests/properties.rs`, `flows.rs`'
+    `expose_a_claw_and_give_states_values`, `fits.rs`' Properties,
+    Sounds and Script setups (the script editor checked by its top-left
+    corner only: a text area as large as its script), and `history.rs`'
+    proptest (kinds 16-25: values, exposure, health, sounds, script).
 - **Tests** (`tests/`, one binary): `asset.rs` (issue #9: save, the name
   clash, the rectangle unclipped and hidden layers left out, placing as one
   step with lighting added, join and add, Remove, Import, and the
