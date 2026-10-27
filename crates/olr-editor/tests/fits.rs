@@ -410,3 +410,132 @@ fn the_level_tab_fits() {
     assert!(cases >= 20, "{cases}");
     assert!(failed.is_empty(), "{} cases do not fit:\n{}", failed.len(), failed.join("\n"));
 }
+
+/// Issue #84: the ceiling lamp with twenty more glowing layers, 64
+/// values exposed (the most an asset has), two states and a script.
+fn many_values() -> olr_edit::asset::Asset {
+    use olr_format::assets::{ExposedSource, PropertySource as P};
+    let mut a = olr_edit::asset::load_dir(&built_in_assets().join("ceiling-lamp")).unwrap();
+    a.name = "Busy panel".into();
+    let lamps = a.pieces.iter().find(|p| p.element.id == "lamps").unwrap().clone();
+    for i in 0..20 {
+        let mut p = lamps.clone();
+        p.element.id = format!("lamp_{i}");
+        p.element.name = format!("Lamp {i}");
+        a.pieces.push(p);
+    }
+    for o in olr_edit::asset::offers(&a) {
+        if a.exposed.len() == olr_format::assets::MAX_EXPOSED {
+            break;
+        }
+        let name = format!("value_{}", a.exposed.len());
+        let (min, max) = match o.property {
+            P::X | P::Y | P::OffsetX(_) | P::OffsetY(_) => (Some(-8), Some(8)),
+            _ => (None, None),
+        };
+        let x = ExposedSource { name, property: o.property, default: None, min, max };
+        let _shared = olr_edit::asset::expose(&mut a, x);
+    }
+    assert_eq!(a.exposed.len(), olr_format::assets::MAX_EXPOSED);
+    olr_edit::asset::add_state(&mut a, "Alarm", None).unwrap();
+    a.script = Some("fn alarm() {}\n".into());
+    a
+}
+
+/// A saved level of ten consoles from the user's library, opened again
+/// after the library changed four, lost three and broke three: the
+/// notice open.
+fn notice_of_ten(root: &std::path::Path) -> (tempfile::TempDir, tempfile::TempDir, EditorState) {
+    use olr_editor::level_tab::CopyChange;
+    use olr_format::assets::ValueSource as V;
+    let (t, t2, mut s, yours) = crate::copy_panel::level(root);
+    let mut placed = Vec::new();
+    for i in 0..10 {
+        let mut a = crate::copy_panel::console();
+        a.name = format!("Console with a rather long name {i}");
+        let id = crate::copy_panel::place(&mut s, &yours, &a, (20 + 30 * i, 60));
+        crate::copy_panel::set(&mut s, &id, CopyChange::Value("glow".into(), Some(V::Int(10))));
+        let Some(olr_format::levels::AssetOrigin::Yours(folder)) = s.document().unwrap().copy_origin(&id)
+        else {
+            panic!("linked")
+        };
+        placed.push((a, folder));
+    }
+    run(&mut s, A::Save);
+    for (i, (mut a, folder)) in placed.into_iter().enumerate() {
+        match i {
+            0..4 => a.name.push_str(" mark 2"),
+            4..7 => {
+                std::fs::remove_dir_all(yours.join(&folder)).unwrap();
+                continue;
+            }
+            _ => a.exposed.retain(|x| x.name != "glow"),
+        }
+        olr_edit::asset::add_to_library(&yours, &a, Some(&folder)).unwrap();
+    }
+    let list = set_library(&built_in_assets(), &yours);
+    let dir = s.document().unwrap().dir().to_path_buf();
+    run(&mut s, A::Open(dir));
+    run(&mut s, A::AssetsChanged(list));
+    assert!(matches!(s.dialog(), Some(olr_editor::Dialog::LibraryChanged)), "{:?}", s.dialog());
+    assert_eq!(s.library_links().iter().filter(|l| l.status != olr_edit::library::Status::Same).count(), 10);
+    (t, t2, s)
+}
+
+/// Issue #84: the copy panel of a Live copy of an asset exposing 64
+/// values (some set), with a starting state, a script and the asset's
+/// script, and the library-change notice of ten assets, fit as the level
+/// tab does (`the_level_tab_fits`).
+#[test]
+fn the_copy_panel_and_the_notice_fit() {
+    use olr_editor::level_tab::CopyChange;
+    let Some(root) = content() else { return };
+    let mut failed = Vec::new();
+    let mut cases = 0;
+    for (w, hgt, ppp) in sizes() {
+        let narrow = w / ppp < ui::NARROW;
+        let sides: &[Option<&str>] =
+            if narrow { &[Some(labels::SHOW_LIBRARY), Some(labels::SHOW_COPY)] } else { &[None] };
+        for &side in sides {
+            for what in ["the full copy panel", "the notice of ten assets"] {
+                cases += 1;
+                let (_t, _t2, s) = if what.contains("notice") {
+                    notice_of_ten(&root)
+                } else {
+                    let (t, t2, mut s, yours) = crate::copy_panel::level(&root);
+                    let id = crate::copy_panel::place(&mut s, &yours, &many_values(), (60, 60));
+                    crate::copy_panel::set(&mut s, &id, CopyChange::Live(true));
+                    crate::copy_panel::set(&mut s, &id, CopyChange::State(Some("Alarm".into())));
+                    let v = olr_format::assets::ValueSource::Bool(false);
+                    crate::copy_panel::set(&mut s, &id, CopyChange::Value("value_2".into(), Some(v)));
+                    let script = olr_editor::copy_ops::ScriptTarget::Copy(id.clone());
+                    run(&mut s, A::OpenScript(script));
+                    run(&mut s, A::CloseScript);
+                    run(&mut s, A::Select(Selection::Copy(id)));
+                    (t, t2, s)
+                };
+                let mut h = harness(w, hgt, ppp, s);
+                settle(&mut h);
+                if let Some(side) = side {
+                    switch(&mut h, side);
+                }
+                // The notice floats over the panels: the window holds it.
+                let panels: &[&str] = match side {
+                    _ if what.contains("notice") => &[],
+                    None => &[LIBRARY, COPY],
+                    Some(labels::SHOW_LIBRARY) => &[LIBRARY],
+                    Some(_) => &[COPY],
+                };
+                let bad = misfits(&mut h, panels);
+                if !bad.is_empty() {
+                    let panel = side.unwrap_or("both panels");
+                    let at = format!("{what}, {panel}, at {w}x{hgt} ({ppp} pixels a point)");
+                    let first = bad.iter().take(8).map(|b| format!("    {b}")).collect::<Vec<_>>().join("\n");
+                    failed.push(format!("{at}: {} problems, e.g.\n{first}", bad.len()));
+                }
+            }
+        }
+    }
+    assert!(cases >= 8, "{cases}");
+    assert!(failed.is_empty(), "{} cases do not fit:\n{}", failed.len(), failed.join("\n"));
+}

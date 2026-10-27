@@ -242,13 +242,58 @@ pub fn run(
                     Ok(_) => EditorAction::ImportFailed("too large".into()),
                     Err(e) => EditorAction::ImportFailed(e.to_string()),
                 }),
-
+                // Issue #84: as the game's host, the theme's back tile from
+                // the catalog; the data folder is the user's library's
+                // parent (its packs in `packs/`).
+                EditorCommand::ExportLevel { pack_dir, to } => {
+                    let catalog = state.catalog().clone();
+                    let tile = |t: &str| back_tile(&catalog, t);
+                    queue.push_back(match olr_edit::library::export(pack_dir, &tile) {
+                        Ok(bytes) => match std::fs::write(to, &bytes) {
+                            Ok(()) => EditorAction::Note(format!("Exported {}", to.display())),
+                            Err(e) => EditorAction::Failed(e.to_string()),
+                        },
+                        Err(e) => EditorAction::Failed(e.to_string()),
+                    });
+                }
+                EditorCommand::ImportLevel(path) => {
+                    let (builtin, yours) = LIBRARY.with(|l| l.borrow().clone()).expect("a library");
+                    let packs = yours.parent().unwrap().join("packs");
+                    std::fs::create_dir_all(&packs).unwrap();
+                    let bundled = std::collections::BTreeSet::new();
+                    let places = olr_edit::library::Places {
+                        packs: &packs,
+                        user: &yours,
+                        builtin: Some(&builtin),
+                        bundled: &bundled,
+                    };
+                    let catalog = state.catalog().clone();
+                    let tile = |t: &str| back_tile(&catalog, t);
+                    let bytes = std::fs::read(path).unwrap();
+                    match olr_edit::library::import(&bytes, &places, &tile) {
+                        Ok(report) => {
+                            queue.push_back(EditorAction::AssetsChanged(library()));
+                            queue.push_back(EditorAction::LevelImported { dir: report.dir.clone(), report });
+                        }
+                        Err(e) => queue.push_back(EditorAction::Failed(e.to_string())),
+                    }
+                }
                 _ => {}
             }
             out.push(command);
         }
     }
     out
+}
+
+/// Theme `theme`'s back tile from `catalog`.
+fn back_tile(catalog: &olr_editor::Catalog, theme: &str) -> Result<olr_data::image::RgbaImage, String> {
+    catalog
+        .themes
+        .iter()
+        .find(|t| t.id == theme)
+        .map(|t| t.back_tile.clone())
+        .ok_or_else(|| format!("no theme {theme}"))
 }
 
 fn open(catalog: &olr_editor::Catalog, dir: &Path) -> olr_editor::EditorAction {

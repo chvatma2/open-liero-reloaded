@@ -2199,3 +2199,76 @@ fn place_two_lamps_and_edit_their_asset() {
     assert!(same(&held(&builtin), &read(builtin_dir.join("strip-light"))), "the built-in ones are not");
     assert_eq!((copies_of(&h, &builtin), copies_of(&h, &mine)), (2, 1));
 }
+
+/// Types `text` over the level tab's script editor's (issue #84).
+fn type_script(h: &mut Harness<'static, App>, text: &str) {
+    h.get_by_role_and_label(Role::TextInput, labels::SCRIPT_EDITOR).focus();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.get_by_role_and_label(Role::TextInput, labels::SCRIPT_EDITOR).type_text(text);
+    h.run();
+}
+
+/// Issue #84: a console placed from the user's library, renamed, made
+/// Live, started in Alarm, a value set, given a script (with an error,
+/// then fixed) and the level a script; saved, the files hold it all.
+#[test]
+fn make_a_live_console_with_values_and_a_script() {
+    use olr_editor::copy_ops::ScriptTarget;
+    use olr_format::assets::ValueSource as V;
+    let Some(root) = content() else { return };
+    let (_t, _t2, mut s, yours) = crate::copy_panel::level(&root);
+    let id = crate::copy_panel::place(&mut s, &yours, &crate::copy_panel::console(), (60, 60));
+    let mut h = harness(s);
+    h.run();
+    let copy = |h: &Harness<'static, App>, id: &str| h.state().state.document().unwrap().placed_copy(id);
+    // Renamed in the Id field.
+    retype(&mut h, labels::COPY_ID, "crane");
+    assert!(copy(&h, &id).is_none() && copy(&h, "crane").is_some(), "{:?}", h.state().state.status().message);
+    // Live, then the starting state.
+    h.get_by_role_and_label(Role::CheckBox, labels::LIVE).click();
+    h.run();
+    h.get_by_role_and_label(Role::ComboBox, labels::STARTING_STATE).click();
+    h.run();
+    h.get_by_label("Alarm").click();
+    h.run();
+    // A value.
+    retype(&mut h, &labels::copy_value("glow"), "10");
+    let c = copy(&h, "crane").unwrap();
+    assert!(c.live && c.state.as_deref() == Some("Alarm"), "{c:?}");
+    assert_eq!(c.values.get("glow"), Some(&V::Int(10)));
+    // The copy's script: an error first, listed, then fixed.
+    h.get_by_role_and_label(Role::Button, labels::NEW_SCRIPT).click();
+    h.run();
+    type_script(&mut h, "let x = ;\n");
+    h.get_by_label(labels::BACK_TO_LEVEL).click();
+    h.run();
+    let warned = |h: &Harness<'static, App>, whose: &str| {
+        h.state().state.status().problems.iter().any(|p| p.text.starts_with(whose))
+    };
+    assert!(warned(&h, "crane's script, line 1"), "{:?}", h.state().state.status().problems);
+    h.get_by_role_and_label(Role::Button, labels::EDIT_SCRIPT).click();
+    h.run();
+    type_script(&mut h, "let x = 1;\n");
+    h.get_by_label(labels::BACK_TO_LEVEL).click();
+    h.run();
+    assert!(!warned(&h, "crane's script"));
+    // The level's script, from the level's panel.
+    act(&mut h, A::Select(Selection::None));
+    h.get_by_label(&format!("{} {}", labels::LEVEL_SCRIPT, labels::NEW_SCRIPT)).click();
+    h.run();
+    type_script(&mut h, "let alarm = true;\n");
+    h.get_by_label(labels::BACK_TO_LEVEL).click();
+    h.run();
+    file(&mut h, labels::SAVE);
+    let s = &h.state().state;
+    assert!(!s.dirty(), "{:?}", s.dialog());
+    let dir = s.document().unwrap().dir().to_path_buf();
+    let read = olr_format::levels::read_placed_files(&olr_vfs::DirFs::new(&dir)).unwrap().unwrap();
+    let c = read.file.copies.iter().find(|c| c.id == "crane").expect("the console");
+    assert!(c.live && c.state.as_deref() == Some("Alarm"), "{c:?}");
+    assert_eq!(c.values.get("glow"), Some(&V::Int(10)));
+    assert_eq!(read.scripts.get("crane").map(String::as_str), Some("let x = 1;\n"));
+    assert_eq!(read.level_script.as_deref(), Some("let alarm = true;\n"));
+    assert_eq!(s.document().unwrap().script_of(&ScriptTarget::Level), Some("let alarm = true;\n"));
+}
