@@ -397,10 +397,11 @@ impl EditorHost {
             Err(why) => queue.push_back(EditorAction::Failed(why)),
             Ok(saved) => {
                 if let Some(id) = saved {
-                    queue.push_back(EditorAction::AssetSaved(olr_editor::catalog::AssetKey {
-                        builtin: false,
-                        id,
-                    }));
+                    // Issue #83: the files written, read back (Save to
+                    // library links the level's asset to them).
+                    let source = olr_edit::asset::read_dir(&dir.join(&id)).ok().map(Box::new);
+                    let key = olr_editor::catalog::AssetKey { builtin: false, id };
+                    queue.push_back(EditorAction::AssetSaved { key, source });
                 }
                 if !warnings.is_empty() {
                     queue.push_back(EditorAction::Note(warnings.join("; ")));
@@ -487,6 +488,16 @@ impl EditorHost {
                         .map_err(|e| format!("asset {}: {e}", key.id))
                 });
                 queue.push_back(EditorAction::AssetRead { key, at, asset });
+            }
+            // Issue #83: the library's version of each linked asset; a
+            // built-in origin from the built-in library only.
+            EditorCommand::CompareLibrary { origins } => {
+                let libs = olr_edit::library::read_origins(
+                    &origins,
+                    self.builtin_assets_dir.as_deref(),
+                    self.assets_dir.as_deref(),
+                );
+                queue.push_back(EditorAction::LibraryCompared(libs));
             }
             EditorCommand::ReadAssetToEdit(key) => {
                 let asset = self.read_asset(&key);

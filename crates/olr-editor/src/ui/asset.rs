@@ -45,6 +45,19 @@ pub(super) enum Side {
     Layers,
 }
 
+/// For a window `width` points wide: whether it is narrow (one side panel
+/// at a time), and the left and right side panels' widths (issue #83: the
+/// level tab's too).
+pub(super) fn side_widths(width: f32) -> (bool, f32, f32) {
+    let narrow = width < NARROW;
+    let share = |s: f32, min: f32, max: f32| (width * s).clamp(min, max.max(min)).min(width);
+    if narrow {
+        (narrow, share(NARROW_SHARE, TOOLS_MIN, width), share(NARROW_SHARE, LAYERS_MIN, width))
+    } else {
+        (narrow, share(TOOLS_SHARE, TOOLS_MIN, TOOLS_MAX), share(LAYERS_SHARE, LAYERS_MIN, LAYERS_MAX))
+    }
+}
+
 /// Draws the asset tab; its actions go to `out`: the bars' and the tools',
 /// the list's, the fields', the canvas's.
 pub(super) fn show(
@@ -62,15 +75,9 @@ pub(super) fn show(
         ui.ctx().request_repaint();
     }
     let width = ui.available_rect_before_wrap().width();
-    let narrow = width < NARROW;
-    let share = |s: f32, min: f32, max: f32| (width * s).clamp(min, max.max(min)).min(width);
-    let (tools_w, layers_w) = if narrow {
-        (share(NARROW_SHARE, TOOLS_MIN, width), share(NARROW_SHARE, LAYERS_MIN, width))
-    } else {
-        (share(TOOLS_SHARE, TOOLS_MIN, TOOLS_MAX), share(LAYERS_SHARE, LAYERS_MIN, LAYERS_MAX))
-    };
+    let (narrow, tools_w, layers_w) = side_widths(width);
     egui::Panel::top("olr-editor-session").show(ui, |ui| session(ui, state, data, narrow, toolbar));
-    egui::Panel::bottom("olr-editor-status").show(ui, |ui| status::show(ui, state));
+    egui::Panel::bottom("olr-editor-status").show(ui, |ui| status::show(ui, state, toolbar));
     if !narrow || data.side == Side::Tools {
         egui::Panel::left("olr-editor-asset-tools").exact_size(tools_w).resizable(false).show(ui, |ui| {
             egui::ScrollArea::vertical().id_salt("olr-editor-asset-tools").show(ui, |ui| {
@@ -187,7 +194,7 @@ fn session(
 /// Notes a focus that moved otherwise than by the pointer (Tab, a screen
 /// reader): the side panels' scroll areas follow it for the next passes
 /// (the skin editor's `see_focus`).
-fn see_focus(ctx: &egui::Context, data: &mut EditorData) {
+pub(super) fn see_focus(ctx: &egui::Context, data: &mut EditorData) {
     let focused = ctx.memory(|m| m.focused());
     if focused == data.seen_focus {
         return;
@@ -203,7 +210,7 @@ fn see_focus(ctx: &egui::Context, data: &mut EditorData) {
 /// scrolls the focused widget into view when it is in this area and not
 /// all shown (egui scrolls to no focused widget by itself; the skin
 /// editor's `follow_focus`, `olr_ui::pad`'s).
-fn follow_focus(ui: &Ui, follow: bool) {
+pub(super) fn follow_focus(ui: &Ui, follow: bool) {
     if !follow {
         return;
     }

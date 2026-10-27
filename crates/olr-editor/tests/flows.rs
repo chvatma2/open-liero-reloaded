@@ -444,8 +444,8 @@ fn theme(h: &mut Harness<'static, App>) {
     h.run();
 }
 
-/// The level tab's session bar's and rail's controls: always shown (issue
-/// #81: the rail keeps Select, the Haze brush and Spawn).
+/// The level tab's session bar's and tools' controls: always shown (issue
+/// #81: its tools are Select, the Haze brush and Spawn).
 const BARS: [&str; 9] = [
     labels::FILE,
     labels::UNDO,
@@ -491,93 +491,11 @@ fn options_of(tool: Tool) -> Vec<&'static str> {
     v
 }
 
-/// The rects of the widgets named `names` (each named once; a number
-/// field's, not its label's).
-fn rects(h: &Harness<'static, App>, names: &[&str]) -> Vec<egui::Rect> {
-    names
-        .iter()
-        .map(|n| match h.query_by_role_and_label(Role::SpinButton, n) {
-            Some(field) => field.rect(),
-            None => h.get_by_label(n).rect(),
-        })
-        .collect()
-}
-
-/// The playtest: the toolbar's controls moved as things changed (the
-/// unsaved mark, a longer mod name), and the mod picker and the bots sat
-/// past the window's edge. Issue #8's bars and rail keep both rules: the
-/// session bar and the rail never move, each tool's options sit in one
-/// place whatever they show, all inside a 1024-point window under the
-/// game's theme too, and the canvas stays usable there.
-#[test]
-fn the_toolbar_stays_in_the_window_and_in_place() {
-    let Some(root) = content() else { return };
-    for (width, themed) in [(1280.0, false), (1024.0, false), (1024.0, true)] {
-        let (_tmp, state) = editor(&root);
-        let app = App { state, data: EditorData::default(), commands: Vec::new() };
-        let mut h = Harness::builder().with_size(egui::vec2(width, 720.0)).build_ui_state(
-            |ui, app: &mut App| {
-                for a in ui::show(ui, &app.state, &mut app.data) {
-                    let c = run(&mut app.state, a);
-                    app.commands.extend(c);
-                }
-            },
-            app,
-        );
-        if themed {
-            theme(&mut h);
-        }
-        h.run();
-        let at = format!("at {width} points{}", if themed { ", themed" } else { "" });
-        let inside = |h: &Harness<'static, App>, names: &[&str]| {
-            for (n, r) in names.iter().zip(rects(h, names)) {
-                assert!(r.min.x >= 0.0 && r.max.x <= width, "{n} at {r:?} leaves the window {at}");
-            }
-        };
-        let bars = rects(&h, &BARS);
-        inside(&h, &BARS);
-        let canvas = h.state().data.canvas_rect().unwrap();
-        assert!(canvas.width() >= 500.0 && canvas.height() >= 400.0, "a usable canvas {at}: {canvas:?}");
-        // Each tool's options, where they first showed.
-        let mut first = Vec::new();
-        let tools = offered(&h);
-        for &tool in &tools {
-            act(&mut h, A::Tool(tool));
-            let names = options_of(tool);
-            inside(&h, &names);
-            first.push(rects(&h, &names));
-            assert_eq!(rects(&h, &BARS), bars, "the bars moved {at} with {}", tool.name());
-        }
-        // Nothing moves with the unsaved mark, a mod, a size, a texture, a
-        // crater, nor "By colour"'s tolerance shown.
-        let rename = crate::common::rename_level(&h.state().state, "Moved");
-        act(&mut h, rename);
-        act(&mut h, A::PlayMod("olx-mw-1-0".into()));
-        let brush = h.state().state.brush();
-        act(&mut h, A::Brush(olr_editor::tools::Brush { size: 64, ..brush }));
-        act(&mut h, A::Paint(PaintChoice::Texture(TextureRef::Builtin(3))));
-        let brush = h.state().state.brush();
-        act(
-            &mut h,
-            A::Brush(olr_editor::tools::Brush { shape: olr_editor::tools::BrushShape::Crater(2), ..brush }),
-        );
-        act(&mut h, A::SelectByColour(true));
-        act(&mut h, A::GlowByColour(true));
-        for (&tool, first) in tools.iter().zip(&first) {
-            act(&mut h, A::Tool(tool));
-            assert_eq!(&rects(&h, &options_of(tool)), first, "{}'s options moved {at}", tool.name());
-            assert_eq!(rects(&h, &BARS), bars, "the bars moved {at} with {}", tool.name());
-        }
-        // The brush sits in one place for every tool that dabs with it.
-        let brushes: Vec<Vec<egui::Rect>> =
-            tools.iter().zip(&first).filter(|(t, _)| t.uses_brush()).map(|(_, r)| r[..4].to_vec()).collect();
-        assert!(brushes.windows(2).all(|w| w[0] == w[1]), "the brush moved between tools {at}");
-    }
-}
-
 /// The playtest after the two rows: Play, the mod picker and the bots sat
-/// at different heights. Every control of a bar shares one centre line,
-/// under the game's theme.
+/// at different heights. Every control of the session bar shares one
+/// centre line, under the game's theme (issue #83: the tools' options sit
+/// under the tools, wrapped to the panel; `fits.rs`' `the_level_tab_fits`
+/// replaced issue #8's `the_toolbar_stays_in_the_window_and_in_place`).
 #[test]
 fn a_toolbar_row_is_one_straight_line() {
     let Some((_tmp, mut h)) = opened_level() else { return };
@@ -593,13 +511,6 @@ fn a_toolbar_row_is_one_straight_line() {
         }
     };
     line(&h, &BARS[..6]);
-    for tool in offered(&h) {
-        act(&mut h, A::Tool(tool));
-        let names = options_of(tool);
-        if !names.is_empty() {
-            line(&h, &names);
-        }
-    }
 }
 
 /// Issue #8: a group's flyout lists its tools with their shortcuts; a pick
@@ -1231,13 +1142,11 @@ fn make_parts_glow() {
 }
 
 /// Issue #8: the right panel's tab follows the selection; otherwise it
-/// changes by hand; Assets is the asset library (issue #9).
+/// changes by hand. The asset library is the left panel's (issue #83).
 #[test]
 fn the_tab_follows_the_selection() {
     let Some((_tmp, mut h)) = opened_level() else { return };
     assert_eq!(h.state().state.tab(), PanelTab::Elements);
-    h.get_by_label(labels::ASSETS).click();
-    h.run();
     assert!(h.query_by_label(labels::IMPORT_ASSET).is_some());
     h.get_by_label(labels::SPAWNS).click();
     h.run();
@@ -1894,7 +1803,9 @@ fn paint_an_asset(narrow: bool) {
         }
         h.run();
     };
-    pick(&mut h, None, labels::ASSETS);
+    if narrow {
+        pick(&mut h, None, labels::SHOW_LIBRARY);
+    }
     pick(&mut h, Some(Role::Button), "Ceiling lamp");
     pick(&mut h, None, labels::EDIT_LIBRARY_ASSET);
     let s = &h.state().state;

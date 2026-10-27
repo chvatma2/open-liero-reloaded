@@ -399,11 +399,22 @@ impl EditorState {
         &mut self,
         op: impl FnOnce(&mut crate::document::Document) -> Result<(crate::ops::Change, T), DocError>,
     ) -> Option<(Vec<EditorCommand>, T)> {
+        self.copy_edit_named(None, op)
+    }
+
+    /// [`EditorState::copy_edit`], the step named `name` (`Edit::Name`,
+    /// issue #83).
+    pub(crate) fn copy_edit_named<T>(
+        &mut self,
+        name: Option<String>,
+        op: impl FnOnce(&mut crate::document::Document) -> Result<(crate::ops::Change, T), DocError>,
+    ) -> Option<(Vec<EditorCommand>, T)> {
         let doc = self.doc.as_mut()?;
         match op(doc) {
             Ok((change, _)) if change.edit.is_noop() => None,
             Ok((change, out)) => {
-                self.history.push(vec![change.edit]);
+                self.history
+                    .push(std::iter::once(change.edit).chain(name.map(crate::history::Edit::Name)).collect());
                 Some((self.committed(change.dirty), out))
             }
             Err(e) => {
@@ -659,12 +670,21 @@ impl EditorState {
         } else {
             AssetOrigin::Yours(key.id.clone())
         };
-        let Some((cmds, added)) = self.copy_edit(|d| d.add_copy(asset, origin, at)) else {
+        let Some((mut cmds, added)) = self.copy_edit(|d| d.add_copy(asset, origin.clone(), at)) else {
             return Vec::new();
         };
         self.selection = Selection::Copy(added.id.clone());
         self.tab = PanelTab::Elements;
         self.status.message = added.added_look.then(|| olr_edit::asset::ADDED_LIGHTING.to_string());
+        // Issue #83: the library's version differed from the level's (a
+        // new key): the level's older copies are offered it.
+        if added.new_asset {
+            let said = self.status.message.take();
+            cmds.extend(self.offer_newer(origin, asset));
+            let newer = self.status.message.take();
+            let all: Vec<String> = said.into_iter().chain(newer).collect();
+            self.status.message = (!all.is_empty()).then(|| all.join("; "));
+        }
         cmds
     }
 

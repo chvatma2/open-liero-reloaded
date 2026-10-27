@@ -79,14 +79,14 @@ impl Selection {
 pub const DOUBLE_CLICK_INTO: &str =
     "a folder is selected: double-click into the object (or Alt+click) to select one of its elements";
 
-/// The right panel's tabs (issue #8): the element list, the asset library
-/// (issue #9) and the spawns. The tab follows the selection; otherwise only
-/// a click changes it.
+/// The right panel's tabs (issue #8): the element list (the level tab's
+/// copies) and the spawns; the asset library is the level tab's left panel
+/// since issue #83. The tab follows the selection; otherwise only a click
+/// changes it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PanelTab {
     #[default]
     Elements,
-    Assets,
     Spawns,
 }
 
@@ -347,9 +347,17 @@ pub enum EditorAction {
     /// the user's; the answer to `SaveAsset`, `ImportAsset` and
     /// `RemoveAsset`.
     AssetsChanged(Vec<AssetEntry>),
-    /// An asset was saved or imported into the user's library: it is
-    /// selected in the Assets tab.
-    AssetSaved(AssetKey),
+    /// An asset was saved or imported into the user's library (`key`): it
+    /// is picked in the library; `source` is its files as written (issue
+    /// #83: Save to library links the level's asset to them), `None` when
+    /// they did not read back.
+    AssetSaved {
+        key: AssetKey,
+        source: Option<Box<olr_format::assets::AssetSource>>,
+    },
+    /// The library's version of each origin `CompareLibrary` asked for
+    /// (`olr_edit::library::read_origins`; issue #83).
+    LibraryCompared(olr_edit::library::Libraries),
     /// The asset `ReadAsset` asked for (library asset `key`, its files as
     /// read), to place at world pixel `at`, or why it cannot be read.
     AssetRead {
@@ -579,6 +587,15 @@ pub enum EditorAction {
     EditCopy(String),
     /// Removes the user's asset `id` (asks first).
     RemoveAsset(String),
+    // The library's links (issue #83).
+    /// Copy `id`'s library asset becomes the level's own (one step).
+    Unlink(String),
+    /// Copy `id`'s own asset goes in the user's library (asks its name),
+    /// then is linked to it.
+    SaveToLibrary(String),
+    /// The status line's Use your copy in this level: the level's copies
+    /// of the built-in asset just saved as the user's use the user's.
+    UseYourCopy,
     // The asset tab (issue #77).
     /// The session bar's Level | Asset switch (Asset once one is open).
     ShowTab(DocTab),
@@ -727,6 +744,13 @@ pub enum EditorCommand {
     ImportAsset(PathBuf),
     /// Remove the user's asset folder `id`; answer `AssetsChanged`.
     RemoveAsset(String),
+    /// Read the library's version of each of `origins` (the open level's
+    /// linked assets; `olr_edit::library::read_origins`: a built-in one
+    /// from the built-in library, the user's from theirs); answer
+    /// `LibraryCompared` (issue #83).
+    CompareLibrary {
+        origins: Vec<olr_format::levels::AssetOrigin>,
+    },
     /// Read asset `key` whole (`olr_edit::asset::load_dir`) to edit it in
     /// the asset tab (issue #77); answer `AssetToEdit`.
     ReadAssetToEdit(AssetKey),
@@ -876,6 +900,13 @@ pub struct EditorState {
     /// Issue #82: while the asset tab holds one of the level's own assets
     /// but the ground, which, and as the level last had it.
     pub(crate) own: Option<crate::level_tab::OwnOpen>,
+    /// Issue #83: the level's links as last compared with the library.
+    pub(crate) links: Vec<olr_edit::library::Link>,
+    /// Issue #83: the offer of Use your copy in this level.
+    pub(crate) use_yours: Option<crate::links::UseYours>,
+    /// Issue #83: the level's own asset (by key) Save to library is
+    /// saving: `AssetSaved` links it.
+    pub(crate) pending_link: Option<String>,
 }
 
 impl EditorState {
@@ -975,6 +1006,9 @@ impl EditorState {
             state_named: 0,
             ground: None,
             own: None,
+            links: Vec::new(),
+            use_yours: None,
+            pending_link: None,
         }
     }
 
@@ -1235,10 +1269,14 @@ impl EditorState {
 
     /// The shown tab's step Undo reverts, when it has a name: the level
     /// tab's "Edit Ground" (issue #81: the asset tab's edits of the
-    /// ground, applied as one step).
-    pub fn undo_name(&self) -> Option<&'static str> {
+    /// ground, applied as one step) or a step's own (`Edit::Name`, issue
+    /// #83: "Update Strip light").
+    pub fn undo_name(&self) -> Option<String> {
         let step = self.history.last()?;
-        step.iter().any(|e| matches!(e, Edit::Ground { .. })).then_some(crate::ground::EDIT_GROUND)
+        if let Some(Edit::Name(n)) = step.iter().find(|e| matches!(e, Edit::Name(_))) {
+            return Some(n.clone());
+        }
+        step.iter().any(|e| matches!(e, Edit::Ground { .. })).then(|| crate::ground::EDIT_GROUND.to_string())
     }
 
     pub fn update(&mut self, action: EditorAction) -> Vec<EditorCommand> {
@@ -1264,7 +1302,8 @@ impl EditorState {
                 | EditorAction::Note(_)
                 | EditorAction::TexturesChanged(_)
                 | EditorAction::AssetsChanged(_)
-                | EditorAction::AssetSaved(_)
+                | EditorAction::AssetSaved { .. }
+                | EditorAction::LibraryCompared(_)
                 | EditorAction::AssetRead { .. }
                 | EditorAction::AssetToEdit { .. }
                 | EditorAction::NameAsset(_)
@@ -1310,8 +1349,6 @@ impl EditorState {
                 | EditorAction::Tolerance(_)
                 | EditorAction::TexturesChanged(_)
                 | EditorAction::RemoveTexture(_)
-                | EditorAction::AssetsChanged(_)
-                | EditorAction::AssetSaved(_)
                 | EditorAction::PickAsset(_)
                 | EditorAction::EditAsset(_)
                 | EditorAction::NewAssetDialog
@@ -1456,17 +1493,30 @@ impl EditorState {
                 if self.asset_key.as_ref().is_some_and(|k| self.asset(k).is_none()) {
                     self.asset_key = None;
                 }
-                Vec::new()
+                // Issue #83: the open level follows the library.
+                self.compare_library()
             }
-            EditorAction::AssetSaved(key) if self.tab_save.is_some() => self.tab_saved(key),
-            EditorAction::AssetSaved(key) => {
-                let name = self.asset(&key).map_or_else(|| key.id.clone(), |a| a.name.clone());
-                self.status.message = Some(format!("saved the asset {name:?} in your assets"));
-                self.picked_asset = Some(key);
-                self.placing = false;
-                self.tab = PanelTab::Assets;
-                Vec::new()
+            EditorAction::AssetSaved { key, source } => {
+                let mut cmds = if self.tab_save.is_some() {
+                    self.tab_saved(key, source.as_deref())
+                } else if let Some(link) = self.pending_link.take() {
+                    self.picked_asset = Some(key.clone());
+                    self.placing = false;
+                    self.link_saved(&link, &key, source.as_deref())
+                } else {
+                    let name = self.asset(&key).map_or_else(|| key.id.clone(), |a| a.name.clone());
+                    self.status.message = Some(format!("saved the asset {name:?} in your assets"));
+                    self.picked_asset = Some(key);
+                    self.placing = false;
+                    Vec::new()
+                };
+                cmds.extend(self.compare_library());
+                cmds
             }
+            EditorAction::LibraryCompared(libs) => self.library_compared(libs),
+            EditorAction::Unlink(id) => self.unlink(&id),
+            EditorAction::SaveToLibrary(id) => self.save_to_library(&id),
+            EditorAction::UseYourCopy => self.use_your_copy(),
             EditorAction::AssetRead { key, at, asset } => match asset {
                 Ok(asset) => self.place_copy(&key, &asset, at),
                 Err(why) => {
@@ -2083,6 +2133,10 @@ impl EditorState {
 
     /// A document opened (or recovered): a fresh history and view.
     fn opened(&mut self, doc: Box<Document>) -> Vec<EditorCommand> {
+        // Issue #83: the last level's links and offers go with it.
+        self.links.clear();
+        self.use_yours = None;
+        self.pending_link = None;
         self.pixel_rect = None;
         self.pixel_region = None;
         let all = doc.all();
@@ -2495,6 +2549,7 @@ impl EditorState {
             Ok(asset) => {
                 let suggested: String = asset.name.chars().take(olr_format::assets::MAX_ASSET_NAME).collect();
                 self.pending_asset = Some(Box::new(asset));
+                self.pending_link = None;
                 self.dialog = Some(Dialog::AssetName { suggested });
             }
             Err(e) => self.status.message = Some(e.to_string()),
@@ -3050,6 +3105,7 @@ impl EditorState {
                 let asks = clash.map(|a| Dialog::AssetExists { name: a.name.clone(), id: a.key.id.clone() });
                 self.pending_asset = Some(Box::new(asset));
                 self.pending_tab = Some((changes, then));
+                self.pending_link = None;
                 match asks {
                     Some(d) => {
                         self.dialog = Some(d);
@@ -3063,9 +3119,17 @@ impl EditorState {
 
     /// The asset tab's save done (`AssetSaved`): the tab edits the saved
     /// key from now on; what waited on the save is carried out.
-    fn tab_saved(&mut self, key: AssetKey) -> Vec<EditorCommand> {
+    fn tab_saved(
+        &mut self,
+        key: AssetKey,
+        source: Option<&olr_format::assets::AssetSource>,
+    ) -> Vec<EditorCommand> {
         let Some((sent, then)) = self.tab_save.take() else { return Vec::new() };
         let name = self.asset(&key).map_or_else(|| key.id.clone(), |a| a.name.clone());
+        // Issue #83: a built-in asset saved as the user's offers the
+        // level's copies of it the user's.
+        let was = self.asset_key.clone();
+        self.offer_use_yours(was, &key, source);
         self.asset_key = Some(key);
         self.on_tab(DocTab::Asset, |s| {
             // A change made after the save was sent is not in the saved asset.
@@ -3191,6 +3255,7 @@ impl EditorState {
             (Dialog::AssetName { .. } | Dialog::AssetExists { .. }, Choice::Cancel) => {
                 self.pending_asset = None;
                 self.pending_tab = None;
+                self.pending_link = None;
                 Vec::new()
             }
             (Dialog::Error(_), _) | (_, Choice::Cancel) => Vec::new(),

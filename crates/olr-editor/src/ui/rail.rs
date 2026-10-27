@@ -1,8 +1,8 @@
-//! The tool rail (issue #8): one column of buttons, each an icon over a
-//! short label. Issue #81: the level tab's holds Select, the Haze brush and
-//! Spawn; the layer tools moved to the asset tab, which lays them out in
-//! rows across its tools panel (issue #78, `grid`): Select, Draw ▸,
-//! Pixels ▸, Glow, Surface and Import. A group's button (its corner mark)
+//! The tools (issue #8's rail): buttons, each an icon over a short label,
+//! in rows across a tools panel (issue #78, `grid`; issue #83 the level
+//! tab's too). Issue #81: the level tab's are Select, Spawn and the Haze
+//! brush; the layer tools are the asset tab's: Select, Draw ▸, Pixels ▸,
+//! Glow, Surface and Import. A group's button (its corner mark)
 //! shows the icon of its tool chosen last, and one click chooses that tool
 //! again; a second click, a click on the corner mark or a right click
 //! opens its flyout, which lists the group's tools with their shortcuts. A
@@ -16,8 +16,6 @@ use crate::browser::Purpose;
 use crate::state::{DocTab, EditorAction, EditorState};
 use crate::tools::{Tool, ToolGroup};
 
-/// The rail's width (points).
-pub(super) const RAIL_WIDTH: f32 = 64.0;
 /// An icon's side on the rail.
 const ICON: f32 = 22.0;
 /// An icon's side in a flyout.
@@ -29,19 +27,16 @@ const CORNER: f32 = 14.0;
 /// A button's width in the asset tab's rows (points).
 const GRID_BUTTON: f32 = 54.0;
 
-/// The level tab's rail (issue #81): Select, the Haze brush and Spawn;
-/// the layer tools are the asset tab's.
-pub(super) fn show(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
-    tools(ui, state, None, out);
-}
-
-/// The asset tab's tools (issue #78): the rail's buttons in rows across
-/// the panel, Select, Draw ▸, Pixels ▸, Glow brush and Surface brush,
-/// then Import image….
+/// The tools panel's tools (issue #78): the rail's buttons in rows across
+/// the panel. The asset tab's Select, Draw ▸, Pixels ▸, Glow brush and
+/// Surface brush, then Import image…; the level tab's (issue #83) Select,
+/// Spawn and the Haze brush.
 pub(super) fn grid(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
     ui.horizontal_wrapped(|ui| {
         tools(ui, state, Some(GRID_BUTTON), out);
-        import(ui, Some(GRID_BUTTON), out);
+        if state.doc_tab() == DocTab::Asset {
+            import(ui, Some(GRID_BUTTON), out);
+        }
     });
 }
 
@@ -60,8 +55,8 @@ fn tools(ui: &mut Ui, state: &EditorState, width: Option<f32>, out: &mut Vec<Edi
     // The level's own (issue #77: not the asset tab's); issue #81: its
     // only others.
     if state.doc_tab() == DocTab::Level {
-        single(ui, state, Tool::Haze, "Haze", width, out);
         single(ui, state, Tool::Spawn, "Spawn", width, out);
+        single(ui, state, Tool::Haze, "Haze", width, out);
         return;
     }
     for group in ToolGroup::ALL {

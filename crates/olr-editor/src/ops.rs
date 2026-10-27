@@ -1596,10 +1596,11 @@ impl Document {
         self.touch(edit);
         // Issue #82: a ground copy laid otherwise than as the level's is
         // laid again after any change of the ground.
-        if !matches!(edit, Edit::Placement { .. }) {
+        if !matches!(edit, Edit::Placement { .. } | Edit::Name(_)) {
             self.copy_cache.ground += 1;
         }
         let dirty = match edit {
+            Edit::Name(_) => NOTHING,
             Edit::Placement { before, after } => self.set_placement(if forward { after } else { before }),
             Edit::Show { before, after } => {
                 if self.show_state(if forward { *after } else { *before }) {

@@ -1,41 +1,23 @@
-//! The right panel's tabs (issue #8): Elements (the element list, top
-//! first: drag a row to reorder, eye and lock toggles, add a layer; issue
-//! #61: the folder tree, a row dragged beside another, into a folder or
-//! out of one, New folder),
-//! Assets (the asset library, issue #9: thumbnails grouped Built-in and
-//! Yours; a click picks one for the next press on the canvas, a drag drops
-//! it there) and Spawns (the level's objects). The tab follows the
-//! selection (`EditorState::tab`).
+//! The level tab's copy panel's tabs (issue #8; issue #83 moved the asset
+//! library to the left panel, `library.rs`): Copies (issue #82: every
+//! placed copy, top first) and Spawns (the level's objects), the tab
+//! following the selection (`EditorState::tab`); and the asset tab's
+//! layer tree (issue #61: a row dragged beside another, into a folder or
+//! out of one, eye and lock toggles, Add layer, New folder).
 
 use egui::Ui;
 use olr_edit::element::Property;
 use olr_format::levels::{ElementKind, Folder, LevelObject};
 
-use super::{EditorData, labels};
-use crate::catalog::{AssetEntry, AssetKey};
+use super::labels;
 use crate::folder_ops::{FolderField, RowDrop};
-use crate::state::{DocTab, EditorAction, EditorState, PanelTab, Selection};
+use crate::state::{EditorAction, EditorState, PanelTab, Selection};
 
-/// The lists' share of the panel's height: the properties take the rest.
-const LIST_SHARE: f32 = 0.4;
-
-/// A thumbnail's size in the Assets tab (points): half `THUMB_SIZE`.
-const THUMB: egui::Vec2 = egui::vec2(80.0, 48.0);
-
-pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
-    ui.horizontal(|ui| {
-        let asset = state.doc_tab() == DocTab::Asset;
-        // Issue #81: the level tab lists its copies (the ground).
-        let first = if asset { labels::ELEMENTS } else { labels::COPIES };
-        for (tab, label) in [
-            (PanelTab::Elements, first),
-            (PanelTab::Assets, labels::ASSETS),
-            (PanelTab::Spawns, labels::SPAWNS),
-        ] {
-            // The asset tab has no spawns (issue #77).
-            if asset && tab == PanelTab::Spawns {
-                continue;
-            }
+/// The level tab's copy panel's tabs and list: Copies or Spawns, in the
+/// panel's own scroll area (none of their own).
+pub(super) fn show(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
+    ui.horizontal_wrapped(|ui| {
+        for (tab, label) in [(PanelTab::Elements, labels::COPIES), (PanelTab::Spawns, labels::SPAWNS)] {
             if ui.selectable_label(state.tab() == tab, label).clicked() && state.tab() != tab {
                 out.push(EditorAction::Tab(tab));
             }
@@ -43,9 +25,7 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
     });
     ui.separator();
     match state.tab() {
-        PanelTab::Elements if state.doc_tab() == DocTab::Level => copies(ui, state, out),
-        PanelTab::Elements => elements(ui, state, out),
-        PanelTab::Assets => assets(ui, state, data, out),
+        PanelTab::Elements => copies(ui, state, out),
         PanelTab::Spawns => spawns(ui, state, out),
     }
 }
@@ -65,62 +45,59 @@ fn copies(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
     let carried = egui::DragAndDrop::payload::<CarriedCopy>(ui.ctx()).map(|p| p.0.clone());
     let accent = ui.visuals().selection.stroke;
     let selected = state.selection().copies();
-    egui::ScrollArea::vertical()
-        .id_salt("olr-editor-copy-list")
-        .max_height(ui.available_height() * LIST_SHARE)
-        .show(ui, |ui| {
-            for (k, c) in copies.iter().enumerate().rev() {
-                let ground = doc.is_ground_copy(&c.id);
-                let row = ui.horizontal(|ui| {
-                    let mut locked = c.locked || ground;
-                    let lock = toggle(ui, &mut locked, "🔒", false, labels::LOCKED);
-                    if lock.clicked() && !ground {
-                        let change = crate::level_tab::CopyChange::Locked(locked);
-                        out.push(EditorAction::SetCopy { id: c.id.clone(), change });
-                    }
-                    let name = doc.copy_name(&c.id).unwrap_or_else(|| c.id.clone());
-                    let on = selected.contains(&c.id);
-                    let r = ui.add(name_button(on, &name, false));
-                    r.dnd_set_drag_payload(CarriedCopy(c.id.clone()));
-                    if r.double_clicked() {
-                        out.push(EditorAction::EditCopy(c.id.clone()));
-                    } else if r.clicked() {
-                        let mut ids =
-                            if ui.input(|i| i.modifiers.command) { selected.clone() } else { Vec::new() };
-                        match ids.iter().position(|i| *i == c.id) {
-                            Some(i) => {
-                                ids.remove(i);
-                            }
-                            None => ids.push(c.id.clone()),
-                        }
-                        out.push(EditorAction::Select(match ids.len() {
-                            0 => Selection::None,
-                            1 => Selection::Copy(ids.remove(0)),
-                            _ => Selection::Copies(ids),
-                        }));
-                    }
-                    ui.weak(&c.id);
-                    match doc.copy_origin(&c.id) {
-                        Some(olr_format::levels::AssetOrigin::Own) | None => {
-                            ui.weak(labels::OWN_MARK).on_hover_text("the level's own asset");
-                        }
-                        Some(_) => {
-                            ui.label(labels::LIBRARY_MARK).on_hover_text("a copy of a library asset");
-                        }
-                    }
-                });
-                let Some(dragged) = carried.as_ref().filter(|d| **d != c.id) else { continue };
-                let rect = row.response.rect;
-                if ui.input(|i| i.pointer.interact_pos()).is_some_and(|p| rect.contains(p)) {
-                    let from_below = copies.iter().position(|x| x.id == *dragged).is_some_and(|d| d < k);
-                    let y = if from_below { rect.top() } else { rect.bottom() };
-                    ui.painter().hline(rect.x_range(), y, accent);
+    for (k, c) in copies.iter().enumerate().rev() {
+        let ground = doc.is_ground_copy(&c.id);
+        let row = ui.horizontal(|ui| {
+            let mut locked = c.locked || ground;
+            let lock = toggle(ui, &mut locked, "🔒", false, labels::LOCKED);
+            if lock.clicked() && !ground {
+                let change = crate::level_tab::CopyChange::Locked(locked);
+                out.push(EditorAction::SetCopy { id: c.id.clone(), change });
+            }
+            match doc.copy_origin(&c.id) {
+                Some(olr_format::levels::AssetOrigin::Own) | None => {
+                    ui.weak(labels::OWN_MARK).on_hover_text("the level's own asset");
                 }
-                if row.response.dnd_release_payload::<CarriedCopy>().is_some() {
-                    out.push(EditorAction::RestackCopy { id: dragged.clone(), to: k });
+                Some(_) => {
+                    ui.label(labels::LIBRARY_MARK).on_hover_text("a copy of a library asset");
                 }
             }
+            // Issue #83: the name cut to the panel (named in full), then
+            // the id in the room left.
+            let name = doc.copy_name(&c.id).unwrap_or_else(|| c.id.clone());
+            let on = selected.contains(&c.id);
+            let r = ui.add(name_button(on, &name, true));
+            super::relabel(&r, egui::WidgetType::Button, Some(on), &name);
+            r.dnd_set_drag_payload(CarriedCopy(c.id.clone()));
+            if r.double_clicked() {
+                out.push(EditorAction::EditCopy(c.id.clone()));
+            } else if r.clicked() {
+                let mut ids = if ui.input(|i| i.modifiers.command) { selected.clone() } else { Vec::new() };
+                match ids.iter().position(|i| *i == c.id) {
+                    Some(i) => {
+                        ids.remove(i);
+                    }
+                    None => ids.push(c.id.clone()),
+                }
+                out.push(EditorAction::Select(match ids.len() {
+                    0 => Selection::None,
+                    1 => Selection::Copy(ids.remove(0)),
+                    _ => Selection::Copies(ids),
+                }));
+            }
+            ui.add(egui::Label::new(egui::RichText::new(&c.id).weak()).truncate());
         });
+        let Some(dragged) = carried.as_ref().filter(|d| **d != c.id) else { continue };
+        let rect = row.response.rect;
+        if ui.input(|i| i.pointer.interact_pos()).is_some_and(|p| rect.contains(p)) {
+            let from_below = copies.iter().position(|x| x.id == *dragged).is_some_and(|d| d < k);
+            let y = if from_below { rect.top() } else { rect.bottom() };
+            ui.painter().hline(rect.x_range(), y, accent);
+        }
+        if row.response.dnd_release_payload::<CarriedCopy>().is_some() {
+            out.push(EditorAction::RestackCopy { id: dragged.clone(), to: k });
+        }
+    }
 }
 
 /// One folder level's indent in the list, points.
@@ -129,16 +106,6 @@ const INDENT: f32 = 14.0;
 /// A folder row's share of its height, at its top (and at its bottom when
 /// folded), that drops beside it rather than into it.
 const EDGE: f32 = 0.3;
-
-/// The element list (issue #61: the tree): rows top first, a folder's
-/// members under it, indented one step per level; Add layer and New folder.
-fn elements(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
-    egui::ScrollArea::vertical()
-        .id_salt("olr-editor-element-list")
-        .max_height(ui.available_height() * LIST_SHARE)
-        .show(ui, |ui| rows(ui, state, false, out));
-    buttons(ui, state, out);
-}
 
 /// The asset tab's Layers (issue #78): the tree's rows in the panel's own
 /// scroll area, the names cut to the panel's width, then Add layer and New
@@ -325,131 +292,17 @@ fn name_button(selected: bool, name: &str, fit: bool) -> egui::Button<'_> {
     if fit { b.truncate() } else { b }
 }
 
-fn assets(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
-    // Thumbnails of an older library go.
-    if data.asset_generation != state.assets_generation() {
-        data.asset_thumbs.clear();
-        data.asset_generation = state.assets_generation();
-    }
-    let all = &state.catalog().assets;
-    egui::ScrollArea::vertical()
-        .id_salt("olr-editor-asset-list")
-        .max_height(ui.available_height() * LIST_SHARE)
-        .show(ui, |ui| {
-            for (builtin, title) in [(true, labels::BUILT_IN), (false, labels::YOURS)] {
-                ui.strong(title);
-                let group: Vec<&AssetEntry> = all.iter().filter(|a| a.key.builtin == builtin).collect();
-                if group.is_empty() {
-                    ui.weak(if builtin {
-                        "None found."
-                    } else {
-                        "None yet: select elements or pixels and use Save as asset…, or import one."
-                    });
-                }
-                ui.horizontal_wrapped(|ui| {
-                    for a in group {
-                        card(ui, state, data, a, out);
-                    }
-                });
-            }
-        });
-    ui.horizontal_wrapped(|ui| {
-        if ui.button(labels::IMPORT_ASSET).on_hover_text("add an asset folder someone shared").clicked() {
-            out.push(EditorAction::Browse(crate::browser::Purpose::ImportAsset));
-        }
-        // Issue #77: the asset tab opens a blank asset, or the one picked.
-        if ui.button(labels::NEW_ASSET).on_hover_text("a blank asset to paint in the asset tab").clicked() {
-            out.push(EditorAction::NewAssetDialog);
-        }
-        // Issue #82: a copy of it at the view's centre, selected.
-        if let Some(key) = state.picked_asset().filter(|_| state.doc_tab() == DocTab::Level)
-            && ui.button(labels::PLACE).on_hover_text("a copy of it at the view's centre").clicked()
-        {
-            out.push(EditorAction::PlaceAssetCentred(key.clone()));
-        }
-        if let Some(key) = state.picked_asset()
-            && ui
-                .button(labels::EDIT_LIBRARY_ASSET)
-                .on_hover_text("open it in the asset tab; saving keeps it in your assets")
-                .clicked()
-        {
-            out.push(EditorAction::EditAsset(key.clone()));
-        }
-        if let Some(key) = state.picked_asset().filter(|k| !k.builtin)
-            && ui.button(labels::REMOVE_ASSET).clicked()
-        {
-            out.push(EditorAction::RemoveAsset(key.id.clone()));
-        }
-    });
-}
-
-/// An asset's thumbnail (a click picks it, a drag carries it to the
-/// canvas), its name and its tag.
-fn card(
-    ui: &mut Ui,
-    state: &EditorState,
-    data: &mut EditorData,
-    a: &AssetEntry,
-    out: &mut Vec<EditorAction>,
-) {
-    let picked = state.picked_asset() == Some(&a.key);
-    ui.vertical(|ui| {
-        ui.set_width(THUMB.x + 8.0);
-        let texture = thumb(ui, data, a);
-        let button = match &texture {
-            Some(t) => egui::Button::image(egui::Image::new(t).fit_to_exact_size(THUMB)),
-            None => egui::Button::new("?").min_size(THUMB),
-        };
-        let r = ui.add(button.selected(picked).sense(egui::Sense::click_and_drag()));
-        super::relabel(&r, egui::WidgetType::Button, Some(picked), &a.name);
-        r.dnd_set_drag_payload(a.key.clone());
-        if r.clicked() {
-            let again = picked && state.placing();
-            out.push(EditorAction::PickAsset((!again).then(|| a.key.clone())));
-        }
-        ui.add(egui::Label::new(&a.name).truncate());
-        ui.add(egui::Label::new(egui::RichText::new(a.tag()).small().weak()).truncate());
-    });
-}
-
-/// `a`'s thumbnail texture, made when first drawn.
-fn thumb(ui: &Ui, data: &mut EditorData, a: &AssetEntry) -> Option<egui::TextureHandle> {
-    let img = a.thumb.as_ref()?;
-    let key: &AssetKey = &a.key;
-    Some(
-        data.asset_thumbs
-            .entry(key.clone())
-            .or_insert_with(|| {
-                let (w, h) = (img.width(), img.height());
-                let raw: Vec<u8> = (0..h)
-                    .flat_map(|y| (0..w).map(move |x| (x, y)))
-                    .flat_map(|(x, y)| {
-                        let p = img.get(x, y);
-                        [p.r, p.g, p.b, p.a]
-                    })
-                    .collect();
-                ui.ctx().load_texture(
-                    format!("olr-editor-asset-{}-{}", key.builtin, key.id),
-                    egui::ColorImage::from_rgba_unmultiplied(
-                        [img.width() as usize, img.height() as usize],
-                        &raw,
-                    ),
-                    egui::TextureOptions::NEAREST,
-                )
-            })
-            .clone(),
-    )
-}
-
 fn spawns(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
     let Some(doc) = state.active_document() else { return };
     if doc.level().objects.is_empty() {
-        ui.weak("No spawns yet: place them with the Spawn tool (P).");
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new("No spawns yet: place them with the Spawn tool (P).").weak(),
+            )
+            .wrap(),
+        );
     }
-    egui::ScrollArea::vertical()
-        .id_salt("olr-editor-spawn-list")
-        .max_height(ui.available_height() * LIST_SHARE)
-        .show(ui, |ui| spawn_rows(ui, state, out));
+    spawn_rows(ui, state, out);
 }
 
 fn spawn_rows(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {

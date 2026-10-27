@@ -1,10 +1,11 @@
-//! The two bars over the canvas (issue #8): the session bar (File ▾,
-//! Undo, Redo, the unsaved mark, then at the right View ▾ and Play with
-//! its ▾) and the tool options bar, which shows only the chosen tool's
-//! options: the brush for the tools that dab with it, the paint for those
-//! that lay it, then the tool's own. The asset tab's session bar takes
-//! their pieces (issue #78, `ui::asset`), and its tools panel the options
-//! (`options_panel`, wrapped to the panel).
+//! The session bar's pieces (issue #8: the Level | Asset switch, File ▾,
+//! Undo, Redo, View ▾, Play and its ▾), which each tab's layout wraps to
+//! the window (`ui::asset`, issue #78; `ui::level_tab`, issue #83), and
+//! the chosen tool's options (`options_panel`, under the tools: the brush
+//! for the tools that dab with it, the paint for those that lay it, then
+//! the tool's own, wrapped to the panel). Issue #83 removed the level
+//! tab's options bar; the row helpers (`fixed`, the widths) are its
+//! remains, the options' row layout outside a panel.
 
 use egui::{Ui, WidgetType};
 use olr_look::ViewMode;
@@ -16,9 +17,6 @@ use crate::state::{ClockAction, DocTab, EditorAction, EditorState, MAX_BOTS};
 use crate::tools::{Brush, BrushShape, MAX_BRUSH, PaintChoice, TextureRef, Tool};
 use olr_format::levels::ElementMaterial;
 
-/// The space the unsaved mark keeps, shown or not: nothing moves when it
-/// comes and goes.
-const MARK_WIDTH: f32 = 110.0;
 /// The space "By colour" and its tolerance keep, the tolerance shown or
 /// not: Glow selection and the glow % never move.
 const BY_COLOUR_WIDTH: f32 = 220.0;
@@ -53,36 +51,13 @@ pub(super) fn button_height(ui: &mut Ui) -> f32 {
     ui.spacing().interact_size.y
 }
 
-/// The session bar: each control's place is fixed by what precedes it
-/// (from the left, or from the right for View and Play), never by what a
-/// control shows (the playtest: one wrapped row moved its controls as they
-/// changed width, and pushed the mod picker past the window's edge).
-pub(super) fn session(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
-    button_height(ui);
-    let asset = state.doc_tab() == DocTab::Asset;
-    ui.horizontal(|ui| {
-        tab_switch(ui, state, out);
-        ui.separator();
-        file_menu(ui, state, out);
-        ui.separator();
-        undo_redo(ui, state, out);
-        let mark = if state.active_dirty() { "unsaved changes" } else { "" };
-        ui.add_sized(
-            [MARK_WIDTH, ui.spacing().interact_size.y],
-            egui::Label::new(egui::RichText::new(mark).weak()),
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            // Play is the level's (issue #77).
-            if !asset {
-                play_menu(ui, state, data, out);
-                if ui.button(labels::PLAY).on_hover_text("play a test match on this level").clicked() {
-                    out.push(EditorAction::Play);
-                }
-                ui.separator();
-            }
-            view_menu(ui, state, data, out);
-        });
-    });
+/// Play and its ▾ (the test match's mod and bots): the level's (issue
+/// #77), and the ground's (issue #81: Play alone).
+pub(super) fn play(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
+    if ui.button(labels::PLAY).on_hover_text("play a test match on this level").clicked() {
+        out.push(EditorAction::Play);
+    }
+    play_menu(ui, state, data, out);
 }
 
 /// Issue #77: the Level | Asset switch (Asset disabled while no asset is
@@ -249,42 +224,6 @@ pub(super) fn view_menu(
         let now = state.clock_ms().floor() as i64;
         if let Some(t) = number(ui, data, "clock", labels::CLOCK_SCRUB, now, 0..=86_400_000) {
             out.push(EditorAction::Clock(ClockAction::Scrub(t as f64)));
-        }
-    });
-}
-
-/// The tool options bar: the chosen tool's options only, from the left:
-/// the brush, the paint, then the tool's own (so the brush's controls sit
-/// in one place for every tool that dabs). A tool without options leaves
-/// it empty, as tall as ever.
-pub(super) fn options_bar(
-    ui: &mut Ui,
-    state: &EditorState,
-    data: &mut EditorData,
-    out: &mut Vec<EditorAction>,
-) {
-    let h = button_height(ui);
-    ui.horizontal(|ui| {
-        ui.set_min_height(h);
-        let tool = state.tool();
-        let mut sections = 0;
-        let mut separate = |ui: &mut Ui| {
-            if sections > 0 {
-                ui.separator();
-            }
-            sections += 1;
-        };
-        if tool.uses_brush() {
-            separate(ui);
-            brush(ui, state, data, out);
-        }
-        if tool.lays_paint() {
-            separate(ui);
-            paint(ui, state, data, out);
-        }
-        if !matches!(tool, Tool::Select | Tool::Spawn | Tool::Eyedropper) {
-            separate(ui);
-            options(ui, state, data, out);
         }
     });
 }

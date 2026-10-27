@@ -18,7 +18,7 @@ use crate::common::{
 };
 use olr_editor::level_tab::CopyChange;
 
-struct App {
+pub struct App {
     state: EditorState,
     data: EditorData,
     commands: Vec<C>,
@@ -35,6 +35,19 @@ fn harness(state: EditorState) -> Harness<'static, App> {
         },
         app,
     )
+}
+
+/// The Copies list's row named `name` (issue #83: the library on the left
+/// shows a thumbnail of the same name): the rightmost.
+pub fn row<'a>(h: &'a Harness<'static, App>, name: &'a str) -> egui_kittest::Node<'a> {
+    h.query_all_by_label(name).max_by(|a, b| a.rect().left().total_cmp(&b.rect().left())).expect(name)
+}
+
+/// The library's thumbnail named `name` (issue #83): the leftmost button.
+pub fn thumbnail<'a>(h: &'a Harness<'static, App>, name: &'a str) -> egui_kittest::Node<'a> {
+    h.query_all_by_role_and_label(egui::accesskit::Role::Button, name)
+        .min_by(|a, b| a.rect().left().total_cmp(&b.rect().left()))
+        .expect(name)
 }
 
 fn click(s: &mut EditorState, world: (i32, i32)) {
@@ -162,7 +175,7 @@ fn switching_tabs_applies_the_ground_as_one_unsaved_step() {
     run(&mut s, A::ShowTab(DocTab::Level));
     assert!(s.dirty(), "the level unsaved");
     assert_eq!(s.document().unwrap().layer_art("tunnels").unwrap(), &painted, "the paint shows");
-    assert_eq!(s.undo_name(), Some(EDIT_GROUND));
+    assert_eq!(s.undo_name().as_deref(), Some(EDIT_GROUND));
     // The asset tab keeps its own strokes: two steps there.
     run(&mut s, A::ShowTab(DocTab::Asset));
     run(&mut s, A::Undo);
@@ -189,7 +202,7 @@ fn play_applies_the_ground_first() {
     assert!(s.dirty());
     run(&mut s, A::PlayEnded);
     run(&mut s, A::ShowTab(DocTab::Level));
-    assert_eq!(s.undo_name(), Some(EDIT_GROUND));
+    assert_eq!(s.undo_name().as_deref(), Some(EDIT_GROUND));
 }
 
 #[test]
@@ -868,7 +881,7 @@ fn copies_reorder_from_the_list() {
     // The list shows them top first.
     let mut h = harness(s);
     h.run();
-    let y = |h: &Harness<'static, App>, name: &str| h.get_by_label(name).rect().top();
+    let y = |h: &Harness<'static, App>, name: &str| row(h, name).rect().top();
     assert!(y(&h, "Ceiling lamp") < y(&h, "Strip light") && y(&h, "Strip light") < y(&h, "Ground"));
 }
 
@@ -885,12 +898,12 @@ fn own_assets_are_marked_own_not_starred() {
     assert!(h.query_all_by_label_contains("★").next().is_none());
     // Its panel's button is Edit in level; a library copy's Edit library
     // asset.
-    h.get_by_label("Strip light").click();
+    row(&h, "Strip light").click();
     h.run();
     assert_eq!(h.state().state.selection(), &copy("strip-light"));
     h.get_by_label(labels::EDIT_IN_LEVEL);
     assert!(h.query_by_label(labels::EDIT_LIBRARY_COPY).is_none());
-    h.get_by_label("Torch").click();
+    row(&h, "Torch").click();
     h.run();
     h.get_by_label(labels::EDIT_LIBRARY_COPY);
     h.get_by_label(labels::KEEP_ASPECT);
@@ -1004,10 +1017,8 @@ fn move_and_resize_a_copy_through_the_canvas() {
     let (_t, _t2, s) = placed(&root);
     let mut h = harness(s);
     h.run();
-    // Place a built-in asset from the Assets tab.
-    h.get_by_label(labels::ASSETS).click();
-    h.run();
-    h.get_by_role_and_label(egui::accesskit::Role::Button, "Torch").click();
+    // Place a built-in asset from the library.
+    thumbnail(&h, "Torch").click();
     h.run();
     h.get_by_role_and_label(egui::accesskit::Role::Button, labels::PLACE).click();
     h.run();

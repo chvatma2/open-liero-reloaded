@@ -67,7 +67,6 @@ fn saving_the_selection_asks_its_name_and_writes_it_into_yours() {
     assert!(cmds.iter().any(|c| matches!(c, C::SaveAsset { replace: None, .. })), "{cmds:?}");
     assert!(tmp.path().join("yours/tunnels/asset.ron").is_file());
     assert_eq!(s.picked_asset(), Some(&yours("tunnels")));
-    assert_eq!(s.tab(), PanelTab::Assets);
     assert!(!s.placing(), "a saved asset is selected, not armed");
     assert_eq!(s.asset(&yours("tunnels")).map(|a| a.name.as_str()), Some("Tunnels"));
     assert!(!s.dirty(), "saving an asset leaves the level as it was");
@@ -237,10 +236,8 @@ fn save_and_place_through_the_panels() {
     // The level tab places it (issue #82: as a copy).
     h.get_by_label(labels::LEVEL_TAB).click();
     h.run();
-    h.get_by_label(labels::ASSETS).click();
-    h.run();
-    // The Assets tab shows it under Yours, with the built-in ones.
-    assert_eq!(h.state().state.tab(), PanelTab::Assets);
+    // Issue #83: the library, on the left, shows it under Yours, with the
+    // built-in ones.
     h.get_by_label(labels::YOURS);
     h.get_by_label(labels::BUILT_IN);
     h.get_by_role_and_label(Role::Button, "Torch");

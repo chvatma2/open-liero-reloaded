@@ -151,6 +151,9 @@ pub enum Edit {
         before: Arc<PlacementSnap>,
         after: Arc<PlacementSnap>,
     },
+    /// Issue #83: the step's name ("Update Strip light"), which Undo's
+    /// hover shows; applied, it changes nothing.
+    Name(String),
 }
 
 /// A side of `Edit::Placement` (issue #82): the placement's file and the
@@ -410,6 +413,7 @@ impl Edit {
                     && after.assets.is_empty()
             }
             Edit::Look { before, after } => before == after,
+            Edit::Name(_) => true,
             Edit::Haze { before, after, .. } => before == after,
             Edit::GlowMask { before, after, .. } | Edit::SurfaceMap { before, after, .. } => before == after,
         }
@@ -451,6 +455,7 @@ impl Edit {
             Edit::Ground { before, after } => before.bytes() + after.bytes(),
             // Assets count once each, by address (`grids`).
             Edit::Placement { before, after } => before.bytes() + after.bytes(),
+            Edit::Name(n) => n.len(),
         }
     }
 

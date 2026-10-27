@@ -1,8 +1,9 @@
-//! The editor's egui panels (spec §4; the layout of issue #8): the session
-//! bar and the tool options bar on top, the tool rail on the left, the
-//! right panel (its tabs, then the selection's properties or the level's),
-//! the status bar, the canvas and the dialogs. The asset tab is laid out
-//! as the skin editor (issue #78, `asset`). `show` draws
+//! The editor's egui panels (spec §4): each tab laid out as the skin
+//! editor (the asset tab by issue #78, `asset`; the level tab by issue
+//! #83, `level_tab`): the session bar on top, the tools, their options
+//! (and the level tab's asset library) on the left, the layers or copies
+//! with the selection's panel on the right, the status bar, the canvas,
+//! the dialogs and the browser. `show` draws
 //! them from the state and returns the frame's actions, as
 //! `olr_ui::screens::show` does; the host applies `olr_ui::theme`.
 
@@ -13,6 +14,8 @@ mod dialogs;
 mod elements;
 mod icons;
 mod level;
+mod level_tab;
+mod library;
 mod look;
 mod parts;
 mod previews;
@@ -27,6 +30,7 @@ use std::collections::BTreeMap;
 use egui::{Key, Modifiers, Ui};
 
 pub use asset::NARROW;
+pub use library::matches as asset_matches;
 
 use crate::state::{DocTab, EditorAction, EditorState, Selection};
 use crate::tools::Tool;
@@ -72,7 +76,15 @@ pub mod labels {
     pub const KEEP_ASPECT: &str = "Keep aspect";
     pub const POSITION: &str = "Position";
     pub const DUPLICATE_KEYS: &str = "Ctrl+D";
-    pub const ASSETS: &str = "Assets";
+    // The library panel and the links (issue #83).
+    pub const SEARCH_ASSETS: &str = "Search assets";
+    /// The narrow level tab's switch between its side panels.
+    pub const SHOW_LIBRARY: &str = "Library";
+    pub const SHOW_COPY: &str = "Copy";
+    pub const UNLINK: &str = "Unlink";
+    pub const SAVE_TO_LIBRARY: &str = "Save to library";
+    /// The status line's offer after a built-in asset was saved as yours.
+    pub const USE_YOUR_COPY: &str = "Use your copy in this level";
     pub const SPAWNS: &str = "Spawns";
     pub const WHAT_IS_IT: &str = "What is it?";
     pub const PLACE: &str = "Place";
@@ -290,6 +302,12 @@ pub mod labels {
     pub const SCRIPT_NOT_RUN: &str = "Scripts run from a later version: checked for syntax only";
     pub const NO_SCRIPT_ERRORS: &str = "No syntax errors";
 
+    /// A library copy's origin in its panel (issue #83): "Built-in: Strip
+    /// light", "Yours: crane".
+    pub fn origin(builtin: bool, name: &str) -> String {
+        format!("{}: {name}", if builtin { BUILT_IN } else { YOURS })
+    }
+
     /// A property row, by its owner (`WHOLE_ASSET` or the layer's name)
     /// and the property's name: the value field's name.
     pub fn property(owner: &str, property: &str) -> String {
@@ -417,11 +435,14 @@ pub struct EditorData {
     new_asset: Option<crate::asset_tab::NewAsset>,
     /// The expose dialog's default colour, while it is open (issue #80).
     expose_colour: Option<String>,
-    /// Issue #78: the panels fit their width (the asset tab's), their rows
-    /// wrapping or a label above its field where they do not.
+    /// Issue #78: the panels fit their width (both tabs' since issue #83),
+    /// their rows wrapping or a label above its field where they do not.
     fit: bool,
-    /// The asset tab's side panel a narrow window shows.
+    /// The side panel a narrow window shows (the asset tab's Tools or
+    /// Layers, the level tab's Library or Copy).
     side: asset::Side,
+    /// The library's search (issue #83).
+    asset_search: String,
     /// The asset tab's right column's tab (issue #80) and the script
     /// editor's draft.
     column: parts::Column,
@@ -492,13 +513,13 @@ pub fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData) -> Vec<Edit
     if data.dir.as_ref() != Some(&owner) {
         let canvas = (data.canvas_rect, data.canvas_size);
         let thumbs = (std::mem::take(&mut data.asset_thumbs), data.asset_generation);
-        let (side, column) = (data.side, data.column);
-        *data = EditorData { dir: Some(owner), side, column, ..EditorData::default() };
+        let (side, column, asset_search) = (data.side, data.column, std::mem::take(&mut data.asset_search));
+        *data = EditorData { dir: Some(owner), side, column, asset_search, ..EditorData::default() };
         (data.canvas_rect, data.canvas_size) = canvas;
         (data.asset_thumbs, data.asset_generation) = thumbs;
     }
     data.drawn.clear();
-    data.fit = state.doc_tab() == DocTab::Asset;
+    data.fit = true;
     // A popup open (a flyout, a menu) takes Escape for itself.
     let popup = egui::Popup::is_any_open(ui.ctx());
     // A text field's Escape (it drops the draft) leaves the selection.
@@ -508,30 +529,7 @@ pub fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData) -> Vec<Edit
     if state.doc_tab() == DocTab::Asset {
         asset::show(ui, state, data, [&mut toolbar, &mut list, &mut fields, &mut canvas]);
     } else {
-        egui::Panel::top("olr-editor-session").show(ui, |ui| toolbar::session(ui, state, data, &mut toolbar));
-        egui::Panel::top("olr-editor-options")
-            .show(ui, |ui| toolbar::options_bar(ui, state, data, &mut toolbar));
-        egui::Panel::bottom("olr-editor-status").show(ui, |ui| status::show(ui, state));
-        egui::Panel::left("olr-editor-rail")
-            .exact_size(rail::RAIL_WIDTH)
-            .resizable(false)
-            .show(ui, |ui| rail::show(ui, state, &mut toolbar));
-        // At least its first width: a narrow panel (a group's) never lets the
-        // canvas grow under the pointer.
-        egui::Panel::right("olr-editor-panel").default_size(260.0).min_size(260.0).show(ui, |ui| {
-            elements::show(ui, state, data, &mut list);
-            ui.separator();
-            egui::ScrollArea::vertical().id_salt("olr-editor-properties").show(ui, |ui| {
-                match state.selection() {
-                    Selection::None => level::show(ui, state, data, &mut fields),
-                    _ => properties::show(ui, state, data, &mut fields),
-                }
-            })
-        });
-        // No fill: the host draws the bake under the canvas (plan 14c).
-        egui::CentralPanel::default()
-            .frame(egui::Frame::NONE)
-            .show(ui, |ui| canvas::show(ui, state, data, &mut canvas));
+        level_tab::show(ui, state, data, [&mut toolbar, &mut list, &mut fields, &mut canvas]);
     }
     browser::show(ui.ctx(), state, data, &mut dialogs);
     dialogs::show(ui.ctx(), state, data, &mut dialogs);

@@ -70,6 +70,48 @@ fn ground(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
     if r.clicked() {
         out.push(EditorAction::EditGround);
     }
+    // Issue #83: a copy of it in the library (the ground stays the level's).
+    let r = ui
+        .button(labels::SAVE_TO_LIBRARY)
+        .on_hover_text("a copy of the ground in your assets, to place in other levels");
+    if r.clicked() {
+        out.push(EditorAction::SaveToLibrary(crate::ground::GROUND_COPY.into()));
+    }
+}
+
+/// Issue #83: under the button opening a copy's asset, its link: a
+/// library copy's origin ("Built-in: Strip light") and Unlink; an own
+/// asset's Save to library.
+fn link(ui: &mut Ui, state: &EditorState, id: &str, out: &mut Vec<EditorAction>) {
+    let Some(doc) = state.document() else { return };
+    let library_name = |builtin: bool, folder: &str| {
+        let key = crate::catalog::AssetKey { builtin, id: folder.to_string() };
+        state.asset(&key).map_or_else(|| folder.to_string(), |a| a.name.clone())
+    };
+    match doc.copy_origin(id) {
+        Some(AssetOrigin::Own) | None => {
+            let r = ui
+                .button(labels::SAVE_TO_LIBRARY)
+                .on_hover_text("put this asset in your assets; the level's copies then follow it");
+            if r.clicked() {
+                out.push(EditorAction::SaveToLibrary(id.to_string()));
+            }
+        }
+        Some(origin) => {
+            let said = match &origin {
+                AssetOrigin::Builtin(f) => labels::origin(true, &library_name(true, f)),
+                AssetOrigin::Yours(f) => labels::origin(false, &library_name(false, f)),
+                AssetOrigin::Own => String::new(),
+            };
+            ui.add(egui::Label::new(said).wrap());
+            let r = ui
+                .button(labels::UNLINK)
+                .on_hover_text("make the asset the level's own: it no longer follows the library");
+            if r.clicked() {
+                out.push(EditorAction::Unlink(id.to_string()));
+            }
+        }
+    }
 }
 
 /// A copy's panel (issue #82): its asset's name and its id, Position X
@@ -122,6 +164,7 @@ fn copy(ui: &mut Ui, state: &EditorState, data: &mut EditorData, id: &str, out: 
     if ui.button(label).on_hover_text(hint).clicked() {
         out.push(EditorAction::EditCopy(id.to_string()));
     }
+    link(ui, state, id, out);
     if ui.button("Delete").on_hover_text("Delete").clicked() {
         out.push(EditorAction::Remove);
     }

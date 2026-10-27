@@ -159,7 +159,12 @@ fn change_assets(
     queue.push_back(EditorAction::AssetsChanged(library()));
     match done {
         Ok(Some(id)) => {
-            queue.push_back(EditorAction::AssetSaved(olr_editor::AssetKey { builtin: false, id }))
+            // Issue #83: with the files written, as the game's host reads them.
+            let source = olr_edit::asset::read_dir(&yours.join(&id)).ok().map(Box::new);
+            queue.push_back(EditorAction::AssetSaved {
+                key: olr_editor::AssetKey { builtin: false, id },
+                source,
+            })
         }
         Ok(None) => {}
         Err(e) => queue.push_back(EditorAction::Failed(e.to_string())),
@@ -202,6 +207,14 @@ pub fn run(
                         .map(Box::new)
                         .map_err(|e| e.to_string());
                     queue.push_back(EditorAction::AssetRead { key: key.clone(), at: *at, asset });
+                }
+                // Issue #83: the library's sources, as the game's host reads them.
+                EditorCommand::CompareLibrary { origins } => {
+                    let lib = LIBRARY.with(|l| l.borrow().clone());
+                    let (b, y) = (lib.as_ref().map(|l| l.0.as_path()), lib.as_ref().map(|l| l.1.as_path()));
+                    queue.push_back(EditorAction::LibraryCompared(olr_edit::library::read_origins(
+                        origins, b, y,
+                    )));
                 }
                 EditorCommand::ReadAssetToEdit(key) => {
                     let lib = LIBRARY.with(|l| l.borrow().clone()).expect("a library");

@@ -564,6 +564,15 @@ impl Document {
         &self,
         op: impl FnOnce(&mut Pack) -> Result<T, PlacedError>,
     ) -> Result<(T, Edit), DocError> {
+        self.placement_op_with(op)
+    }
+
+    /// [`Document::placement_op`] of an operation of any error (issue #83:
+    /// `olr_edit::library`'s).
+    pub(crate) fn placement_op_with<T, E: std::fmt::Display>(
+        &self,
+        op: impl FnOnce(&mut Pack) -> Result<T, E>,
+    ) -> Result<(T, Edit), DocError> {
         let before = self.light_placement();
         let l = &self.level;
         let light = LevelSource {
