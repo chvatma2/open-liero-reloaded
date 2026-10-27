@@ -7172,9 +7172,10 @@ The design is `docs/superpowers/specs/2026-10-26-asset-based-levels-design.md`
 - **The ground leaves Live copies out (#85).** `placed::bake` bakes the
   level without them and sets `level.live` from `live::bake_live`; the
   thumbnail is drawn from a bake with them as static, and a level lit
-  only by Live copies still gets the default look. **Gap:** until #86
-  and #87 a Live copy is neither solid nor drawn in a match (the editor
-  says "Plays from a later version: left out of play for now").
+  only by Live copies still gets the default look. **Gap:** a Live copy
+  is not drawn in a match until #87, and its rock is not solid until #90
+  (the editor says "Plays from a later version: left out of play for
+  now"); since #86 its state lives in the world.
 - **Loading (#85).** `olr_pack::LevelPack::live` (the `LiveSource`) and
   `olr_content::LoadedLevel::live` (`LoadedLive { source, sim }`):
   `live_sim()` is the `Arc<olr_sim::LiveLevel>` a match's worlds share,
@@ -7186,6 +7187,47 @@ The design is `docs/superpowers/specs/2026-10-26-asset-based-levels-design.md`
 - **Not yet carried (#85).** A live part has no surface materials (its
   heat waits for the world, #86/#87) and no glass map (`glass` is never
   set by the bake).
+- **In the world (#86).** `MatchSetup::live` (`None` by default; the
+  oracle's scenarios pass none, `olr-content`'s `match_setup` and
+  `replay_assets_from` the level's `live_sim()`) gives the world its
+  `LiveWorld`: each copy's state (an index) and its values (one `i64` a
+  value, flat, sized at setup: a tick allocates nothing). At setup every
+  copy enters its starting state, then its `start_values` apply;
+  entering a state sets every value of its complete look and emits
+  `EventKind::LiveState { copy, state }` (gameplay class; setup's come
+  with the first tick's). A value set is clamped into its limits,
+  `Health` also into `0..=points`. `World::set_live_state` and
+  `set_live_value` (by index, `LiveError` for an unknown copy, state or
+  value) are setup calls, recorded by replays; tests and tools may call
+  them between ticks, which a recorded game never does. `World::live()`
+  reads each copy's id, rectangle, state, values by name and visible
+  (rock) parts at their whole-pixel places. Nothing moves and nothing
+  collides with a part yet (#89-#91, #94).
+- **Positions in 1/256 pixel (#86).** The world keeps `X`, `Y`, `OffsetX`
+  and `OffsetY` in 1/256 world pixel (`LIVE_SUBPIXELS`; the played form's
+  numbers, limits included, are whole pixels, scaled when they enter the
+  world), so a motion moves in sub-pixel steps without floats; a part's
+  place is rounded down to the pixel. No live state is a float.
+- **The checksum's tail (#86).** `hash_state` hashes the live part (every
+  copy's state, then every value, each after its count) after every
+  other field, and only when the world has one: a world without live
+  copies hashes exactly as before (the match goldens, the oracle traces,
+  `a_world_without_live_copies_hashes_as_before`). A rollback snapshot
+  copies the small buffers and the setup's `Arc`, no map-sized buffer.
+- **The transfer's checks (#86).** `WorldState::live` (`Option<LiveWire>`,
+  the layout's last field) is refused with `StateError::Live`, nothing
+  changed, when present while the receiver has no live copies or the
+  reverse, when its copy or value count is not the setup's, when a
+  state is out of its copy's range or a value outside its limits. The
+  receiving world's `LiveLevel` must be the same setup (the level's
+  played form is in its pack hash).
+- **Versions (#86).** `olr_proto::PROTOCOL_VERSION` 7 (the state's new
+  field), `olr-replay`'s `FORMAT_VERSION` 8 (`SetupCall::LiveState`,
+  `LiveValue`), `olr-cli`'s desync `BUNDLE_VERSION` 6; older ones are
+  refused. #88, #89 and #90 extend `LiveWorld` and `LiveWire` and bump
+  the protocol again. `olr-present`'s rollback keys class `LiveState` by
+  its copy and state, so a re-simulated tick's entry plays its effects
+  once (#92).
 
 ## Kept OLX quirks
 

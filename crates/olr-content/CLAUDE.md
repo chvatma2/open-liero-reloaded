@@ -79,7 +79,11 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   `a_live_file_that_does_not_check_refuses_the_level`,
   `a_level_without_live_copies_has_none`,
   `from_source_gives_the_saved_packs_live_level`: `olr-edit`'s bake in
-  memory, a dev-dependency, equals the saved pack's).
+  memory, a dev-dependency, equals the saved pack's). Issue #86:
+  `match_setup` (so `new_world_from` and `build_match`) and
+  `replay_assets_from` (so `world_for_replay`) pass `live_sim()` as
+  `MatchSetup::live`/`Assets::live`, so a match's world holds its copies'
+  state (`a_live_levels_world_holds_its_copies`).
 - **Hostile levels:** `load_level` refuses an art scale above
   `MAX_ART_SCALE` (8) or a colour image above `MAX_COLOR_MAP_BYTES`
   (256 MiB), so a pack cannot make the colour map allocate gigabytes.

@@ -4,7 +4,8 @@
 //!
 //! `#![no_std]` + `alloc`: no files, threads or clock. A match starts from a
 //! [`MatchSetup`] and a [`GameMode`] ([`World::new`]). Apart from setup
-//! ([`World::set_health`], [`World::place_bonus`]), [`World::tick`] is the
+//! ([`World::set_health`], [`World::place_bonus`], [`World::set_live_state`],
+//! [`World::set_live_value`]), [`World::tick`] is the
 //! only way state changes, and it does not allocate, mode commands included.
 //!
 //! [`World::tick`] refills the caller's [`TickEvents`] (spec §5.7), and

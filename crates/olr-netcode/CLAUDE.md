@@ -709,5 +709,7 @@ datagram's answer): leaving, coalesced `Late`, lagging, stall episodes,
 repair timing.
 
 Test: `cargo nextest run -p olr-netcode` (`tests/world_sim.rs` plays MW 1.0
-on Castle Strike from `OLR_CONTENT_DIR`, skipped with a notice without it;
-olr-content is a dev-dependency only).
+on Castle Strike from `OLR_CONTENT_DIR`, skipped with a notice without it,
+and issue #86's `state_transfer_of_a_live_world` on
+`fixtures/live/levels/live-test` laid over it; olr-content is a
+dev-dependency only).

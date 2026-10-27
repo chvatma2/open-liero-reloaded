@@ -8,7 +8,8 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   Box<dyn GameMode>) -> Result<World, SetupError>` (`setup.rs`: settings
   checked, worms spawned in order, `MatchSetup::T0` start, pool size).
   Apart from setup (`set_health`, `align_physics_clock`, `place_bonus`,
-  applied at the next tick, and `find_spot`), `World::tick(&[Keys], &mut
+  applied at the next tick, `find_spot`, and issue #86's
+  `set_live_state`/`set_live_value`), `World::tick(&[Keys], &mut
   TickEvents)` is the only way state changes, and it does not allocate,
   mode callbacks and commands included (`tests/no_alloc.rs`). In-crate
   tests build worlds with `World::test_new` (the old positional form,

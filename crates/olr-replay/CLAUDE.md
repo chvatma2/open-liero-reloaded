@@ -24,7 +24,8 @@ ticks and at the end.
   its checksums; `Recorder::new(.., looks)` and `set_looks` fit them to the
   worms (extra dropped, missing `WormLook::numbered`) and sanitise them;
   every recorder passes the looks it shows; its mod,
-  terrain, holes and green mask are named by `Packs`, ids and content
+  terrain, holes, green mask and live copies (`MatchSetup::live`,
+  `Assets::live`, issue #86) are named by `Packs`, ids and content
   hashes, never stored; the setup calls), `ModeSpec` (`Oracle` or
   `Deathmatch(DeathmatchSettings)`; `ModeSpec::game_mode(&settings)` makes
   it with `Deathmatch::resume`, which refuses settings that disagree with
@@ -33,7 +34,9 @@ ticks and at the end.
 - **Recording** (`record.rs`): `Recorder::new(packs, &setup, &mode)`;
   every change to the world before its first tick goes through
   `Recorder::apply(&mut world, SetupCall)` (`set_health`, `place_bonus`,
-  `find_spot`, `align_physics_clock`), or the replay diverges; then
+  `find_spot`, `align_physics_clock`, issue #86's `set_live_state` and
+  `set_live_value` as `SetupCall::LiveState`/`LiveValue`, refused as
+  `ReplayError::Live`), or the replay diverges; then
   `start(&world)` (tick 0's checksum: a different setup or content is
   reported at tick 0), `push(&keys, &world)` after each `World::tick`, and
   `finish(&world)`. A worm that leaves goes through
@@ -62,7 +65,8 @@ ticks and at the end.
 - **Withdrawals in play:** `Cursor::step` withdraws every `(t, worm)` with
   `t` the tick about to be played, in order, before `World::tick`; those
   with `t == ticks` after the last tick, before its checksum is checked.
-- **Format** (`wire.rs`, `mirror.rs`): `OLRP`, `FORMAT_VERSION` (u16 LE; 7 since the
+- **Format** (`wire.rs`, `mirror.rs`): `OLRP`, `FORMAT_VERSION` (u16 LE; 8 since the
+  live setup calls (issue #86, `CallW::LiveState`/`LiveValue`), 7 the
   Weapon 1-5 keys (issue #48), 6 the local slots, 5 the 16-bit keys, 4 the looks, 3 withdrawals),
   then postcard; keys by worm, deflated (every key's low byte, then every
   high byte, so the mostly zero high plane costs next to nothing). Other versions are refused, never

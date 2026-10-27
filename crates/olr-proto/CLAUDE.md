@@ -76,10 +76,12 @@ plan 12b: a member's `Path`, the STUN binding codec and `is_global`.
   never listed, plan 13c).
   `MAX_ARCHIVE_BYTES` restates olr-pack's `MAX_ARCHIVE`. `valid_hash` is 64
   lowercase hex; `NO_HASH` is valid and means unknown. `Look::skin_hash`
-  and `Member::download` (percent) are new; `PROTOCOL_VERSION` is 6 (3: plan 13c, skins are matched by id and hash, never transferred;
+  and `Member::download` (percent) are new; `PROTOCOL_VERSION` is 7 (3: plan 13c, skins are matched by id and hash, never transferred;
   4: issue #5, `MatchSetupWire::loadout` replaces `bonuses`, `loading_time` and `restrictions`;
   5: issue #23, keys are `u16` (Strafe, Previous/NextWeapon) and the state transfer's latches gained three;
-  6: issue #48, the keys' bits 11-15 are Weapon 1-5 and the latches gained five).
+  6: issue #48, the keys' bits 11-15 are Weapon 1-5 and the latches gained five;
+  7: issue #86, `WorldState`'s last field is the live copies' `Option<LiveWire>`;
+  #88, #89 and #90 change `LiveWire` and bump it again).
 - **Loadouts** (issue #5): `MatchSetupWire::loadout` is a `LoadoutWire {
   name, weapons, loading_time, unique }`, the host's loadout in full
   (weapons by the mod's names, empty for every weapon); `valid_loadout`:

@@ -184,6 +184,11 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   their pictures, values, health, sounds and scripts. Live copies are
   left out of the level's ground; until a later version plays them they
   are neither drawn nor solid in a match.
+- A match on a level with Live copies keeps each copy's state and values
+  in the simulation: rolled back, checksummed and sent with a state
+  transfer online, and recorded in replays. Matches without them play and
+  hash as before. Online play (protocol 7), replays (format 8) and desync
+  bundles from earlier builds are not compatible.
 
 ### Changed
 

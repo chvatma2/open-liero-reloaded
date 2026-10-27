@@ -225,7 +225,8 @@ wired in the frame loop's order **once**, so each mode that draws a world
   hidden by an erased one.
   `event_keys` keys an event by tick, sub-step, a hash of its kind and
   integer identity fields (never positions or amounts, which a correction
-  moves) and an ordinal among equal ones. An erased event is not undone.
+  moves) and an ordinal among equal ones; a live copy's `LiveState` by its
+  copy and state (issue #86), so a re-simulated entry plays once (#92). An erased event is not undone.
 - **The simulation never sees presentation:** it only reads the world.
 
 Test: `cargo nextest run -p olr-present` (`tests/views.rs`, issue #27:
