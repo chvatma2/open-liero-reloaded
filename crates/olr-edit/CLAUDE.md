@@ -7,7 +7,9 @@ templates, the level operations, the skin operations and the mod
 operations.
 
 - **Layer 3, `std`.** Depends on `olr-data`, `olr-vfs`, `olr-format`,
-  `olr-pack`, `thiserror`, `serde` (`mods`' RON values). It is not a
+  `olr-pack`, `olr-script` (issue #89's name checks, `scripts`; the
+  same-layer pair is in `xtask/layers.ron`), `thiserror`, `serde`
+  (`mods`' RON values). It is not a
   forbidden importer: the game may link it (the editors).
 - **`pack`** (plan 13d ruling R2): `load(dir)` gives `Pack { manifest,
   source: Source, other }`. It reads the manifest and the kind's files
@@ -650,7 +652,7 @@ operations.
   `thumb.png`), `Changed { breaks }`, `Missing` (absent, or does not
   decode). `Break::{Value, State, Live, Distant, Script}` naming the copy
   (`Display`: `crane: value claw_x: no exposed property claw_x`; `Script`
-  reserved for #89): values against the new `exposed`
+  issue #89's, below): values against the new `exposed`
   (`property_type`, `check_value`), states, `live_refusal` and
   `olr_format::levels::distant_refusal`; a size change is no break.
   `update(pack, keys, force, &libs) -> Updated { keys, same, resolutions }`
@@ -694,6 +696,26 @@ operations.
   `import_reuses_identical_and_numbers_clashes`,
   `import_never_overwrites_a_level`, `import_refuses_a_bad_pack_whole`,
   `import_respects_max_user_assets`).
+- **`scripts`, issue #89's name checks** (the design's call 20; STATUS.md
+  "Live assets (issues #85-#94)"): `names(src)` (each live copy's id, its
+  asset's states, exposed names and sounds: `olr_script::ScriptNames`),
+  `run_scripts(src)` (the level script, then per live copy its asset's
+  default script unless switched off and its own, as the played form
+  runs them; `Whose::{Default { copy, asset }, Copy, Level}`) and
+  `problems(src) -> Vec<ScriptProblem>` (`olr_script::check_level` on
+  them; `Display` "crane's script, line 3: …", "the level script, line
+  …", "crane's default script (Crane's), line …"). `pack::save` checks
+  `pack.placed` after `check` and refuses a level with a problem
+  (`SaveError::Scripts`, nothing written); an asset with a broken script
+  still saves (`asset::save_dir` checks no script; it runs nowhere until
+  a live copy uses it), and so does a static copy's script.
+  `library::compare` adds `Break::Script { copy, message }` for each
+  problem the library's version would add (`problems` with the asset
+  swapped in, less those the level has already; a level script's put on
+  the key's first live copy). Tests: `tests/library.rs`'
+  `a_level_with_a_broken_run_script_is_refused_at_save`,
+  `an_asset_with_a_script_error_still_saves`,
+  `a_library_change_breaking_a_script_is_a_break`.
 - **Issue #16, the mod operations** (`mods`; `olr-cli mod`; STATUS.md
   "Mod editing operations (issue #16)"), on a loaded mod `Pack`
   (`source(pack)`, else `ModError::NotAMod`):

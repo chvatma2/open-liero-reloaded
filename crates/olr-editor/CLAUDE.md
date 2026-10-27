@@ -931,9 +931,13 @@ whose column tab is `LAYERS`);
     `link_problems` errors, each break "<copy>: value glow: …" naming
     the asset ("… in Console"), each copy of a missing asset "<copy>:
     <name> is not in your library" ("the built-in library");
-    `script_problems` warnings "<id>'s script, line 3: …", "the level
-    script, line …", "<Asset>'s default script, line …"
-    (`olr_script::check`). None refuses a save. The status line shows
+    `script_problems`: issue #89's errors for the scripts the level runs
+    (`olr_edit::scripts::problems`: syntax, handlers and names; "<id>'s
+    script, line 3: …", "the level script, line …", "<id>'s default
+    script (<Asset>'s), line …"), which refuse the save (`pack::save`'s
+    `SaveError::Scripts`, the host's `Saved` error), then warnings for
+    the syntax of scripts that run nowhere (a static copy's, a default no
+    live copy runs; `olr_script::check`). Link problems refuse nothing. The status line shows
     the first, cut to the line, and "(+N more)", all on hover.
   - **The notice** (`notice.rs`): `opened_links` (from `opened`) resets
     the kept answer (`libraries()`), the resolutions, a pending restore
