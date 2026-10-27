@@ -7119,8 +7119,9 @@ import.
 ## Live assets (issues #85-#94)
 
 The design is `docs/superpowers/specs/2026-10-26-asset-based-levels-design.md`
-(calls 8, 11, 13 and 19). Issue #85 gives Live copies their played form;
-#86 puts them in the world, #87 draws them, #88 runs their scripts (#89
+(calls 8, 11, 13, 14 and 19). Issue #85 gives Live copies their played
+form; #86 puts them in the world, #87 draws them, #88 runs their scripts,
+#93 lights them by their values (#89
 adds motion and the scripts' name checks).
 
 - **The played form is play files (#85).** `live.ron` and `live/` sit
@@ -7185,8 +7186,8 @@ adds motion and the scripts' name checks).
   `fixtures/live/levels/live-test` (made by `fixtures/live/make-live-test.sh`
   from the assets beside it) is the test level.
 - **Not yet carried (#85).** A live part has no surface materials (its
-  heat waits for the world, #86/#87) and no glass map (`glass` is never
-  set by the bake).
+  heat waits for the world, #86/#87). Since #93 a background part of glass
+  keeps its glass map (below).
 - **In the world (#86).** `MatchSetup::live` (`None` by default; the
   oracle's scenarios pass none, `olr-content`'s `match_setup` and
   `replay_assets_from` the level's `live_sim()`) gives the world its
@@ -7255,10 +7256,8 @@ adds motion and the scripts' name checks).
   edit under a copy recomposes its tiles. `olr-present` syncs after the
   tick's terrain edits (`on_tick`), in `restart` and `state_loaded`, and
   online after the restored areas and every tick (the newest world, so a
-  correction draws the corrected state). **Not drawn yet:** the group
-  values `GlowColour`, `LightIntensity`, `LightReach` and
-  `GlowAnimation` (a copy's groups light as authored), and the beam and
-  glass maps of a part (#85 never sets them).
+  correction draws the corrected state). Since #93 the group values, the
+  beams and the glass are drawn too (below).
 - **Glow groups of their own (#87).** The group map is one byte: the
   level's look's groups keep `1..=n`, then copy `c`'s group `g` is `n +
   offset(c) + g`, copies in order (`offset` the groups of the copies
@@ -7319,6 +7318,62 @@ adds motion and the scripts' name checks).
   lives in one flat buffer per world. A world without a director keeps
   `World::tick` allocation-free (`no_alloc`). The cost of a tick at the
   scripts' budget is `docs/deferred-verification.md`'s.
+- **A copy's groups follow its values (#93, call 13).** Each frame
+  `olr-present` builds each copy's groups from its asset's (as #87) with
+  the copy's current values over them (`olr_content::live_look`,
+  `LookFrame::push_live_group_with`), as `posed` applies them to a static
+  copy: `GlowColour` (`0xRRGGBB`) casts as a tint of the colour (a
+  `Filtered` group stays filtered, in it; -1 is the group's own),
+  `LightIntensity` (0-1000 %) and `LightReach` (1-4096 px, only over a
+  reach in pixels) replace the group's, `GlowAnimation` (an index into the
+  copy's animation table) replaces its animation at the copy's clock and
+  phase (the live identity's), so a switch never brings two copies into
+  step. A group is one: the value read is the first one, in the copy's
+  prop order, of that property of a layer using the group (a layer's group
+  is the first group pixel of a picture of a part of it), so two layers
+  sharing a group change together. `olr-look` clamps every value again
+  where it reads it. `GlowStrength` stays #87's (mask × value).
+- **Live beams, every frame (#93, call 14).** At load each live picture's
+  directional pixels are derived into patches as the level's are
+  (`olr_look::glow_beams::live_patches`, relative to the picture, each
+  keeping its rows so its face can be worked out for any direction).
+  Each frame every visible part's patches are placed at the part (its
+  place as drawn, mirrored within the copy by `Facing`, the direction to
+  `(180 − d) mod 360`), turned to its layer's `BeamDirection` (whole
+  degrees) and `BeamSpread` when it has them, glowing at its strength, its
+  reach the group's (with `LightReach`); a hidden part casts none. They
+  go in `LookFrame::live_beams`, and the renderer packs **the level's
+  beams first, then the live ones in copy and part order, at most
+  `MAX_GLOW_BEAMS` (64) in all**: past it the live ones drop, never the
+  level's (as issue #69 orders its discs); each is cut by `walk_reach`, a
+  non-finite one packs none. **The 2° beam map:** the cascades' beam map
+  keeps the map's 2° steps (direction / 2 + 1); the colour map's live
+  layer composites each drawn part's texels over the ground's (its
+  direction and spread the frame's, mirrored with it), uploaded with the
+  part's dirty rectangles when it moves, turns or changes spread, the
+  ground's again where it left (`ColorMap::shown_beams`). Directions are
+  whole degrees everywhere else (the uniform's `dir` included; settled
+  by the maintainer, 2026-10-26). The static derivation still reads the
+  ground only. No interpolation between ticks: a value is drawn from the
+  tick it is set (unverified at 60 fps on a desktop GPU,
+  `docs/deferred-verification.md`).
+- **Live glass (#93).** A background part of glass is baked see-through
+  (`olr_edit::compose::bake_elements_see_through`): its art holds the
+  glass at its opacity over nothing and `-glass.png` its filter and frost.
+  `GlassOpacity` (1-99 %) redraws its glass pixels (alpha 1-254) at that
+  opacity, `GlassTint` (0-100 %) refilters them `mix(255, colour, tint)`
+  as `posed` does; the colour map's live layer composites a shown glass
+  map, which the renderer uploads whole on a new generation and then by
+  the parts' dirty rectangles (a level without live glass uploads its
+  glass whole as before). Glass shows only in a see-through level (one
+  with distant layers), as the ground's.
+- **What it costs.** A level without live copies draws as before (the
+  render goldens and `lit-hashes.ron` held); the live goldens
+  (`live-start.png`, `live-states.png`) changed with the fixture's new
+  spot, and `live-light.png`, `live-beam.png`, `live-beam-turned.png` were
+  added. Presentation only: the simulation, its checksum and the match
+  goldens are unchanged. Unmeasured: a lit frame with most of 64 beams
+  live (`docs/deferred-verification.md`).
 
 ## Kept OLX quirks
 

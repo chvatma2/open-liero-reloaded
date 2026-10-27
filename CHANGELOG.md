@@ -207,6 +207,12 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   replayed. Online play (protocol 8) from earlier builds is not
   compatible. The editor's script panels no longer say scripts do not run
   yet.
+- Live copies light by their values: a copy's glow colour, light
+  intensity, reach and glow animation change its own glow groups (two
+  consoles of one asset change colour apart), its directional glow is
+  worked out every frame, so a spotlight turns and widens with its beam
+  direction and spread, and a pane's glass opacity and tint change in
+  play. `olr-cli render-match --live-value COPY.NAME=VALUE` sets a value.
 
 ### Changed
 
