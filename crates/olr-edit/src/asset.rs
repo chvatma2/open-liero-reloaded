@@ -1339,36 +1339,59 @@ pub fn list_library(dir: &Path, max: usize) -> (Vec<(String, Summary)>, Vec<Stri
 /// (a valid id), else in a new folder named after it (`torch`, `torch-2`,
 /// …), refused past `MAX_USER_ASSETS`. Returns its folder.
 pub fn add_to_library(dir: &Path, asset: &Asset, replace: Option<&str>) -> Result<String, AssetError> {
-    let src = encode(asset)?;
+    add_source_to_library(dir, &encode(asset)?, replace)
+}
+
+/// [`add_to_library`] of an asset folder as it is (issue #76: a level's
+/// copy restored or imported byte for byte, so it compares the same).
+pub fn add_source_to_library(
+    dir: &Path,
+    src: &AssetSource,
+    replace: Option<&str>,
+) -> Result<String, AssetError> {
     let id = match replace {
         Some(id) if valid_asset_id(id) => id.to_string(),
         Some(id) => return Err(AssetError::Bad(format!("{id:?} is no asset's folder"))),
-        None => {
-            let have = asset_ids(dir);
-            if have.len() >= MAX_USER_ASSETS {
-                return Err(AssetError::Bad(format!(
-                    "your asset library holds at most {MAX_USER_ASSETS} assets: remove one first"
-                )));
-            }
-            let taken: BTreeSet<String> = std::fs::read_dir(dir)
-                .map(|rd| {
-                    rd.filter_map(Result::ok)
-                        .filter_map(|e| e.file_name().to_str().map(str::to_lowercase))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let base = asset_slug(&asset.name);
-            std::iter::once(base.clone())
-                .chain((2..=10_000).map(|i| format!("{base}-{i}")))
-                .find(|n| !taken.contains(n))
-                .ok_or_else(|| {
-                    AssetError::Bad(format!("no free folder for {:?} in your assets", asset.name))
-                })?
-        }
+        None => free_folders(dir, &[src.file.name.as_str()])?.remove(0),
     };
     std::fs::create_dir_all(dir).map_err(|e| AssetError::Io(format!("{}: {e}", dir.display())))?;
-    save_dir(&dir.join(&id), &src)?;
+    save_dir(&dir.join(&id), src)?;
     Ok(id)
+}
+
+/// New folders in the user's library `dir` for assets named `names`, in
+/// order, each named after its asset (`torch`, `torch-2`, …, the first
+/// free of any entry in `dir`, whatever its case, and of those before it);
+/// refused when the library would hold more than `MAX_USER_ASSETS`.
+pub fn free_folders(dir: &Path, names: &[&str]) -> Result<Vec<String>, AssetError> {
+    let have = asset_ids(dir);
+    if have.len() + names.len() > MAX_USER_ASSETS {
+        return Err(AssetError::Bad(format!(
+            "your asset library holds at most {MAX_USER_ASSETS} assets: remove one first"
+        )));
+    }
+    let mut taken: BTreeSet<String> = std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.filter_map(Result::ok).filter_map(|e| e.file_name().to_str().map(str::to_lowercase)).collect()
+        })
+        .unwrap_or_default();
+    let mut out = Vec::new();
+    for name in names {
+        let base = asset_slug(name);
+        let id = std::iter::once(base.clone())
+            .chain((2..=10_000).map(|i| format!("{base}-{i}")))
+            .find(|n| !taken.contains(n) && valid_asset_id(n))
+            .ok_or_else(|| AssetError::Bad(format!("no free folder for {name:?} in your assets")))?;
+        taken.insert(id.clone());
+        out.push(id);
+    }
+    Ok(out)
+}
+
+/// The asset folders of library `dir` (valid ids holding `asset.ron`),
+/// sorted; none when it cannot be read (issue #76's import scans them).
+pub fn library_folders(dir: &Path) -> Vec<String> {
+    asset_ids(dir)
 }
 
 /// An asset folder's name made from asset name `name`: lower case, runs of

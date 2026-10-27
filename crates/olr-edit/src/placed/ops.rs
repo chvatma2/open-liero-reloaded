@@ -109,7 +109,7 @@ fn level(pack: &Pack) -> Result<&LevelSource, PlacedError> {
 /// composition is the ground's when the result is the ground alone (and
 /// the look's glow groups and materials then the ground's, as the next
 /// bake gathers them), else none.
-fn commit<T>(
+pub(crate) fn commit<T>(
     pack: &mut Pack,
     edit: impl FnOnce(&mut PlacedSource) -> Result<T, PlacedError>,
 ) -> Result<T, PlacedError> {

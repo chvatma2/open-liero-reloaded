@@ -365,7 +365,8 @@ operations.
   place`'s: a level places an asset as a copy, `placed::add_copy`). The library:
   `MAX_USER_ASSETS` (256), `valid_asset_id`, `asset_slug`,
   `list_library`, `add_to_library` (a new folder named after it, or over
-  `replace`), `import_into_library` (read and checked whole, written
+  `replace`; issue #76: `add_source_to_library` writes a folder as it
+  is, `free_folders` picks new folders, `library_folders` lists them), `import_into_library` (read and checked whole, written
   anew, a name clash numbered), `remove_from_library`.
   Issue #71 (the format is `olr_format::assets`' states; STATUS.md
   "Asset-based levels: the asset format (issue #71)"; `asset/posed.rs`):
@@ -559,6 +560,64 @@ operations.
     `duplicate_copy_lands_above_with_a_new_id` and the proptest
     `every_operation_leaves_a_checked_placement`; `tests/asset.rs`'
     placing tests place copies (`place`: `add_copy`, then `bake_pack`).
+- **`library`, issue #76's library links, export and import** (the
+  design's calls 7, 9, 17, 18; STATUS.md "Asset library links, export and
+  import (issue #76)"). Pure cores over sources in memory and a
+  `Libraries` value (`BTreeMap<AssetOrigin, Option<AssetSource>>`, the
+  library's version of each linked asset; `AssetOrigin` is `Ord`), with
+  path wrappers (`read_libraries(placed, builtin, user)`: each folder by
+  `read_asset_files`, `check_asset`, `None` when it does not; a `Builtin`
+  origin read from the built-in library only, a `Yours` from the user's
+  only; `compare_from`, `update_from`, `relink_from`).
+  `compare(placed, &libs) -> Vec<Link { key, origin, status }>` in
+  placement order, `Own` left out: `Same` (`placed::same_asset`: never
+  `thumb.png`), `Changed { breaks }`, `Missing` (absent, or does not
+  decode). `Break::{Value, State, Live, Distant, Script}` naming the copy
+  (`Display`: `crane: value claw_x: no exposed property claw_x`; `Script`
+  reserved for #89): values against the new `exposed`
+  (`property_type`, `check_value`), states, `live_refusal` and
+  `olr_format::levels::distant_refusal`; a size change is no break.
+  `update(pack, keys, force, &libs) -> Updated { keys, same, resolutions }`
+  takes the library's files (a breaking one `LibraryError::Breaks` unless
+  `force`; forced, `Resolution::{DroppedValue, StartState, Static, Near}`,
+  listed), refusing a missing, own or unknown key; `relink(pack, key,
+  origin, &asset, force)` points a key at another library asset (never
+  `Own`, never the ground); `restore(pack, key, user)` writes the level's
+  copy verbatim into the user's library (`asset::add_source_to_library`,
+  a new folder from `free_folders`, a name clash `copy_name`d with the
+  level's copy renamed alike) and points it at `Yours(<folder>)`;
+  `adopt(pack, key)` makes it `Own`. All go through `placed::commit`
+  (the pack unchanged on a refusal); none bakes. `export(dir, back_tile)`
+  is the pack's files on disk as an `.olrlevel`
+  (`olr_pack::archive::encode_level_export`), refused unless it loads,
+  is a level, checks (`pack::check`, `check_placed`) and is not stale;
+  the libraries are not read. `import(bytes, &Places { packs, user,
+  builtin, bundled }, back_tile) -> Imported { id, name, dir, assets }`:
+  unpacked into a temporary folder (`Limits::PACK`), checked as export
+  checks, the id `new::pack_id`-numbered past the user's packs and the
+  bundled ids (the name then `copy_name`d), each linked copy matched
+  (identical to a built-in asset, else to one of the user's (the
+  origin's folder first), else added once as a new user asset, its name
+  numbered when the user has it, the level's copy renamed alike), all
+  folders chosen before anything is written (`MAX_USER_ASSETS`), the
+  level written then the assets, undone on a failure.
+  `ImportedAsset::{Reused, Added, Own}` (`Display`: `reused yours
+  console`, `added "Console 2" as yours console-2`, `own ground`).
+  `BackTile` is a theme id's back tile (the caller's
+  `compose::theme_back_tile`). Tests: `tests/library.rs`
+  (`compare_reports_same_changed_and_missing`,
+  `compare_reports_breaks_by_copy`,
+  `builtin_origins_never_read_the_users_library`,
+  `update_applies_non_breaking_and_refuses_breaking`,
+  `force_lists_every_resolution`,
+  `restore_adds_from_the_levels_copy_and_relinks`,
+  `a_rerendered_thumbnail_is_still_same`,
+  `relink_follows_the_users_copy_of_a_builtin`,
+  `cores_and_wrappers_agree`, `adopt_makes_it_own`,
+  `export_refuses_a_stale_pack`,
+  `import_reuses_identical_and_numbers_clashes`,
+  `import_never_overwrites_a_level`, `import_refuses_a_bad_pack_whole`,
+  `import_respects_max_user_assets`).
 - **Issue #16, the mod operations** (`mods`; `olr-cli mod`; STATUS.md
   "Mod editing operations (issue #16)"), on a loaded mod `Pack`
   (`source(pack)`, else `ModError::NotAMod`):
