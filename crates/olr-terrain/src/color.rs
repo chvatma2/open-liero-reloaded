@@ -9,6 +9,7 @@
 //! order keeps that copy equal to the simulation's grid.
 
 use alloc::boxed::Box;
+use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -17,6 +18,7 @@ use olr_data::level::Material;
 
 use crate::dirt::{Clip, flags_of};
 use crate::dirty::{Dirty, DirtyTiles};
+use crate::live::{Ground, Live, LiveArt, LiveFrame};
 use crate::{GlassMap, GlowBeamMap};
 use crate::{GreenMask, GreenPixel, PX_EMPTY, PX_ROCK, Stamp, StampPixel, Terrain, clip};
 
@@ -111,6 +113,9 @@ pub struct ColorMap {
     /// Counts the glow beam and haze maps set, so a renderer derives and
     /// uploads them only anew.
     beams_generation: u32,
+    /// The live copies drawn over the ground (issue #87), when the level
+    /// has any.
+    live: Option<Box<Live>>,
 }
 
 /// A level's glow (the look system's `look/` images): strength per art pixel
@@ -234,6 +239,7 @@ impl ColorMap {
             haze: None,
             beams_generation: 0,
             see_through: false,
+            live: None,
         }
     }
 
@@ -285,6 +291,7 @@ impl ColorMap {
     pub fn set_glow(&mut self, glow: Option<GlowLayers>) -> bool {
         let Some(layers) = glow else {
             self.glow = None;
+            self.compose_live();
             return true;
         };
         if !layers.fits((self.width, self.height), (self.material.width(), self.material.height())) {
@@ -292,6 +299,7 @@ impl ColorMap {
         }
         let (comp, comp_groups) = (layers.front.clone(), layers.groups.clone());
         self.glow = Some(Box::new(Glow { layers, comp, comp_groups }));
+        self.compose_live();
         true
     }
 
@@ -408,13 +416,22 @@ impl ColorMap {
         self.clear.as_deref()
     }
 
+    /// The shown glow strength, art size, row-major (with live copies, issue
+    /// #87, theirs over the ground's); `None` without glow.
     pub fn glow(&self) -> Option<&[u8]> {
-        self.glow.as_ref().map(|g| &g.comp[..])
+        match &self.live {
+            Some(l) => l.glow.as_ref().map(|(a, _)| &a[..]),
+            None => self.glow.as_ref().map(|g| &g.comp[..]),
+        }
     }
 
-    /// The composite glow group per world pixel, row-major; `None` without glow.
+    /// The shown glow group per world pixel, row-major (with live copies,
+    /// theirs over the ground's); `None` without glow.
     pub fn glow_groups(&self) -> Option<&[u8]> {
-        self.glow.as_ref().map(|g| &g.comp_groups[..])
+        match &self.live {
+            Some(l) => l.glow.as_ref().map(|(_, w)| &w[..]),
+            None => self.glow.as_ref().map(|g| &g.comp_groups[..]),
+        }
     }
 
     /// [`ColorMap::replace_rect`]'s glow: copies art rectangle `r` of
@@ -478,10 +495,99 @@ impl ColorMap {
         self.scale
     }
 
-    /// The colour image, RGBA8, row-major, opaque (alpha 0 where
-    /// see-through, only in a map made by [`ColorMap::new_see_through`]).
+    /// The colour image shown, RGBA8, row-major, opaque (alpha 0 where
+    /// see-through, only in a map made by [`ColorMap::new_see_through`]):
+    /// the ground, with the live copies over it (issue #87) as of the last
+    /// [`ColorMap::set_live`], [`ColorMap::settle_live`] or
+    /// [`ColorMap::take_dirty`].
     pub fn pixels(&self) -> &[u8] {
+        match &self.live {
+            Some(l) => &l.pixels,
+            None => &self.pixels,
+        }
+    }
+
+    /// The ground's colour image, without live copies (issue #87): what
+    /// the edits keep in step with [`ColorMap::material`].
+    pub fn ground_pixels(&self) -> &[u8] {
         &self.pixels
+    }
+
+    /// The ground, as the live layer's composition reads it.
+    fn ground(&self) -> Ground<'_> {
+        Ground {
+            scale: self.scale,
+            width: self.width,
+            pixels: &self.pixels,
+            glow: self.glow.as_deref().map(|g| (&g.comp[..], &g.comp_groups[..])),
+            cells: &self.material.cells,
+            world: (self.material.width(), self.material.height()),
+        }
+    }
+
+    /// Gives the map its live copies' pictures (issue #87; `None` removes
+    /// them): nothing is drawn until [`ColorMap::set_live`]. When a
+    /// picture glows and the map has no glow channel (a level lit only by
+    /// live copies), it gets an empty one ([`GlowLayers::empty`]), so the
+    /// renderer uploads glow and groups. Set it before the first upload.
+    pub fn set_live_art(&mut self, art: Option<Arc<LiveArt>>) {
+        let Some(art) = art else {
+            self.live = None;
+            return;
+        };
+        if art.glows() && self.glow.is_none() {
+            let (a, w) = ((self.width, self.height), (self.material.width(), self.material.height()));
+            self.set_glow(Some(GlowLayers::empty(a, w)));
+        }
+        let live = Live::new(art, &self.ground(), Self::DIRTY_TILE * self.scale);
+        self.live = Some(Box::new(live));
+    }
+
+    /// Whether the map draws live copies ([`ColorMap::set_live_art`]).
+    pub fn has_live(&self) -> bool {
+        self.live.is_some()
+    }
+
+    /// Draws the live copies' parts of `frame` over the ground (issue #87):
+    /// the ground's edits since the last call are settled first, then each
+    /// copy whose parts changed (picture, place, facing, opacity or glow)
+    /// is recomposed where it was and where it is, those rectangles marked
+    /// dirty. An unchanged frame changes and marks nothing. Without
+    /// [`ColorMap::set_live_art`] it does nothing. Allocates nothing once
+    /// warm.
+    pub fn set_live(&mut self, frame: &LiveFrame) {
+        self.settle_live();
+        let Some(mut live) = self.live.take() else { return };
+        let s = self.scale;
+        for &(x0, y0, x1, y1) in live.set_frame(frame, &self.ground()) {
+            self.dirty.mark(Rect { x: x0 * s, y: y0 * s, w: (x1 - x0) * s, h: (y1 - y0) * s }, false);
+        }
+        self.live = Some(live);
+    }
+
+    /// Brings the shown composite up to the ground's edits (issue #87):
+    /// [`ColorMap::set_live`] and [`ColorMap::take_dirty`] do it first.
+    pub fn settle_live(&mut self) {
+        if let Some(mut live) = self.live.take() {
+            live.settle(&self.ground());
+            self.live = Some(live);
+        }
+    }
+
+    /// Recomposes the whole shown composite (a new glow channel).
+    fn compose_live(&mut self) {
+        if let Some(mut live) = self.live.take() {
+            live.compose_all(&self.ground());
+            self.live = Some(live);
+        }
+    }
+
+    /// The live copies' solid pixels (issue #87): per world pixel, 1 where
+    /// a shown rock part is solid; `None` without live copies. The
+    /// renderer's solid map counts them as rock (they occlude light and
+    /// take light soak); the material never does.
+    pub fn live_solid(&self) -> Option<&[u8]> {
+        self.live.as_ref().map(|l| &l.solid[..])
     }
 
     /// The material grid as the replayed edits left it.
@@ -513,6 +619,7 @@ impl ColorMap {
     /// [`ColorMap::DIRTY_TILE`] tiles along a row, clipped to the map
     /// (issue #35); dropped early, the iterator forgets the rest too.
     pub fn take_dirty(&mut self) -> impl Iterator<Item = Rect> + '_ {
+        self.settle_live();
         self.dirty.drain().map(|d| d.rect)
     }
 
@@ -520,6 +627,7 @@ impl ColorMap {
     /// `colour_only` where only blood and gib stains changed it, so its
     /// material and glow are as they were.
     pub fn take_dirty_kinds(&mut self) -> impl Iterator<Item = Dirty> + '_ {
+        self.settle_live();
         self.dirty.drain()
     }
 
@@ -824,11 +932,21 @@ impl ColorMap {
         let s = self.scale;
         let r = Rect { x: x0 as u32 * s, y: y0 as u32 * s, w: (x1 - x0) as u32 * s, h: (y1 - y0) as u32 * s };
         self.dirty.mark(r, colour_only);
+        self.mark_stale(r);
     }
 
     /// Marks art rectangle `r` (inside the map) dirty, more than its colour.
     fn push_dirty(&mut self, r: Rect) {
         self.dirty.mark(r, false);
+        self.mark_stale(r);
+    }
+
+    /// The ground changed in art rectangle `r`: the live copies' shown
+    /// composite is recomposed there when settled (issue #87).
+    fn mark_stale(&mut self, r: Rect) {
+        if let Some(l) = self.live.as_deref_mut() {
+            l.stale.mark(r, false);
+        }
     }
 }
 

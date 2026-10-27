@@ -98,6 +98,34 @@ and the colour image that follows it (`ColorMap`).
   through); flags of another size are refused (`false`), `None` removes
   them. `clear()` returns them as loaded: play edits never change them, and
   a flag counts only where the cell is solid.
+- **Live copies** (`live.rs`, issue #87; STATUS.md "Live assets (issues
+  #85-#94)"): a level's live copies are composited into the map the
+  renderer uploads, never drawn as sprites, so every lit pass reads their
+  pictures as the ground's. `set_live_art(Some(Arc<LiveArt>))` gives the
+  pictures (`LivePicture { size, art, rock, glow, groups }`, by copy then
+  picture; `groups` already the run-time group map values; a picture that
+  glows on a map without glow gives it `GlowLayers::empty`, a level lit
+  only by live copies); `set_live(&LiveFrame)` (each presented tick: the
+  parts copy by copy, `LivePlaced { picture, rock, at, flip, alpha, glow
+  }`) recomposes the boxes of each copy whose parts changed, before and
+  after, and marks them dirty; an unchanged frame marks nothing. The
+  ground (`ground_pixels()`, the glow as edited, `material()`,
+  `rebuild_area`, every edit rule) never sees the parts; `pixels()`,
+  `glow()` and `glow_groups()` are the shown composite (the ground's
+  without live art), settled after ground edits by `set_live`,
+  `settle_live` and `take_dirty*` (ground edits mark the live layer's own
+  stale tiles). A rock part (where its mask is solid) hides the ground,
+  glows mask × strength (`live_glow`, the bake's `glow_value`) in its
+  groups and is 1 in `live_solid()` (the renderer's solid map: it
+  occludes light and takes soak); a background part shows where the
+  ground is background and no rock part is, its alpha × `alpha` laid
+  over straight (the bake's `glass_over`; opacity alone never over a
+  see-through pixel), its glow over the ground's where it shows, its
+  group at a world pixel's centre art pixel. `flip` mirrors the picture
+  (the caller mirrors `at` within the copy). `glow_layers()`,
+  `art_layers()`, `glow_beams()` and `beams_generation()` stay the
+  ground's (the static beams never see live copies). Tests:
+  `tests/live.rs`.
 - **Journal** (`journal.rs`, networking spec §3.3): off by default; `start_journal` records each mutator's clipped pre-image and keeps the order-independent cell hash. Every new write to `cells` must go through `set_cell` after `record`, or rollback breaks.
 - **Restored areas**: `undo_to` reports each undone edit's rectangle and a `load_cells` the whole map; `take_restored_areas()` drains them (`Area`, world px, at most `MAX_RESTORED`, merged into the bounding box beyond), so the colour map, which only replays the ticks' edits, can `rebuild_area` what an undo or a load changed.
 - **State transfer**: `cells()` and `load_cells` (all-or-nothing, valid materials only). A load is not undoable: it seals the journal, so every older mark is `Forgotten`.
