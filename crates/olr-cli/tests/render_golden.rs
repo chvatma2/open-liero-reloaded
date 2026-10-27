@@ -369,8 +369,14 @@ fn look_double_skin() {
 /// Issue #87: idle bots on the live test level (`fixtures/live/levels/
 /// live-test`, its copies in their starting states, or with `extra`'s
 /// `--live` states), the copies composited into the terrain and lit by
-/// their own glow groups.
+/// their own glow groups, at tick 200 (since #89 its scripts have run:
+/// the lamp stutters, the press moves and the consoles are alarmed).
 fn live_golden(name: &str, extra: &[&str]) {
+    live_golden_at(name, "200", extra);
+}
+
+/// [`live_golden`] at tick `ticks`.
+fn live_golden_at(name: &str, ticks: &str, extra: &[&str]) {
     let Some(content) = content_dir() else { return };
     let levels = root().join("fixtures/live/levels");
     let args = [
@@ -386,7 +392,7 @@ fn live_golden(name: &str, extra: &[&str]) {
         "--seed",
         "1",
         "--ticks",
-        "200",
+        ticks,
         "--packs",
         levels.to_str().unwrap(),
         "--content",
@@ -395,26 +401,27 @@ fn live_golden(name: &str, extra: &[&str]) {
     compare(name, &args, extra);
 }
 
-/// Issue #87: the live copies as they start (the lamp dim, the second
-/// console alarmed).
+/// Issue #87: the live copies, at tick 200 their scripts' states (#89).
 #[test]
 fn live_start() {
     live_golden("live-start.png", &[]);
 }
 
 /// Issue #87: the lamp off and the first console alarmed before the
-/// first tick (`--live`).
+/// first tick (`--live`), drawn after one tick, before the scripts change
+/// them (#89: the lamp's first stutter is at tick 2 at the earliest).
 #[test]
 fn live_states() {
-    live_golden("live-states.png", &["--live", "lamp=Off", "--live", "console-a=Alarm"]);
+    live_golden_at("live-states.png", "1", &["--live", "lamp=Off", "--live", "console-a=Alarm"]);
 }
 
 /// Issue #93: console-a's screen red through its `screen_colour`, the
-/// lamp dimmed by its `lamp_light` (`--live-value`).
+/// lamp dimmed by its `lamp_light` (`--live-value`), after one tick as
+/// [`live_states`], before the scripts' states set them (#89).
 #[test]
 fn live_light() {
     let v = ["--live-value", "console-a.screen_colour=#ff2020", "--live-value", "lamp.lamp_light=60"];
-    live_golden("live-light.png", &v);
+    live_golden_at("live-light.png", "1", &v);
 }
 
 /// Issue #93: the spot's beam worked out each frame from its values, at

@@ -7412,7 +7412,8 @@ values.
   it; `cargo xtask determinism` replays it on WASI (in `check`), Windows
   and arm64. `fixtures/matches/` is unchanged, and so are the static
   render goldens; #87's live render goldens were re-blessed with the
-  scripts running.
+  scripts running (`live-states.png` and `live-light.png` drawn at tick
+  1, before the scripts change the states and values their flags set).
 - **What it costs.** A level without live copies draws as before (the
   render goldens and `lit-hashes.ron` held); the live goldens
   (`live-start.png`, `live-states.png`) changed with the fixture's new

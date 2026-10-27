@@ -486,7 +486,10 @@ The headless command-line tool. Its commands:
   it; an unknown copy or state is an error naming it). `live-start.png`
   and `live-states.png` (`--live lamp=Off --live console-a=Alarm`): two
   idle bots, seed 1, tick 200, on `fixtures/live/levels/live-test`, the
-  copies composited into the terrain and lit by their own groups.
+  copies composited into the terrain and lit by their own groups (since
+  #89 its scripts run: `live-start.png` shows their states at tick 200,
+  while `live-states.png` and `live-light.png` are drawn at tick 1, before
+  the scripts change what the flags set; `live_golden_at`).
   Issue #93: `--live-value COPY.NAME=VALUE` (repeatable, in order, after
   the `--live` states; an exposed name; a whole number, `#rrggbb` or
   `0x…`, `true` or `false`; `live_values_parse`) sets a value before the

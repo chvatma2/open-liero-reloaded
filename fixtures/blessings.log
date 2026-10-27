@@ -286,3 +286,6 @@
   fixtures/render/live-light.png
   fixtures/render/live-start.png
   fixtures/render/live-states.png
+2026-10-27 bless-render: #89: live-states and live-light drawn after one tick, before the fixture's scripts change them
+  fixtures/render/live-light.png
+  fixtures/render/live-states.png
