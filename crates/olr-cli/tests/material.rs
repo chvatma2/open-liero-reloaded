@@ -252,28 +252,28 @@ fn assets_carry_materials_through_save_and_place() {
     let out = ok(&["asset", "check", asset.to_str().unwrap()]);
     assert!(out.contains("materials stone, wood"), "{out}");
 
-    // A new level without a look: a look made, both added; placed again,
-    // joined.
+    // A new level without a look: a look made, both added; placed again
+    // (issue #75: a copy of the same asset), nothing new.
     let target = t.path().join("empty");
     ok(&["pack", "new", "level", "empty-level", "--out", target.to_str().unwrap(), "--size", "600x400"]);
     let target = target.to_str().unwrap();
-    let out = ok(&["asset", "place", target, asset.to_str().unwrap(), "--at", "0,0"]);
+    let out = ok(&["level", "copy", "add", target, asset.to_str().unwrap(), "--at", "0,0"]);
     assert!(out.contains("added material stone") && out.contains("added material wood"), "{out}");
     assert!(out.contains("added a look"), "{out}");
     checks(target);
-    let out = ok(&["asset", "place", target, asset.to_str().unwrap(), "--at", "10,10"]);
-    assert!(out.contains("joined material stone") && out.contains("joined material wood"), "{out}");
+    let out = ok(&["level", "copy", "add", target, asset.to_str().unwrap(), "--at", "10,10"]);
+    assert_eq!(out, "added copy bits-2 of \"Bits\" (asset a)\n");
     checks(target);
     let out = ok(&["level", "material", "list", target]);
     assert_eq!(out, "1: stone \"Stone\"\n2: wood \"Wood\"\n");
-    let out = ok(&["level", "element", "list", target]);
-    assert!(out.contains("bits-tiny Image Rock \"Bits Tiny\" surface stone"), "{out}");
+    let placed = std::fs::read_to_string(Path::new(target).join("editor/a/asset.ron")).unwrap();
+    assert!(placed.contains("surface: \"stone\""), "{placed}");
 
     // A hostile asset: a material it names but lacks.
     std::fs::write(asset.join("asset.ron"), text.replace("id: \"stone\"", "id: \"lava\"")).unwrap();
     let out = refused(&["asset", "check", asset.to_str().unwrap()]);
     assert!(out.contains("stone"), "{out}");
     let before = tree(Path::new(target));
-    refused(&["asset", "place", target, asset.to_str().unwrap(), "--at", "0,0"]);
+    refused(&["level", "copy", "add", target, asset.to_str().unwrap(), "--at", "0,0"]);
     assert!(tree(Path::new(target)) == before);
 }
