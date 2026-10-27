@@ -401,7 +401,14 @@ impl Edit {
             Edit::States { before, after } => before == after,
             Edit::Parts { before, after } => before == after,
             Edit::Ground { before, after } => before == after,
-            Edit::Placement { before, after } => before.file == after.file && before.scripts == after.scripts,
+            Edit::Placement { before, after } => {
+                // Each side carries only the assets the other lacks or holds
+                // otherwise: none when they are the same.
+                before.file == after.file
+                    && before.scripts == after.scripts
+                    && before.assets.is_empty()
+                    && after.assets.is_empty()
+            }
             Edit::Look { before, after } => before == after,
             Edit::Haze { before, after, .. } => before == after,
             Edit::GlowMask { before, after, .. } | Edit::SurfaceMap { before, after, .. } => before == after,

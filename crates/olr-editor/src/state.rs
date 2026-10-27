@@ -49,6 +49,8 @@ pub enum Selection {
     /// A placed copy in the level tab, by its id (issue #81: the ground,
     /// `ground::GROUND_COPY`, locked).
     Copy(String),
+    /// Two placed copies or more, in stack order, bottom first (issue #82).
+    Copies(Vec<String>),
 }
 
 impl Selection {
@@ -188,6 +190,9 @@ pub enum Pending {
     /// Issue #81: the asset tab opens the level's ground (Edit in level) in
     /// place of the asset open there.
     EditGround,
+    /// Issue #82: the asset tab opens the level's own asset `key` (a copy's
+    /// Edit in level) in place of the asset open there.
+    EditOwn(String),
 }
 
 /// The editor's two documents (issue #77): the level and the asset tab's
@@ -345,11 +350,12 @@ pub enum EditorAction {
     /// An asset was saved or imported into the user's library: it is
     /// selected in the Assets tab.
     AssetSaved(AssetKey),
-    /// The asset `ReadAsset` asked for, to place at world pixel `at`, or why
-    /// it cannot be read.
+    /// The asset `ReadAsset` asked for (library asset `key`, its files as
+    /// read), to place at world pixel `at`, or why it cannot be read.
     AssetRead {
+        key: AssetKey,
         at: (i32, i32),
-        asset: Result<Box<olr_edit::asset::Asset>, String>,
+        asset: Result<Box<olr_format::assets::AssetSource>, String>,
     },
     // The file browser (R9).
     /// Opens the browser at the remembered folder, else the home directory.
@@ -553,6 +559,24 @@ pub enum EditorAction {
         key: AssetKey,
         at: (i32, i32),
     },
+    /// The Assets tab's Place: asset `key` placed at the view's centre
+    /// (issue #82).
+    PlaceAssetCentred(AssetKey),
+    /// A change of copy `id` from its panel or the Copies list (issue #82).
+    SetCopy {
+        id: String,
+        change: crate::level_tab::CopyChange,
+    },
+    /// A Copies list row dropped: copy `id` to place `to` in the stack,
+    /// bottom 0 (issue #82).
+    RestackCopy {
+        id: String,
+        to: usize,
+    },
+    /// Ctrl+D: the selected copies duplicated (8, 8) further (issue #82).
+    Duplicate,
+    /// A copy's Edit in level or Edit library asset (issue #82).
+    EditCopy(String),
     /// Removes the user's asset `id` (asks first).
     RemoveAsset(String),
     // The asset tab (issue #77).
@@ -684,7 +708,7 @@ pub enum EditorCommand {
     AddTexture(PathBuf),
     /// Remove this texture from the user's library; answer `TexturesChanged`.
     RemoveTexture(String),
-    /// Read asset `key` whole (`olr_edit::asset::load_dir`); answer
+    /// Read asset `key`'s files (`olr_edit::asset::read_dir`); answer
     /// `AssetRead` with `at`.
     ReadAsset {
         key: AssetKey,
@@ -849,6 +873,9 @@ pub struct EditorState {
     /// opened): more changes are applied by a switch to the level tab,
     /// Play or Save.
     pub(crate) ground: Option<u64>,
+    /// Issue #82: while the asset tab holds one of the level's own assets
+    /// but the ground, which, and as the level last had it.
+    pub(crate) own: Option<crate::level_tab::OwnOpen>,
 }
 
 impl EditorState {
@@ -947,6 +974,7 @@ impl EditorState {
             shown_generation: 0,
             state_named: 0,
             ground: None,
+            own: None,
         }
     }
 
@@ -1348,9 +1376,11 @@ impl EditorState {
         if selects || self.selection != before {
             match self.selection {
                 Selection::Object(_) => self.tab = PanelTab::Spawns,
-                Selection::Element(_) | Selection::Folder(_) | Selection::Many(_) | Selection::Copy(_) => {
-                    self.tab = PanelTab::Elements
-                }
+                Selection::Element(_)
+                | Selection::Folder(_)
+                | Selection::Many(_)
+                | Selection::Copy(_)
+                | Selection::Copies(_) => self.tab = PanelTab::Elements,
                 Selection::None => {}
             }
         }
@@ -1376,7 +1406,7 @@ impl EditorState {
         cmds
     }
 
-    fn act(&mut self, action: EditorAction) -> Vec<EditorCommand> {
+    pub(crate) fn act(&mut self, action: EditorAction) -> Vec<EditorCommand> {
         match action {
             EditorAction::Opened(doc) => {
                 self.drop_ground();
@@ -1437,8 +1467,8 @@ impl EditorState {
                 self.tab = PanelTab::Assets;
                 Vec::new()
             }
-            EditorAction::AssetRead { at, asset } => match asset {
-                Ok(asset) => self.place_asset(&asset, at),
+            EditorAction::AssetRead { key, at, asset } => match asset {
+                Ok(asset) => self.place_copy(&key, &asset, at),
                 Err(why) => {
                     self.dialog = Some(Dialog::Error(why));
                     Vec::new()
@@ -1466,6 +1496,10 @@ impl EditorState {
                 if self.doc.is_none() || self.asset(&key).is_none() {
                     return Vec::new();
                 }
+                if self.shown != DocTab::Level {
+                    self.status.message = Some(crate::level_tab::PLACED_IN_THE_LEVEL.into());
+                    return Vec::new();
+                }
                 vec![EditorCommand::ReadAsset { key, at }]
             }
             EditorAction::ShowTab(tab) if tab == self.shown => Vec::new(),
@@ -1476,8 +1510,12 @@ impl EditorState {
                 match tab {
                     DocTab::Level => {
                         self.apply_ground();
+                        self.apply_own();
                     }
-                    DocTab::Asset => self.sync_ground(),
+                    DocTab::Asset => {
+                        self.sync_ground();
+                        self.sync_own();
+                    }
                 }
                 self.switch_tab(tab);
                 vec![EditorCommand::Upload(
@@ -1505,12 +1543,26 @@ impl EditorState {
                 self.leave(Pending::EditGround)
             }
             EditorAction::DoubleClick { world } if self.shown == DocTab::Level => {
-                // Issue #81: a double click on the ground is Edit in level.
-                if self.tool == Tool::Select && self.ground_at(world) {
-                    return self.act(EditorAction::EditGround);
+                // Issue #82: a double click on a copy does what its panel's
+                // button does (Edit in level, Edit library asset).
+                let hit = self.doc.as_ref().and_then(|d| d.copy_at(world));
+                match hit {
+                    Some(id) if self.tool == Tool::Select => self.edit_copy(&id),
+                    _ => Vec::new(),
                 }
-                Vec::new()
             }
+            EditorAction::PlaceAssetCentred(key) => {
+                let Some(a) = self.asset(&key) else { return Vec::new() };
+                let (w, h) = a.size;
+                let c = self.import_centre();
+                let at = (c.0.saturating_sub((w / 2) as i32), c.1.saturating_sub((h / 2) as i32));
+                self.act(EditorAction::PlaceAsset { key, at })
+            }
+            EditorAction::SetCopy { id, change } => self.set_copy(&id, change),
+            EditorAction::RestackCopy { id, to } => self.restack_copy(&id, to),
+            EditorAction::Duplicate if self.shown == DocTab::Level => self.duplicate_copies(),
+            EditorAction::Duplicate => Vec::new(),
+            EditorAction::EditCopy(id) => self.edit_copy(&id),
             EditorAction::NewAssetDialog => {
                 let art_scale = self.document().map_or(1, |d| d.level().art_scale);
                 self.dialog =
@@ -1748,8 +1800,16 @@ impl EditorState {
                 self.selection = self.group(range.unwrap_or_else(|| vec![id]));
                 Vec::new()
             }
+            EditorAction::Copy if self.shown == DocTab::Level && !self.selection.copies().is_empty() => {
+                self.copy_copies();
+                Vec::new()
+            }
             EditorAction::Copy => {
                 self.copy();
+                Vec::new()
+            }
+            EditorAction::Cut if self.shown == DocTab::Level && !self.selection.copies().is_empty() => {
+                self.status.message = Some(crate::level_tab::NO_CUT.into());
                 Vec::new()
             }
             EditorAction::Cut => {
@@ -1825,10 +1885,7 @@ impl EditorState {
             EditorAction::Remove => match self.selection.clone() {
                 Selection::Element(id) => self.removed(|d| d.remove(&id)),
                 Selection::Object(i) => self.removed(|d| d.remove_object(i)),
-                Selection::Copy(_) => {
-                    self.status.message = Some(crate::ground::GROUND_LOCKED.into());
-                    Vec::new()
-                }
+                Selection::Copy(_) | Selection::Copies(_) => self.remove_copies(),
                 Selection::Folder(_) | Selection::Many(_) => {
                     let ids = self.selection.ids();
                     let cmds = self.group_edit(|d| d.remove_items(&ids));
@@ -1867,18 +1924,28 @@ impl EditorState {
                 }
                 Vec::new()
             }
-            EditorAction::Resize { size, offset, material, colour } => {
-                self.edit(|d| d.resize(size, offset, material, colour))
-            }
+            EditorAction::Resize { size, offset, material, colour } => self.edits(|d| {
+                // Issue #82: the copies keep their places on the ground (the
+                // ground grows with the level), one step with the resize.
+                let resized = d.resize(size, offset, material, colour)?;
+                let mut dirty = resized.dirty;
+                let mut edits = vec![resized.edit];
+                if let Some(shifted) = Self::shifted_copies(d, offset)? {
+                    dirty = Rect::union(Some(dirty), shifted.dirty);
+                    edits.push(shifted.edit);
+                }
+                Ok((edits, dirty))
+            }),
             EditorAction::Undo => self.step(true),
             EditorAction::Redo => self.step(false),
-            EditorAction::Play if self.shown == DocTab::Asset && !self.ground_open() => {
+            EditorAction::Play if self.shown == DocTab::Asset && !self.ground_open() && !self.own_open() => {
                 self.status.message = Some("Play is the level tab's".into());
                 Vec::new()
             }
             EditorAction::Play => {
                 // Issue #81: the ground's edits first (paint, then Play).
                 self.apply_ground();
+                self.apply_own();
                 self.play()
             }
             EditorAction::PlayMod(m) => {
@@ -2335,6 +2402,19 @@ impl EditorState {
     /// Pastes the clipboard on top as one step, the copies selected; the
     /// next paste lands `PASTE_STEP` further.
     fn paste(&mut self) -> Vec<EditorCommand> {
+        // Issue #82: the level tab pastes copies, the asset tab elements.
+        match (&self.clipboard, self.shown) {
+            (Some(Clipboard::Copies { .. }), DocTab::Level) => return self.paste_copies(),
+            (Some(Clipboard::Copies { .. }), DocTab::Asset) => {
+                self.status.message = Some(crate::level_tab::COPIES_PASTE_IN_LEVEL_TAB.into());
+                return Vec::new();
+            }
+            (Some(Clipboard::Elements { .. } | Clipboard::Pixels { .. }), DocTab::Level) => {
+                self.status.message = Some(crate::level_tab::ELEMENTS_PASTE_IN_ASSET_TAB.into());
+                return Vec::new();
+            }
+            _ => {}
+        }
         let (Some(doc), Some(clip)) = (self.doc.as_mut(), self.clipboard.as_mut()) else { return Vec::new() };
         if let Clipboard::Objects { objects, offset } = clip {
             return match doc.paste_objects(objects, *offset) {
@@ -2361,7 +2441,7 @@ impl EditorState {
                 doc.paste_pixels(clip, *art_scale, to).map(|(edit, id)| (vec![edit], vec![id], offset))
             }
             // Pasted above.
-            Clipboard::Objects { .. } => return Vec::new(),
+            Clipboard::Objects { .. } | Clipboard::Copies { .. } => return Vec::new(),
         };
         match done {
             Ok((edits, ids, offset)) => {
@@ -2462,33 +2542,6 @@ impl EditorState {
             });
         }
         vec![EditorCommand::SaveAsset { asset, replace }]
-    }
-
-    /// Places `asset` (`AssetRead`) at world pixel `at`: one step, the new
-    /// elements selected.
-    fn place_asset(&mut self, asset: &olr_edit::asset::Asset, at: (i32, i32)) -> Vec<EditorCommand> {
-        let Some(doc) = self.doc.as_mut() else { return Vec::new() };
-        match doc.place_asset(asset, at) {
-            Ok(placed) => {
-                let dirty = doc.all();
-                self.history.push(placed.edits);
-                // Two pieces or more are a folder, selected (issue #61); in
-                // the level tab, the ground they landed in (issue #81).
-                self.selection = match placed.folder {
-                    _ if self.in_place == DocTab::Level => Selection::Copy(crate::ground::GROUND_COPY.into()),
-                    Some(f) => Selection::Folder(f),
-                    None => self.group(placed.ids),
-                };
-                self.tab = PanelTab::Elements;
-                let cmds = self.committed(dirty);
-                self.status.message = placed.note;
-                cmds
-            }
-            Err(e) => {
-                self.status.message = Some(e.to_string());
-                Vec::new()
-            }
-        }
     }
 
     /// The selection of `ids` (plan 14e R8): the elements and folders that
@@ -2653,6 +2706,10 @@ impl EditorState {
             Selection::Folder(id) if !doc.is_folder(id) => self.selection = Selection::None,
             Selection::Object(i) if *i >= doc.level().objects.len() => self.selection = Selection::None,
             Selection::Many(ids) => self.selection = self.group(ids.clone()),
+            // Issue #82: copies the step removed go.
+            Selection::Copy(_) | Selection::Copies(_) => {
+                self.selection = self.copy_selection(self.selection.copies())
+            }
             _ => {}
         }
         if whole {
@@ -2684,13 +2741,18 @@ impl EditorState {
     /// Open, New or Close (and issue #77's asset tab openings): asks first
     /// when the document it leaves has unsaved changes; Close asks for the
     /// asset tab's, then the level's.
-    fn leave(&mut self, then: Pending) -> Vec<EditorCommand> {
+    pub(crate) fn leave(&mut self, then: Pending) -> Vec<EditorCommand> {
         // Issue #81: the ground's edits go to the level first (whose own
         // unsaved mark then asks for them).
         self.apply_ground();
-        let asset_dirty = self.asset_dirty() && self.ground.is_none();
+        self.apply_own();
+        let asset_dirty = self.asset_dirty() && self.ground.is_none() && self.own.is_none();
         match then {
-            Pending::EditAsset { .. } | Pending::NewAsset(_) | Pending::CloseAsset | Pending::EditGround => {
+            Pending::EditAsset { .. }
+            | Pending::NewAsset(_)
+            | Pending::CloseAsset
+            | Pending::EditGround
+            | Pending::EditOwn(_) => {
                 if asset_dirty {
                     self.dialog = Some(Dialog::Unsaved { then });
                     return Vec::new();
@@ -2719,6 +2781,7 @@ impl EditorState {
             Pending::EditAsset { key, asset } => return self.open_asset_tab(Some(key), &asset),
             Pending::NewAsset(n) => return self.open_asset_tab(None, &n.asset()),
             Pending::EditGround => return self.open_ground_tab(),
+            Pending::EditOwn(key) => return self.open_own_tab(key),
             Pending::CloseAsset => {
                 self.close_asset_tab();
                 return self.leave(Pending::Close);
@@ -2747,7 +2810,7 @@ impl EditorState {
     }
 
     /// `f` on `tab`'s session, the shown one's back in place after.
-    fn on_tab<R>(&mut self, tab: DocTab, f: impl FnOnce(&mut Self) -> R) -> R {
+    pub(crate) fn on_tab<R>(&mut self, tab: DocTab, f: impl FnOnce(&mut Self) -> R) -> R {
         self.place(tab);
         let r = f(self);
         self.place(self.shown);
@@ -2768,7 +2831,7 @@ impl EditorState {
 
     /// The asset tab with `asset` open, read from the library's `key` (none
     /// for a new asset, unsaved till saved): a fresh session, shown.
-    fn open_asset_tab(
+    pub(crate) fn open_asset_tab(
         &mut self,
         key: Option<AssetKey>,
         asset: &olr_edit::asset::Asset,
@@ -2796,7 +2859,7 @@ impl EditorState {
     }
 
     /// Empties the asset tab (its session made anew), showing the level.
-    fn close_asset_tab(&mut self) {
+    pub(crate) fn close_asset_tab(&mut self) {
         self.on_tab(DocTab::Asset, |s| {
             let mut fresh = Session::new();
             swap_session!(s, fresh);
@@ -2804,6 +2867,7 @@ impl EditorState {
         self.asset_key = None;
         self.tab_save = None;
         self.ground = None;
+        self.own = None;
         if self.shown == DocTab::Asset {
             self.switch_tab(DocTab::Level);
         }
@@ -2812,7 +2876,7 @@ impl EditorState {
     /// Issue #81: the asset tab's ground goes with the level it is of
     /// (another level opened).
     fn drop_ground(&mut self) {
-        if self.ground.is_some() {
+        if self.ground.is_some() || self.own.is_some() {
             self.close_asset_tab();
         }
     }
@@ -2920,7 +2984,8 @@ impl EditorState {
     /// Play: a sandbox match on the level's bake.
     fn play(&mut self) -> Vec<EditorCommand> {
         let Some(d) = self.document() else { return Vec::new() };
-        let level = Box::new(d.level().clone());
+        // Issue #82: the level under the copies' gathered look.
+        let level = Box::new(d.playable());
         self.playing = true;
         vec![EditorCommand::Play {
             level,
@@ -2957,7 +3022,6 @@ impl EditorState {
             EditorAction::Select(s) => {
                 matches!(s, Selection::Element(_) | Selection::Folder(_) | Selection::Many(_))
             }
-            EditorAction::Paste => !matches!(self.clipboard, None | Some(Clipboard::Objects { .. })),
             _ => false,
         }
     }
@@ -2969,8 +3033,9 @@ impl EditorState {
     fn save_asset(&mut self, then: Option<Pending>) -> Vec<EditorCommand> {
         // Issue #81: the ground's Save applies it and saves the level: one
         // Save for both.
-        if self.ground_open() {
+        if self.ground_open() || self.own_open() {
             self.apply_ground();
+            self.apply_own();
             return self.on_tab(DocTab::Level, |s| s.save(then));
         }
         let made = self.on_tab(DocTab::Asset, |s| s.doc.as_ref().map(|d| (d.to_asset(), s.changes)));
@@ -3102,7 +3167,8 @@ impl EditorState {
                 Pending::EditAsset { .. }
                 | Pending::NewAsset(_)
                 | Pending::CloseAsset
-                | Pending::EditGround => self.save_asset(Some(then)),
+                | Pending::EditGround
+                | Pending::EditOwn(_) => self.save_asset(Some(then)),
                 then => self.on_tab(DocTab::Level, |s| s.save(Some(then))),
             },
             (Dialog::Unsaved { then }, Choice::Discard) => self.carry_out(then),

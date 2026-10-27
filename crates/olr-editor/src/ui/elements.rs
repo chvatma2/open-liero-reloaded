@@ -50,22 +50,77 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
     }
 }
 
-/// The level tab's Copies (issue #81): the ground alone, locked (#82 lists
-/// every copy); a click selects it, a double click opens it in the asset
-/// tab.
+/// A Copies list row carried to another (issue #82): the copy's id.
+#[derive(Clone, Debug)]
+struct CarriedCopy(String);
+
+/// The level tab's Copies (issue #82): every copy, top first, its name and
+/// id, a lock toggle (the ground's always locked) and its mark (🔗 a
+/// library copy, "own" the level's own asset); a click selects (Ctrl
+/// toggles), a double click opens its asset, a row dragged onto another
+/// takes its place (one step).
 fn copies(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
     let Some(doc) = state.document() else { return };
-    let id = crate::ground::GROUND_COPY;
-    let selected = matches!(state.selection(), Selection::Copy(c) if c == id);
-    ui.horizontal(|ui| {
-        let r = ui.selectable_label(selected, doc.ground_name());
-        ui.weak("🔒").on_hover_text("the level's own ground: locked");
-        if r.double_clicked() {
-            out.push(EditorAction::EditGround);
-        } else if r.clicked() {
-            out.push(EditorAction::Select(Selection::Copy(id.into())));
-        }
-    });
+    let copies = doc.copies();
+    let carried = egui::DragAndDrop::payload::<CarriedCopy>(ui.ctx()).map(|p| p.0.clone());
+    let accent = ui.visuals().selection.stroke;
+    let selected = state.selection().copies();
+    egui::ScrollArea::vertical()
+        .id_salt("olr-editor-copy-list")
+        .max_height(ui.available_height() * LIST_SHARE)
+        .show(ui, |ui| {
+            for (k, c) in copies.iter().enumerate().rev() {
+                let ground = doc.is_ground_copy(&c.id);
+                let row = ui.horizontal(|ui| {
+                    let mut locked = c.locked || ground;
+                    let lock = toggle(ui, &mut locked, "🔒", false, labels::LOCKED);
+                    if lock.clicked() && !ground {
+                        let change = crate::level_tab::CopyChange::Locked(locked);
+                        out.push(EditorAction::SetCopy { id: c.id.clone(), change });
+                    }
+                    let name = doc.copy_name(&c.id).unwrap_or_else(|| c.id.clone());
+                    let on = selected.contains(&c.id);
+                    let r = ui.add(name_button(on, &name, false));
+                    r.dnd_set_drag_payload(CarriedCopy(c.id.clone()));
+                    if r.double_clicked() {
+                        out.push(EditorAction::EditCopy(c.id.clone()));
+                    } else if r.clicked() {
+                        let mut ids =
+                            if ui.input(|i| i.modifiers.command) { selected.clone() } else { Vec::new() };
+                        match ids.iter().position(|i| *i == c.id) {
+                            Some(i) => {
+                                ids.remove(i);
+                            }
+                            None => ids.push(c.id.clone()),
+                        }
+                        out.push(EditorAction::Select(match ids.len() {
+                            0 => Selection::None,
+                            1 => Selection::Copy(ids.remove(0)),
+                            _ => Selection::Copies(ids),
+                        }));
+                    }
+                    ui.weak(&c.id);
+                    match doc.copy_origin(&c.id) {
+                        Some(olr_format::levels::AssetOrigin::Own) | None => {
+                            ui.weak(labels::OWN_MARK).on_hover_text("the level's own asset");
+                        }
+                        Some(_) => {
+                            ui.label(labels::LIBRARY_MARK).on_hover_text("a copy of a library asset");
+                        }
+                    }
+                });
+                let Some(dragged) = carried.as_ref().filter(|d| **d != c.id) else { continue };
+                let rect = row.response.rect;
+                if ui.input(|i| i.pointer.interact_pos()).is_some_and(|p| rect.contains(p)) {
+                    let from_below = copies.iter().position(|x| x.id == *dragged).is_some_and(|d| d < k);
+                    let y = if from_below { rect.top() } else { rect.bottom() };
+                    ui.painter().hline(rect.x_range(), y, accent);
+                }
+                if row.response.dnd_release_payload::<CarriedCopy>().is_some() {
+                    out.push(EditorAction::RestackCopy { id: dragged.clone(), to: k });
+                }
+            }
+        });
 }
 
 /// One folder level's indent in the list, points.
@@ -305,6 +360,12 @@ fn assets(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec
         // Issue #77: the asset tab opens a blank asset, or the one picked.
         if ui.button(labels::NEW_ASSET).on_hover_text("a blank asset to paint in the asset tab").clicked() {
             out.push(EditorAction::NewAssetDialog);
+        }
+        // Issue #82: a copy of it at the view's centre, selected.
+        if let Some(key) = state.picked_asset().filter(|_| state.doc_tab() == DocTab::Level)
+            && ui.button(labels::PLACE).on_hover_text("a copy of it at the view's centre").clicked()
+        {
+            out.push(EditorAction::PlaceAssetCentred(key.clone()));
         }
         if let Some(key) = state.picked_asset()
             && ui

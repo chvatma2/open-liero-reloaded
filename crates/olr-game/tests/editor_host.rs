@@ -838,11 +838,15 @@ fn assets_are_listed_saved_placed_and_removed() {
     let lib = tmp.path().join("assets");
     assert!(lib.join("hall-dirt/asset.ron").is_file());
     assert_eq!(h.state().picked_asset(), Some(&key(false, "hall-dirt")));
-    // Placing a built-in one reads it whole and lands it in the level.
+    // Placing a built-in one reads its files and adds a copy of it to the
+    // level (issue #82).
     h.act(vec![A::ShowTab(olr_editor::DocTab::Level)]);
-    let n = h.state().document().unwrap().items().len();
+    let n = h.state().document().unwrap().copies().len();
     h.act(vec![A::PlaceAsset { key: key(true, "torch"), at: (10, 10) }]);
-    assert_eq!(h.state().document().unwrap().items().len(), n + 1);
+    let doc = h.state().document().unwrap();
+    assert_eq!(doc.copies().len(), n + 1);
+    let placed = doc.copies().last().unwrap().id.clone();
+    assert_eq!(doc.copy_origin(&placed), Some(olr_format::levels::AssetOrigin::Builtin("torch".into())));
     // Imported: written anew in the user's library.
     h.act(vec![A::Browse(Purpose::ImportAsset)]);
     h.act(vec![A::BrowseTo(built_in.clone())]);

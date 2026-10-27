@@ -16,9 +16,9 @@ use olr_edit::folders;
 use olr_edit::level::refresh_thumb;
 use olr_edit::pack::{Pack, Source, Verbatim};
 use olr_format::levels::{
-    Composition, CompositionSource, Element, ElementKind, Folder, GlowBeamMap, GlowLayers, LevelObject,
-    GROUND_KEY, LevelSource, PlacedSource, check_composition, check_elements, element_box, glow_file, image_file,
-    surface_back_file, surface_file, surface_map_size,
+    Composition, CompositionSource, Element, ElementKind, Folder, GROUND_KEY, GlowBeamMap, GlowLayers,
+    LevelObject, LevelSource, PlacedSource, check_composition, check_elements, element_box, glow_file,
+    image_file, surface_back_file, surface_file, surface_map_size,
 };
 use olr_pack::Severity;
 use olr_vfs::VPath;
@@ -368,8 +368,9 @@ impl Document {
             (Some(c), _) => Some(c),
             (None, Some(p)) => {
                 let ground = p.assets.get(GROUND_KEY);
-                let (groups, materials) =
-                    ground.map(|g| (g.file.glow_groups.clone(), g.file.materials.clone())).unwrap_or_default();
+                let (groups, materials) = ground
+                    .map(|g| (g.file.glow_groups.clone(), g.file.materials.clone()))
+                    .unwrap_or_default();
                 if level.look.is_some() || !groups.is_empty() || !materials.is_empty() {
                     let look = level.look.get_or_insert_with(Default::default);
                     look.glow_groups = groups;

@@ -37,6 +37,9 @@ pub(super) fn show(
                     Pending::EditGround => {
                         (format!("the asset {:?}", name(state.asset_document())), "editing the level's ground")
                     }
+                    Pending::EditOwn(_) => {
+                        (format!("the asset {:?}", name(state.asset_document())), "editing the level's asset")
+                    }
                 };
                 ui.label(format!("Save the changes to {of} before {before}?"));
                 ui.horizontal(|ui| {

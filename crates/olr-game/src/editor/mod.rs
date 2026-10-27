@@ -481,8 +481,12 @@ impl EditorHost {
                 self.textures(queue, |dir| files::remove_texture(dir, &name).map(|()| None))
             }
             EditorCommand::ReadAsset { key, at } => {
-                let asset = self.read_asset(&key);
-                queue.push_back(EditorAction::AssetRead { at, asset });
+                let asset = self.asset_dir(&key).and_then(|dir| {
+                    olr_edit::asset::read_dir(&dir)
+                        .map(Box::new)
+                        .map_err(|e| format!("asset {}: {e}", key.id))
+                });
+                queue.push_back(EditorAction::AssetRead { key, at, asset });
             }
             EditorCommand::ReadAssetToEdit(key) => {
                 let asset = self.read_asset(&key);
@@ -604,13 +608,15 @@ impl EditorHost {
     /// Library asset `key` read whole (`olr_edit::asset::load_dir`), or why
     /// not.
     fn read_asset(&self, key: &olr_editor::AssetKey) -> Result<Box<olr_edit::asset::Asset>, String> {
+        let dir = self.asset_dir(key)?;
+        olr_edit::asset::load_dir(&dir).map(Box::new).map_err(|e| format!("asset {}: {e}", key.id))
+    }
+
+    /// Library asset `key`'s folder.
+    fn asset_dir(&self, key: &olr_editor::AssetKey) -> Result<PathBuf, String> {
         let dir = if key.builtin { &self.builtin_assets_dir } else { &self.assets_dir };
         match dir {
-            Some(dir) if olr_edit::asset::valid_asset_id(&key.id) => {
-                olr_edit::asset::load_dir(&dir.join(&key.id))
-                    .map(Box::new)
-                    .map_err(|e| format!("asset {}: {e}", key.id))
-            }
+            Some(dir) if olr_edit::asset::valid_asset_id(&key.id) => Ok(dir.join(&key.id)),
             _ => Err(format!("no asset {:?}", key.id)),
         }
     }

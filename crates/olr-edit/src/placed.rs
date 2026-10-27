@@ -337,7 +337,14 @@ pub fn lay_copy(c: &PlacedCopy, asset: &Asset, s: u32) -> Result<LaidCopy, Place
             if let Some(depth) = c.distant {
                 element.distant = Some(depth);
             }
-            Some(LaidPiece { element, decoded, glow_mask, surface_map, back_surface_map, opacity: pp.opacity })
+            Some(LaidPiece {
+                element,
+                decoded,
+                glow_mask,
+                surface_map,
+                back_surface_map,
+                opacity: pp.opacity,
+            })
         })
         .collect();
     Ok(LaidCopy { pieces, groups: p.groups, materials: p.materials })

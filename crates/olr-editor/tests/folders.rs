@@ -299,31 +299,6 @@ fn copy_and_paste_of_a_folder_makes_new_folders() {
     assert!(doc.copy(std::slice::from_ref(&inner)).iter().all(|s| s.item.element.folder.is_none()));
 }
 
-#[test]
-fn placing_a_two_piece_asset_gives_a_folder() {
-    let Some(root) = content() else { return };
-    let (_tmp, mut doc) = open_fixture(&root);
-    let asset = doc.asset_of_elements(&ids(&["tiny", "gradient"]), "Pair").unwrap();
-    assert!(asset.pieces.iter().all(|p| p.element.folder.is_none()));
-    let before = files(&doc);
-    let placed = doc.place_asset(&asset, (10, 10)).unwrap();
-    let f = placed.folder.clone().expect("a folder");
-    assert_eq!(folder(&doc, &f).name, "Pair");
-    assert_eq!(doc.folder_members(&f), placed.ids);
-    let mut h = History::new();
-    h.push(placed.edits);
-    for e in h.undo().unwrap().to_vec().iter().rev() {
-        doc.apply(e, false);
-    }
-    assert!(files(&doc) == before, "one step");
-    // A folder's elements save as an asset flat.
-    for e in h.redo().unwrap().to_vec().iter() {
-        doc.apply(e, true);
-    }
-    let again = doc.asset_of_elements(&placed.ids, "Again").unwrap();
-    assert!(again.pieces.iter().all(|p| p.element.folder.is_none()));
-}
-
 /// The editor copies a folder whose elements are all selected, and selects
 /// the pasted folder.
 #[test]
@@ -553,16 +528,6 @@ fn group_and_ungroup_the_selection_with_undo() {
     assert_eq!(s.active_document().unwrap().folder_members(&f), ids(&["tiny", "badge"]));
     run(&mut s, A::Redo);
     assert!(s.active_document().unwrap().folders().is_empty());
-}
-
-#[test]
-fn placing_a_two_piece_asset_selects_its_folder() {
-    let Some(root) = content() else { return };
-    let (_tmp, mut s) = crate::common::ground(&root);
-    let asset = s.active_document().unwrap().asset_of_elements(&ids(&["tiny", "gradient"]), "Pair").unwrap();
-    run(&mut s, A::AssetRead { at: (10, 10), asset: Ok(Box::new(asset)) });
-    let Selection::Folder(f) = s.selection().clone() else { panic!("its folder selected") };
-    assert_eq!(folder(s.active_document().unwrap(), &f).name, "Pair");
 }
 
 /// The tools that need one element, with a folder selected, refuse as with

@@ -8,10 +8,13 @@
 
 use egui::Ui;
 use olr_edit::element::Property;
-use olr_format::levels::{Dither, ElementKind, ElementMaterial, LevelObject, MAX_PIXEL_SIZE, MAX_SIDE};
+use olr_format::levels::{
+    AssetOrigin, Dither, ElementKind, ElementMaterial, LevelObject, MAX_COPY_AT, MAX_PIXEL_SIZE, MAX_SIDE,
+};
 
 use super::{EditorData, labels, number, slider, slider_shown, text};
 use crate::folder_ops::FolderField;
+use crate::level_tab::CopyChange;
 use crate::state::{EditorAction, EditorState, Selection};
 use olr_data::level::{MAX_DEPTH, MIN_DEPTH};
 use olr_format::levels::{Element, ElementGlass, MAX_GLASS_FROST};
@@ -39,7 +42,17 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
         Selection::Element(id) => element(ui, state, data, id, out),
         Selection::Folder(id) => folder(ui, state, data, id, out),
         Selection::Many(_) => group(ui, state, out),
-        Selection::Copy(_) => ground(ui, state, out),
+        Selection::Copy(id) if state.document().is_some_and(|d| d.is_ground_copy(id)) => {
+            ground(ui, state, out)
+        }
+        Selection::Copy(id) => copy(ui, state, data, id, out),
+        Selection::Copies(ids) => {
+            ui.heading(format!("{} copies", ids.len()));
+            ui.label("drag to move them, the arrows nudge, Ctrl+D duplicates");
+            if ui.button("Delete").on_hover_text("Delete").clicked() {
+                out.push(EditorAction::Remove);
+            }
+        }
         Selection::None => {}
     }
 }
@@ -56,6 +69,61 @@ fn ground(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
         .on_hover_text("paint its layers in the asset tab (or double-click it)");
     if r.clicked() {
         out.push(EditorAction::EditGround);
+    }
+}
+
+/// A copy's panel (issue #82): its asset's name and its id, Position X
+/// and Y, Width and Height, Keep aspect, Locked, and the button opening
+/// its asset (Edit in level for the level's own, Edit library asset for a
+/// library copy; a double click on it does the same).
+fn copy(ui: &mut Ui, state: &EditorState, data: &mut EditorData, id: &str, out: &mut Vec<EditorAction>) {
+    let Some(doc) = state.document() else { return };
+    let (Some(c), Some(b)) = (doc.placed_copy(id), doc.copy_box(id)) else { return };
+    let set = |out: &mut Vec<EditorAction>, change: CopyChange| {
+        out.push(EditorAction::SetCopy { id: id.to_string(), change })
+    };
+    ui.heading(doc.copy_name(id).unwrap_or_default());
+    ui.weak(id);
+    ui.label(egui::RichText::new(labels::POSITION).strong());
+    let coord = -i64::from(MAX_COPY_AT)..=i64::from(MAX_COPY_AT);
+    let x = number(ui, data, &format!("copy/{id}/x"), "X", b.0.0.into(), coord.clone());
+    let y = number(ui, data, &format!("copy/{id}/y"), "Y", b.0.1.into(), coord);
+    if x.is_some() || y.is_some() {
+        set(out, CopyChange::At((x.map_or(b.0.0, |v| v as i32), y.map_or(b.0.1, |v| v as i32))));
+    }
+    let side = 1..=i64::from(MAX_SIDE);
+    if let Some(w) = number(ui, data, &format!("copy/{id}/w"), labels::WIDTH, b.1.0.into(), side.clone()) {
+        set(out, CopyChange::Width(w as u32));
+    }
+    if let Some(h) = number(ui, data, &format!("copy/{id}/h"), labels::HEIGHT, b.1.1.into(), side) {
+        set(out, CopyChange::Height(h as u32));
+    }
+    if let Some(n) = doc.natural_size(id) {
+        ui.weak(crate::level_tab::size_note(b.1, n));
+    }
+    let mut keep = !c.free_aspect;
+    if ui
+        .checkbox(&mut keep, labels::KEEP_ASPECT)
+        .on_hover_text("its height follows its width as the asset's (on: the height snaps to it)")
+        .changed()
+    {
+        set(out, CopyChange::KeepAspect(keep));
+    }
+    let mut locked = c.locked;
+    if ui.checkbox(&mut locked, labels::LOCKED).changed() {
+        set(out, CopyChange::Locked(locked));
+    }
+    let (label, hint) = match doc.copy_origin(id) {
+        Some(AssetOrigin::Own) => {
+            (labels::EDIT_IN_LEVEL, "edit the level's own asset in the asset tab (or double-click it)")
+        }
+        _ => (labels::EDIT_LIBRARY_COPY, "open its library asset in the asset tab (or double-click it)"),
+    };
+    if ui.button(label).on_hover_text(hint).clicked() {
+        out.push(EditorAction::EditCopy(id.to_string()));
+    }
+    if ui.button("Delete").on_hover_text("Delete").clicked() {
+        out.push(EditorAction::Remove);
     }
 }
 

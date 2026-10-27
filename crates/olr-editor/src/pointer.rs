@@ -20,7 +20,7 @@ use crate::tools::{BrushShape, Overlay, PaintChoice, PointerKind, Tool};
 const SPAWN_REACH: i64 = 3;
 
 /// A handle is grabbed within this many screen points.
-const HANDLE_REACH: f32 = 5.0;
+pub(crate) const HANDLE_REACH: f32 = 5.0;
 
 /// The pointer drag in progress.
 #[derive(Clone, Debug)]
@@ -59,6 +59,24 @@ pub(crate) enum Drag {
     /// Haze brush dabs on the level's haze map; `before` is the map as the
     /// stroke began and `rect` what it touched.
     Haze { before: Box<crate::look_ops::HazeStrokeStart>, last: (i32, i32), rect: Rect },
+    /// The selected copies follow the pointer, live (issue #82); `before`
+    /// is the placement's file as the drag began, `starts` each copy's
+    /// place then.
+    MoveCopies { before: crate::level_tab::FileBox, starts: Vec<(String, (i32, i32))>, from: (i32, i32) },
+    /// A copy's handle, pressed at `from`, drags an outline from box
+    /// `start` (its asset `natural` in size); the copy resizes on release
+    /// to `now` (issue #82).
+    ResizeCopy {
+        id: String,
+        handle: (u8, u8),
+        from: (i32, i32),
+        start: crate::level_tab::CopyBox,
+        natural: (u32, u32),
+        free: bool,
+        now: (crate::level_tab::CopyBox, olr_edit::placed::Size),
+    },
+    /// A press on a locked copy: a drag only says so (issue #82).
+    LockedCopy { id: String },
 }
 
 fn add(a: i32, b: i64) -> i32 {
@@ -517,8 +535,8 @@ impl EditorState {
 
     fn press(&mut self, world: (i32, i32), toggle: bool, deep: bool) -> Vec<EditorCommand> {
         match self.tool {
-            // Issue #81: the level tab selects its copies: the ground.
-            Tool::Select if self.in_place == DocTab::Level => self.select_copy(world),
+            // Issue #82: the level tab selects and drags its copies.
+            Tool::Select if self.in_place == DocTab::Level => self.level_press(world, toggle),
             Tool::Select if deep => self.select_down(world, true),
             Tool::Select if toggle => {
                 // Ctrl+click: what a plain click would pick in or out of the
@@ -731,30 +749,6 @@ impl EditorState {
         }
     }
 
-    /// The level tab's Select press (issue #81): a spawn, else the ground
-    /// on any pixel of the level (locked: it never drags), else nothing.
-    fn select_copy(&mut self, world: (i32, i32)) -> Vec<EditorCommand> {
-        if self.press_spawn(world) {
-            return Vec::new();
-        }
-        self.focus = None;
-        self.selection = match self.ground_at(world) {
-            true => Selection::Copy(crate::ground::GROUND_COPY.into()),
-            false => Selection::None,
-        };
-        Vec::new()
-    }
-
-    /// Whether world pixel `world` is on the ground: in the level, with no
-    /// spawn under it (issue #81).
-    pub(crate) fn ground_at(&self, world: (i32, i32)) -> bool {
-        let Some(doc) = &self.doc else { return false };
-        let (w, h) = doc.level().size;
-        let inside = (0..i64::from(w)).contains(&i64::from(world.0))
-            && (0..i64::from(h)).contains(&i64::from(world.1));
-        inside && self.spawn_at(world).is_none()
-    }
-
     /// The spawn under world pixel `world`, by index.
     fn spawn_at(&self, world: (i32, i32)) -> Option<usize> {
         let doc = self.doc.as_ref()?;
@@ -767,7 +761,7 @@ impl EditorState {
     }
 
     /// A press on a spawn selects it and drags it; whether there was one.
-    fn press_spawn(&mut self, world: (i32, i32)) -> bool {
+    pub(crate) fn press_spawn(&mut self, world: (i32, i32)) -> bool {
         let (Some(index), Some(doc)) = (self.spawn_at(world), self.doc.as_ref()) else { return false };
         let grab = sub(world, doc.level().objects[index].at());
         self.selection = Selection::Object(index);
@@ -893,6 +887,9 @@ impl EditorState {
     fn drag_to(&mut self, world: (i32, i32), shift: bool) -> Vec<EditorCommand> {
         let Some(drag) = self.drag.clone() else { return Vec::new() };
         match drag {
+            Drag::MoveCopies { .. } | Drag::ResizeCopy { .. } | Drag::LockedCopy { .. } => {
+                self.copy_drag(drag, world, shift)
+            }
             Drag::MoveMany { befores, from } => {
                 let Some(doc) = self.doc.as_mut() else { return Vec::new() };
                 let level = doc.level().size;
@@ -1035,6 +1032,9 @@ impl EditorState {
         };
         let Some(doc) = self.doc.as_mut() else { return Vec::new() };
         match drag {
+            Drag::MoveCopies { .. } | Drag::ResizeCopy { .. } | Drag::LockedCopy { .. } => {
+                self.copy_release(drag)
+            }
             Drag::Pixels { id, start, now } => {
                 // The rectangle within the layer's box and the level (plan
                 // 14e minors): what a copy takes is what shows.
@@ -1186,6 +1186,9 @@ impl EditorState {
     /// Moves the selected image's or drawn layer's box by `(dx, dy)`, or
     /// each of a group's or a folder's (plan 14e R8, issue #61): one step.
     pub(crate) fn nudge(&mut self, dx: i32, dy: i32) -> Vec<EditorCommand> {
+        if let Selection::Copy(_) | Selection::Copies(_) = self.selection {
+            return self.nudge_copies(dx, dy);
+        }
         if let Selection::Many(_) | Selection::Folder(_) = self.selection {
             let ids = self.selected_elements();
             return self.group_edit(|d| d.move_many(&ids, (dx, dy)));
@@ -1216,11 +1219,11 @@ impl EditorState {
             }
             _ => (0, 0),
         };
-        // Issue #81: the level tab shows the ground as one copy: its box
-        // when selected, without handles (it is locked).
+        // Issue #82: the level tab shows its selected copies' boxes and
+        // handles.
         let level_tab = self.in_place == DocTab::Level;
-        if level_tab && matches!(self.selection, Selection::Copy(_)) {
-            out.push(Overlay::Box { rect: doc.all(), selected: true, locked: true });
+        if level_tab {
+            self.copy_overlays(&mut out);
         }
         for (i, item) in doc.items().iter().enumerate().filter(|_| !level_tab) {
             let e = &item.element;

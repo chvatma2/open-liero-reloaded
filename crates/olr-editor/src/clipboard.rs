@@ -24,4 +24,7 @@ pub enum Clipboard {
     /// Level objects (spawns, lights; the user's request 2026-10-19),
     /// pasted at their places plus `offset`.
     Objects { objects: Vec<LevelObject>, offset: (i32, i32) },
+    /// The level tab's copies, by id (issue #82): a paste duplicates them
+    /// `offset` further (`level_tab::COPY_PASTE_STEP` more each paste).
+    Copies { ids: Vec<String>, offset: (i32, i32) },
 }

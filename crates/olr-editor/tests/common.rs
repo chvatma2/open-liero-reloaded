@@ -198,10 +198,10 @@ pub fn run(
                 EditorCommand::ReadAsset { key, at } => {
                     let lib = LIBRARY.with(|l| l.borrow().clone()).expect("a library");
                     let dir = if key.builtin { lib.0 } else { lib.1 };
-                    let asset = olr_edit::asset::load_dir(&dir.join(&key.id))
+                    let asset = olr_edit::asset::read_dir(&dir.join(&key.id))
                         .map(Box::new)
                         .map_err(|e| e.to_string());
-                    queue.push_back(EditorAction::AssetRead { at: *at, asset });
+                    queue.push_back(EditorAction::AssetRead { key: key.clone(), at: *at, asset });
                 }
                 EditorCommand::ReadAssetToEdit(key) => {
                     let lib = LIBRARY.with(|l| l.borrow().clone()).expect("a library");

@@ -15,9 +15,8 @@ use olr_editor::ui::{self, EditorData, labels};
 use olr_editor::{
     AssetKey, Choice, Dialog, EditorAction as A, EditorCommand as C, EditorState, PanelTab, Selection,
 };
-use olr_format::look::{GlowGroupSource, LookSource, ReachSource};
 
-use crate::common::{built_in_assets, content, editor, open_fixture, run, set_library};
+use crate::common::{built_in_assets, content, editor, run, set_library};
 
 /// The fixture open, with an empty library of yours (in the temporary
 /// directory) beside the built-in assets.
@@ -49,11 +48,6 @@ fn drag(s: &mut EditorState, from: (i32, i32), to: (i32, i32)) {
     for (kind, world) in [(PointerKind::Down, from), (PointerKind::Move, to), (PointerKind::Up, to)] {
         run(s, A::Pointer { kind, world, shift: false, toggle: false });
     }
-}
-
-fn top_ids(s: &EditorState, n: usize) -> Vec<String> {
-    let items = s.active_document().unwrap().items();
-    items[items.len() - n..].iter().map(|i| i.element.id.clone()).collect()
 }
 
 #[test]
@@ -136,125 +130,47 @@ fn a_pixel_rectangle_saves_its_world_rectangle_of_every_visible_layer() {
     assert!(a.pieces.iter().all(|p| p.element.id != "tunnels"));
 }
 
+/// Issue #82: placing adds a copy of the asset, selected, in one step; the
+/// level's look gathers the asset's groups and materials.
 #[test]
-fn placing_is_one_step_that_selects_the_new_elements_and_adds_lighting() {
-    let Some((_tmp, mut s)) = with_ground_library() else { return };
-    let before = s.active_document().unwrap().items().len();
-    assert_eq!(s.active_document().unwrap().level().look, None);
+fn placing_is_one_step_that_selects_the_new_copy_and_adds_lighting() {
+    let Some((_tmp, mut s)) = with_library() else { return };
+    let doc = s.active_document().unwrap();
+    let (items, copies) = (doc.items().len(), doc.copies().len());
+    assert_eq!(doc.level().look, None);
     run(&mut s, A::PickAsset(Some(built_in("control-desk"))));
     assert!(s.placing());
     let cmds = run(&mut s, A::PlaceAsset { key: built_in("control-desk"), at: (100, 120) });
     assert!(cmds.iter().any(|c| matches!(c, C::ReadAsset { .. })), "{cmds:?}");
     assert!(!s.placing(), "placed once");
     let doc = s.active_document().unwrap();
-    assert_eq!(doc.items().len(), before + 3);
-    let ids = top_ids(&s, 3);
-    assert_eq!(ids, ["control-desk-background", "control-desk-screens", "control-desk-displays"]);
-    // Its folder is selected (issue #61).
-    let Selection::Folder(f) = s.selection().clone() else { panic!("the folder selected") };
-    assert_eq!(doc.folder_members(&f), ids);
+    assert_eq!(doc.items().len(), items, "the ground keeps its layers");
+    assert_eq!(doc.copies().len(), copies + 1);
+    let Selection::Copy(id) = s.selection().clone() else { panic!("the copy selected") };
+    assert_eq!(doc.copies().last().unwrap().id, id, "on top");
+    assert_eq!(doc.copy_origin(&id), Some(olr_format::levels::AssetOrigin::Builtin("control-desk".into())));
     assert_eq!(s.tab(), PanelTab::Elements);
     // The level had no look: the default one with the asset's groups.
-    let look = doc.level().look.clone().expect("a look");
+    let look = doc.placed_look().cloned().flatten().expect("a look");
     let groups: Vec<&str> = look.glow_groups.iter().map(|g| g.id.as_str()).collect();
-    assert_eq!(groups, ["screens", "displays"]);
+    assert!(
+        groups.iter().any(|g| g.ends_with("screens")) && groups.iter().any(|g| g.ends_with("displays")),
+        "{groups:?}"
+    );
     // And its surface materials (issue #46: the factory's).
     let materials: Vec<&str> = look.materials.iter().map(|m| m.id.as_str()).collect();
     assert_eq!(materials, ["concrete", "metal", "glass"]);
-    assert_eq!(
-        LookSource { glow_groups: Vec::new(), materials: Vec::new(), ..look.clone() },
-        LookSource::default()
-    );
     assert_eq!(s.status().message.as_deref(), Some(olr_editor::asset_ops::ADDED_LIGHTING));
-    // Placed where asked: the desk's box starts at the point.
-    let at = |id: &str| {
-        let d = s.active_document().unwrap();
-        olr_format::levels::element_box(&d.items()[d.index_of(id).unwrap()].element.kind, d.level().size)
-            .unwrap()
-            .0
-    };
-    assert_eq!(at("control-desk-background"), (100, 120));
-    // One undo takes the elements and the look away together.
+    // Placed where asked: the copy's box starts at the point.
+    assert_eq!(doc.copy_box(&id).unwrap().0, (100, 120));
+    // One undo takes the copy and its asset away together.
     run(&mut s, A::Undo);
-    assert_eq!(s.active_document().unwrap().items().len(), before);
-    assert_eq!(s.active_document().unwrap().level().look, None);
+    let doc = s.active_document().unwrap();
+    assert_eq!(doc.copies().len(), copies);
+    assert!(doc.placement().is_none_or(|p| !p.assets.contains_key("control-desk")));
+    assert_eq!(*s.selection(), Selection::None);
     run(&mut s, A::Redo);
-    assert_eq!(s.active_document().unwrap().items().len(), before + 3);
-}
-
-#[test]
-fn placing_joins_a_group_the_level_has_and_adds_one_it_lacks() {
-    let Some(root) = content() else { return };
-    let (_tmp, mut doc) = open_fixture(&root);
-    let mine = GlowGroupSource {
-        id: "screens".into(),
-        colour: Default::default(),
-        intensity: 42,
-        reach: ReachSource::Pixels(7),
-        animation: Default::default(),
-        phase_ms: None,
-    };
-    let look = LookSource { glow_groups: vec![mine.clone()], ..LookSource::default() };
-    doc.set_look(Some(look)).unwrap();
-    let desk = olr_edit::asset::load_dir(&built_in_assets().join("control-desk")).unwrap();
-    let placed = doc.place_asset(&desk, (0, 0)).unwrap();
-    assert_eq!(placed.note, None, "the level has a look");
-    let groups = &doc.level().look.as_ref().unwrap().glow_groups;
-    // Its own `screens` kept as it was; `displays` with the asset's settings,
-    // not a new group's defaults.
-    assert_eq!(groups[0], mine);
-    assert_eq!(groups[1], desk.groups.iter().find(|g| g.id == "displays").unwrap().clone());
-    assert_eq!(groups.len(), 2);
-}
-
-fn material(id: &str, name: &str) -> olr_format::materials::MaterialSource {
-    olr_format::materials::MaterialSource {
-        light_soak: None,
-        id: id.into(),
-        name: name.into(),
-        notes: String::new(),
-        heat: None,
-    }
-}
-
-/// Issue #38: placing joins the asset's materials by id (the level's
-/// settings kept) or adds them; its elements keep their surfaces and their
-/// painted maps follow the level's numbering; one undo takes it all back.
-#[test]
-fn placing_joins_or_adds_materials_and_lands_painted_maps() {
-    let Some(root) = content() else { return };
-    let (_tmp, mut doc) = open_fixture(&root);
-    let look = LookSource { materials: vec![material("wood", "Oak")], ..LookSource::default() };
-    doc.set_look(Some(look)).unwrap();
-    let before = doc.to_pack();
-    let mut desk = olr_edit::asset::load_dir(&built_in_assets().join("control-desk")).unwrap();
-    desk.materials = vec![material("metal", "Metal"), material("wood", "Wood")];
-    let piece = &mut desk.pieces[0];
-    piece.element.surface = Some("metal".into());
-    piece.element.surface_map = true;
-    let (w, h) = olr_format::levels::surface_map_size(&piece.element.kind, desk.size);
-    let mut map = vec![0u8; (w * h) as usize];
-    map[0] = 2;
-    piece.surface_map = Some(std::sync::Arc::new(map));
-    let placed = doc.place_asset(&desk, (0, 0)).unwrap();
-    let materials = &doc.level().look.as_ref().unwrap().materials;
-    assert_eq!(materials, &vec![material("wood", "Oak"), material("metal", "Metal")]);
-    let id = &placed.ids[0];
-    let e = &doc.items().iter().find(|i| i.element.id == *id).unwrap().element;
-    assert_eq!((e.surface.as_deref(), e.surface_map), (Some("metal"), true));
-    let pack = doc.to_pack();
-    let file = olr_format::levels::surface_file(id);
-    let values = olr_format::image_io::decode_grey_within(
-        &pack.composition.as_ref().unwrap().files[&file],
-        olr_format::image_io::IMAGES,
-    )
-    .unwrap()
-    .2;
-    assert_eq!((values[0], values[1]), (1, 0), "wood is the level's first");
-    for edit in placed.edits.iter().rev() {
-        doc.apply(edit, false);
-    }
-    assert_eq!(doc.to_pack(), before);
+    assert_eq!(s.active_document().unwrap().copies().len(), copies + 1);
 }
 
 #[test]
@@ -318,7 +234,7 @@ fn save_and_place_through_the_panels() {
     h.get_by_label(labels::SAVE).click();
     h.run();
     assert!(tmp.path().join("yours/tunnels-pit/asset.ron").is_file());
-    // Issue #81: the level tab places it (into the ground, for now).
+    // The level tab places it (issue #82: as a copy).
     h.get_by_label(labels::LEVEL_TAB).click();
     h.run();
     h.get_by_label(labels::ASSETS).click();
@@ -329,7 +245,7 @@ fn save_and_place_through_the_panels() {
     h.get_by_label(labels::BUILT_IN);
     h.get_by_role_and_label(Role::Button, "Torch");
     // Picked, then a press on the canvas places it there.
-    let before = h.state().state.document().unwrap().items().len();
+    let before = h.state().state.document().unwrap().copies().len();
     h.get_by_role_and_label(Role::Button, "Tunnels pit").click();
     h.run();
     assert!(h.state().state.placing());
@@ -344,9 +260,10 @@ fn save_and_place_through_the_panels() {
         h.run();
     }
     let s = &h.state().state;
-    assert_eq!(s.document().unwrap().items().len(), before + 1);
-    // Issue #81: the level tab selects the ground it landed in.
-    assert_eq!(s.selection(), &Selection::Copy(olr_editor::ground::GROUND_COPY.into()));
-    assert_eq!(top_ids(s, 1), ["tunnels-pit"]);
+    // Issue #82: a copy of it on top, selected.
+    let doc = s.document().unwrap();
+    assert_eq!(doc.copies().len(), before + 1, "{:?}", s.status().message);
+    let Selection::Copy(id) = s.selection().clone() else { panic!("the copy selected") };
+    assert_eq!(doc.copy_origin(&id), Some(olr_format::levels::AssetOrigin::Yours("tunnels-pit".into())));
     assert!(!s.placing());
 }

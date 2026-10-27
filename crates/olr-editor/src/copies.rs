@@ -102,7 +102,8 @@ pub(crate) fn covers(e: &Element, d: &Decoded, level: (u32, u32), s: u32, p: (i3
         }
         (ElementKind::Drawn { .. }, Decoded::Drawn { art, back, .. }) => {
             let Some((at, size)) = drawn_box(&e.kind, level) else { return false };
-            local(at, size).is_some_and(|l| opaque(art, l, 1) || back.as_ref().is_some_and(|b| opaque(b, l, 1)))
+            local(at, size)
+                .is_some_and(|l| opaque(art, l, 1) || back.as_ref().is_some_and(|b| opaque(b, l, 1)))
         }
         (ElementKind::Raster, Decoded::Raster { front, back, .. }) => {
             local((0, 0), level).is_some_and(|l| opaque(front, l, 1) || opaque(back, l, 1))
@@ -110,6 +111,13 @@ pub(crate) fn covers(e: &Element, d: &Decoded, level: (u32, u32), s: u32, p: (i3
         _ => false,
     }
 }
+
+/// A flattened piece of the bake: its element, decoded art and opacity.
+type Flat<'a> = (Element, &'a Decoded, u8);
+
+/// A copy's piece as the bake takes it: its element, art, glow mask,
+/// surface maps (front, back) and opacity.
+type BakePiece<'a> = (Element, &'a Decoded, Option<&'a Arc<Vec<u8>>>, [Option<Arc<Vec<u8>>>; 2], u8);
 
 impl Document {
     /// The level's placement (issue #82): `None` for a plain level until a
@@ -202,20 +210,27 @@ impl Document {
                     element: e.clone(),
                     decoded: i.decoded.clone(),
                     original: None,
-                    glow_mask: self.glow_masks.get(&e.id).filter(|_| e.glow.as_ref().is_some_and(|g| g.mask)).cloned(),
+                    glow_mask: self
+                        .glow_masks
+                        .get(&e.id)
+                        .filter(|_| e.glow.as_ref().is_some_and(|g| g.mask))
+                        .cloned(),
                     surface_map: map(surface_file(&e.id), e.surface_map),
                     back_surface_map: map(surface_back_file(&e.id), e.back_surface_map),
                 }
             })
             .collect();
         let (groups, materials) = self.own_look_parts();
-        let mut a = Asset::new(&self.ground_name(), self.level.art_scale, self.level.size, pieces, groups, materials);
+        let mut a =
+            Asset::new(&self.ground_name(), self.level.art_scale, self.level.size, pieces, groups, materials);
         a.folders = self.folders.clone();
         a
     }
 
     /// The level's own look's glow groups and materials (the ground's).
-    fn own_look_parts(&self) -> (Vec<olr_format::look::GlowGroupSource>, Vec<olr_format::materials::MaterialSource>) {
+    fn own_look_parts(
+        &self,
+    ) -> (Vec<olr_format::look::GlowGroupSource>, Vec<olr_format::materials::MaterialSource>) {
         self.level.look.as_ref().map(|l| (l.glow_groups.clone(), l.materials.clone())).unwrap_or_default()
     }
 
@@ -248,8 +263,10 @@ impl Document {
         {
             return Ok(Some(laid.clone()));
         }
-        let asset = if c.asset == GROUND_KEY { Arc::new(self.ground_asset()) } else { self.decoded_asset(&c.asset)? };
-        let laid = Arc::new(lay_copy(c, &asset, self.level.art_scale).map_err(|e| DocError::Bad(e.to_string()))?);
+        let asset =
+            if c.asset == GROUND_KEY { Arc::new(self.ground_asset()) } else { self.decoded_asset(&c.asset)? };
+        let laid =
+            Arc::new(lay_copy(c, &asset, self.level.art_scale).map_err(|e| DocError::Bad(e.to_string()))?);
         self.copy_cache.laid.insert(c.id.clone(), (key, generation, laid.clone()));
         Ok(Some(laid))
     }
@@ -295,9 +312,12 @@ impl Document {
         let copies = self.copies();
         let covered = copies.iter().rev().find(|c| {
             if self.plain_ground(c) || self.placed.is_none() {
-                return self.items.iter().enumerate().rev().any(|(i, it)| {
-                    self.shown_at(i) && covers(&it.element, &it.decoded, level, s, p)
-                });
+                return self
+                    .items
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .any(|(i, it)| self.shown_at(i) && covers(&it.element, &it.decoded, level, s, p));
             }
             let Some((_, _, l)) = self.copy_cache.laid.get(&c.id) else { return false };
             l.pieces.iter().any(|piece| covers(&piece.element, &piece.decoded, level, s, p))
@@ -351,21 +371,23 @@ impl Document {
                 None => None,
             })
             .collect();
-        let gathered = (own.is_some() || !groups.is_empty() || !materials.is_empty())
-            .then(|| LookSource { glow_groups: groups, materials, ..own.clone().unwrap_or_default() });
+        let gathered = (own.is_some() || !groups.is_empty() || !materials.is_empty()).then(|| LookSource {
+            glow_groups: groups,
+            materials,
+            ..own.clone().unwrap_or_default()
+        });
         let (size, s) = (self.level.size, self.level.art_scale);
         let all = Rect { x: 0, y: 0, w: size.0, h: size.1 };
         let key = look_ids(gathered.as_ref());
         let mut rect = if self.copy_cache.baked_ids.as_ref() != Some(&key) { all } else { rect };
         // The flattened pieces, their masks and maps by their ids.
         let view = self.folder_view();
-        let (mut distant, mut near): (Vec<(Element, &Decoded, u8)>, Vec<(Element, &Decoded, u8)>) =
-            (Vec::new(), Vec::new());
+        let (mut distant, mut near): (Vec<Flat>, Vec<Flat>) = (Vec::new(), Vec::new());
         let mut masks = GlowMasks::new();
         let mut surfaces = PaintedSurfaces::new();
         for ((c, l), ids) in copies.iter().zip(&laid).zip(&ids) {
             let Some(ids) = ids else { continue };
-            let pieces: Vec<(Element, &Decoded, Option<&Arc<Vec<u8>>>, [Option<Arc<Vec<u8>>>; 2], u8)> = match l {
+            let pieces: Vec<BakePiece> = match l {
                 Some(l) => l
                     .pieces
                     .iter()
@@ -413,7 +435,15 @@ impl Document {
         let whole = rect.x == 0 && rect.y == 0 && rect.w >= size.0 && rect.h >= size.1;
         let holes_before = if whole { 0 } else { crate::document::holes(&self.level.back, rect, s) };
         let own_look = std::mem::replace(&mut self.level.look, gathered.clone());
-        bake_elements_with_opacity(&mut self.level, &items, &opacity, &masks, &surfaces, &self.back_tile, rect);
+        bake_elements_with_opacity(
+            &mut self.level,
+            &items,
+            &opacity,
+            &masks,
+            &surfaces,
+            &self.back_tile,
+            rect,
+        );
         let distant = items.iter().filter(|(e, _)| e.distant.is_some()).copied();
         let dmasks = distant.clone().map(|(e, _)| masks.get(&e.id));
         let same_masks = dmasks.clone().eq(self.distant_masks.iter().map(Option::as_ref));
@@ -425,7 +455,8 @@ impl Document {
                 bake_distant(&mut self.level, &items, &masks);
             }
             self.distant_masks = dmasks.map(|m| m.cloned()).collect();
-            self.distant_items = distant.map(|(e, d)| Item { element: e.clone(), decoded: d.clone() }).collect();
+            self.distant_items =
+                distant.map(|(e, d)| Item { element: e.clone(), decoded: d.clone() }).collect();
             self.distant_generation += 1;
         }
         self.level.look = own_look;
@@ -470,14 +501,42 @@ impl Document {
     /// materials, no layers): what the copy operations check cheaply.
     fn light_placement(&self) -> PlacedSource {
         let (groups, materials) = self.own_look_parts();
+        // One clear world pixel stands in for the layers: an asset holds
+        // one element at least (`check_own_asset`).
+        let s = self.level.art_scale.max(1);
+        let stand_in = olr_format::levels::Element {
+            id: "stand-in".into(),
+            name: String::new(),
+            visible: true,
+            locked: false,
+            folder: None,
+            kind: olr_format::levels::ElementKind::Drawn {
+                material: olr_format::levels::ElementMaterial::Background,
+                at: (0, 0),
+                size: Some((1, 1)),
+                mixed: false,
+                back: false,
+            },
+            glow: None,
+            clear: false,
+            glass: None,
+            distant: None,
+            surface: None,
+            back_surface: None,
+            surface_map: false,
+            back_surface_map: false,
+        };
+        let art = olr_format::image_io::encode_rgba(&olr_data::image::RgbaImage::new(s, s));
         let light = |a: &AssetSource| {
-            let mut file = AssetFile::new(&a.file.name, self.level.size, Vec::new());
+            let mut file = AssetFile::new(&a.file.name, self.level.size, vec![stand_in.clone()]);
             file.art_scale = self.level.art_scale;
             file.glow_groups = groups.clone();
             file.materials = materials.clone();
-            AssetSource::new(file, BTreeMap::new())
+            let files = BTreeMap::from([("layers/stand-in.png".to_string(), art.clone())]);
+            AssetSource::new(file, files)
         };
-        let ground = AssetSource::new(AssetFile::new(GROUND_NAME, self.level.size, Vec::new()), BTreeMap::new());
+        let ground =
+            AssetSource::new(AssetFile::new(GROUND_NAME, self.level.size, Vec::new()), BTreeMap::new());
         match &self.placed {
             Some(p) => PlacedSource {
                 file: p.file.clone(),
@@ -535,22 +594,6 @@ impl Document {
         Ok((out, placement_edit(&before, &after)))
     }
 
-    /// The placement as a step's side: its file and scripts, every asset
-    /// but the ground (`set_placement` keeps those listed).
-    pub(crate) fn placement_snap(&self) -> PlacementSnap {
-        let p = self.placement_or_ground();
-        PlacementSnap {
-            file: p.file,
-            scripts: p.scripts,
-            assets: p
-                .assets
-                .into_iter()
-                .filter(|(k, _)| k != GROUND_KEY)
-                .map(|(k, a)| (k, Arc::new(a)))
-                .collect(),
-        }
-    }
-
     /// Makes the placement `to` (an `Edit::Placement`'s side): its file and
     /// scripts, the assets it lists (those it carries put in, those it no
     /// longer lists taken out; the ground's kept). Returns the rectangle
@@ -606,7 +649,9 @@ impl Document {
         for k in &changed_keys {
             self.copy_cache.decoded.remove(k);
         }
-        self.copy_cache.laid.retain(|id, (c, _, _)| !changed_keys.contains(&c.asset) && to.file.copies.iter().any(|x| x.id == *id));
+        self.copy_cache.laid.retain(|id, (c, _, _)| {
+            !changed_keys.contains(&c.asset) && to.file.copies.iter().any(|x| x.id == *id)
+        });
         for c in to.file.copies.clone().iter().filter(|c| changed.contains(&c.id)) {
             let r = self.extent(c);
             add(&mut dirty, r);
@@ -663,7 +708,11 @@ impl Document {
     }
 
     /// Sets one of copy `id`'s settings (`set_copy`): one step.
-    pub fn set_copy(&mut self, id: &str, property: olr_edit::placed::CopyProperty) -> Result<Change, DocError> {
+    pub fn set_copy(
+        &mut self,
+        id: &str,
+        property: olr_edit::placed::CopyProperty,
+    ) -> Result<Change, DocError> {
         self.not_ground(&[id.to_string()])?;
         let ((), edit) = self.placement_op(|pack| olr_edit::placed::set_copy(pack, id, property))?;
         Ok(self.change(edit))
@@ -671,7 +720,10 @@ impl Document {
 
     /// Removes copies `ids` (`remove_copy` each; an asset no copy uses
     /// goes with it): one step; what each took.
-    pub fn remove_copies(&mut self, ids: &[String]) -> Result<(Change, Vec<olr_edit::placed::Removed>), DocError> {
+    pub fn remove_copies(
+        &mut self,
+        ids: &[String],
+    ) -> Result<(Change, Vec<olr_edit::placed::Removed>), DocError> {
         self.not_ground(ids)?;
         let (removed, edit) = self.placement_op(|pack| {
             ids.iter().map(|id| olr_edit::placed::remove_copy(pack, id)).collect::<Result<Vec<_>, _>>()
@@ -681,10 +733,16 @@ impl Document {
 
     /// Duplicates copies `ids` `offset` further (`duplicate_copy` each),
     /// each directly above its own: one step; the new ids.
-    pub fn duplicate_copies(&mut self, ids: &[String], offset: (i32, i32)) -> Result<(Change, Vec<String>), DocError> {
+    pub fn duplicate_copies(
+        &mut self,
+        ids: &[String],
+        offset: (i32, i32),
+    ) -> Result<(Change, Vec<String>), DocError> {
         self.not_ground(ids)?;
         let (new, edit) = self.placement_op(|pack| {
-            ids.iter().map(|id| olr_edit::placed::duplicate_copy(pack, id, offset)).collect::<Result<Vec<_>, _>>()
+            ids.iter()
+                .map(|id| olr_edit::placed::duplicate_copy(pack, id, offset))
+                .collect::<Result<Vec<_>, _>>()
         })?;
         Ok((self.change(edit), new))
     }
@@ -750,6 +808,41 @@ impl Document {
         dirty
     }
 
+    /// The level's own asset `key` (issue #82: Edit in level), not the
+    /// ground's (its layers are the items).
+    pub fn own_asset(&self, key: &str) -> Option<&AssetSource> {
+        let p = self.placed.as_ref()?;
+        let own = p.file.assets.iter().any(|a| a.key == key && a.origin == AssetOrigin::Own);
+        p.assets.get(key).filter(|_| own && key != GROUND_KEY)
+    }
+
+    /// The level's own asset `key` made `source` (edited in the asset tab):
+    /// one step.
+    pub(crate) fn set_own_asset(&mut self, key: &str, source: AssetSource) -> Result<Change, DocError> {
+        if self.own_asset(key).is_none() {
+            return Err(DocError::Bad(format!("the level has no asset {key:?} of its own")));
+        }
+        let ((), edit) = self.placement_op(|pack| {
+            if let Some(p) = pack.placed.as_mut() {
+                p.assets.insert(key.to_string(), source);
+            }
+            Ok(())
+        })?;
+        Ok(self.change(edit))
+    }
+
+    /// The placement's file made `after` (its copies moved together, a
+    /// level resize's): one step.
+    pub(crate) fn file_change(&mut self, after: PlacedFile) -> Result<Change, DocError> {
+        let ((), edit) = self.placement_op(|pack| {
+            if let Some(p) = pack.placed.as_mut() {
+                p.file = after;
+            }
+            Ok(())
+        })?;
+        Ok(self.change(edit))
+    }
+
     /// The placement's file (a drag's start).
     pub(crate) fn placement_file(&self) -> PlacedFile {
         self.placement_or_ground().file
@@ -799,11 +892,11 @@ pub(crate) fn placement_edit(before: &PlacedSource, after: &PlacedSource) -> Edi
             .iter()
             .filter(|(k, _)| *k != GROUND_KEY)
             .filter(|(k, x)| {
-                !b.file.assets.iter().any(|l| l.key == **k) || b.assets.get(*k).is_none_or(|y| !same_asset(x, y))
+                !b.file.assets.iter().any(|l| l.key == **k)
+                    || b.assets.get(*k).is_none_or(|y| !same_asset(x, y))
             })
             .map(|(k, x)| (k.clone(), Arc::new(x.clone())))
             .collect(),
     };
     Edit::Placement { before: Arc::new(side(before, after)), after: Arc::new(side(after, before)) }
 }
-

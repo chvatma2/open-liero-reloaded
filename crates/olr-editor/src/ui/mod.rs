@@ -61,6 +61,17 @@ pub mod labels {
     /// The ground's panel's button: it opens in the asset tab (apart from
     /// the Assets tab's `EDIT_LIBRARY_ASSET`, both may show at once).
     pub const EDIT_IN_LEVEL: &str = "Edit in level";
+    /// Issue #82: a library copy's panel's button: its asset opens in the
+    /// asset tab as the Assets tab's Edit asset opens it.
+    pub const EDIT_LIBRARY_COPY: &str = "Edit library asset";
+    /// Issue #82: the Copies list's mark of a copy of the level's own asset
+    /// (a library copy's is `LIBRARY_MARK`).
+    pub const OWN_MARK: &str = "own";
+    pub const LIBRARY_MARK: &str = "🔗";
+    /// Issue #82: the copy panel's switch, the inverse of `free_aspect`.
+    pub const KEEP_ASPECT: &str = "Keep aspect";
+    pub const POSITION: &str = "Position";
+    pub const DUPLICATE_KEYS: &str = "Ctrl+D";
     pub const ASSETS: &str = "Assets";
     pub const SPAWNS: &str = "Spawns";
     pub const WHAT_IS_IT: &str = "What is it?";
@@ -595,6 +606,10 @@ fn shortcuts(ui: &Ui, state: &EditorState, popup: bool, out: &mut Vec<EditorActi
             if i.consume_key(Modifiers::COMMAND, key) || event {
                 out.push(action);
             }
+        }
+        // Issue #82: Ctrl+D duplicates the selected copies.
+        if i.consume_key(Modifiers::COMMAND, Key::D) {
+            out.push(EditorAction::Duplicate);
         }
         if i.consume_key(Modifiers::COMMAND, Key::E)
             && let Selection::Element(id) = state.selection()
