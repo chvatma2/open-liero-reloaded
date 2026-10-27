@@ -417,7 +417,7 @@ fn positions_and_facing_scale_with_the_copy() {
     // its offset of 1 then moves it left by 2.
     let turned = ("turned", ValueSource::Bool(true));
     assert_eq!(
-        rock(&baked(&level, &placement(vec![("a", &a)], vec![copy((2, 0), &[turned.clone()])]))),
+        rock(&baked(&level, &placement(vec![("a", &a)], vec![copy((2, 0), std::slice::from_ref(&turned))]))),
         [6, 7]
     );
     let l = baked(

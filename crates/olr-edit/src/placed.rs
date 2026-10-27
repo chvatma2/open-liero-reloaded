@@ -150,6 +150,9 @@ impl Frame {
     }
 }
 
+/// A piece's glow mask, surface map and back surface map.
+type Maps = [Option<Arc<Vec<u8>>>; 3];
+
 /// Posed piece `p` laid in the level by copy frame `f`: its box mapped
 /// (`stretch_span` of its box before the positions moved it, then the
 /// move scaled by `stretch_offset`) and its data resampled to the box at
@@ -157,7 +160,7 @@ impl Frame {
 /// back art, glow mask, painted maps); kept as it is when `f` is
 /// untouched. `None` for a piece stretched to nothing or whose data does
 /// not fit it.
-fn lay(p: &PosedPiece, f: &Frame) -> Option<(Element, Decoded, [Option<Arc<Vec<u8>>>; 3])> {
+fn lay(p: &PosedPiece, f: &Frame) -> Option<(Element, Decoded, Maps)> {
     let Piece { element, decoded, glow_mask, surface_map, back_surface_map, .. } = &p.piece;
     let mut e = element.clone();
     let maps = [glow_mask.clone(), surface_map.clone(), back_surface_map.clone()];
