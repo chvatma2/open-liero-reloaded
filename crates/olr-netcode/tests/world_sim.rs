@@ -148,7 +148,7 @@ fn state_transfer_of_a_live_world() {
         c.build_match(&o).unwrap().world
     };
     let mut src = live_world();
-    assert_eq!(src.live().map(|l| l.len()), Some(6), "the fixture's live copies");
+    assert_eq!(src.live().map(|l| l.len()), Some(7), "the fixture's live copies");
     src.set_live_state(1, 1).unwrap();
     src.set_live_value(3, 0, 5 * olr_sim::LIVE_SUBPIXELS + 3).unwrap();
     let mut a = WorldSim::new(src);

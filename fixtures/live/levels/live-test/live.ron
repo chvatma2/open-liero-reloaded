@@ -7,6 +7,13 @@
             size: (4, 12),
             props: [
                 (
+                    name: "lamp_light",
+                    drives: LightIntensity(1),
+                    min: 0,
+                    max: 1000,
+                    default: 300,
+                ),
+                (
                     drives: GlowStrength(1),
                     min: 0,
                     max: 100,
@@ -28,7 +35,7 @@
                 (
                     name: "On",
                     values: [
-                        (0, 80),
+                        (1, 80),
                     ],
                     parts: [
                         (
@@ -47,7 +54,7 @@
                 (
                     name: "Off",
                     values: [
-                        (0, 0),
+                        (1, 0),
                     ],
                     parts: [
                         (
@@ -67,7 +74,7 @@
                 (
                     name: "Dim",
                     values: [
-                        (0, 30),
+                        (1, 30),
                     ],
                     parts: [
                         (
@@ -420,6 +427,66 @@
             ],
             scripts: [
                 1,
+            ],
+        ),
+        (
+            id: "spot",
+            asset: "Spot",
+            at: (150, 40),
+            size: (7, 4),
+            props: [
+                (
+                    name: "beam_dir",
+                    drives: BeamDirection(1),
+                    min: 0,
+                    max: 359,
+                    default: 45,
+                ),
+                (
+                    name: "beam_spread",
+                    drives: BeamSpread(1),
+                    min: 1,
+                    max: 90,
+                    default: 20,
+                ),
+            ],
+            pictures: [
+                (
+                    size: (6, 4),
+                    rock: true,
+                ),
+                (
+                    size: (1, 2),
+                    glow: true,
+                    groups: true,
+                    beam: true,
+                ),
+            ],
+            states: [
+                (
+                    name: "Normal",
+                    parts: [
+                        (
+                            kind: Rock,
+                            picture: 0,
+                        ),
+                        (
+                            layer: 1,
+                            kind: Background,
+                            picture: 1,
+                            at: (6, 1),
+                            glow_strength: 100,
+                        ),
+                    ],
+                ),
+            ],
+            groups: [
+                (
+                    id: "spot",
+                    colour: Tint("#fff0c0"),
+                    intensity: 1000,
+                    reach: Pixels(120),
+                ),
             ],
         ),
     ],

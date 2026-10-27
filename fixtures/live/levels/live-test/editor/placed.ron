@@ -24,6 +24,10 @@
             key: "e",
             origin: Own,
         ),
+        (
+            key: "f",
+            origin: Own,
+        ),
     ],
     copies: [
         (
@@ -83,6 +87,12 @@
                 "gate_x": Int(-2),
             },
             script: true,
+        ),
+        (
+            id: "spot",
+            asset: "f",
+            at: (150, 40),
+            live: true,
         ),
     ],
 )

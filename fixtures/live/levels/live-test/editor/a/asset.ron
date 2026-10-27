@@ -56,6 +56,14 @@
             ],
         ),
     ],
+    exposed: [
+        (
+            name: "lamp_light",
+            property: LightIntensity("bulb"),
+            min: 0,
+            max: 1000,
+        ),
+    ],
     sounds: [
         "click.wav",
     ],

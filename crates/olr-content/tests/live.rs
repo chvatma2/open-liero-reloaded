@@ -47,7 +47,7 @@ fn a_live_level_loads_its_copies() {
     let level = content.load_level(ID).unwrap();
     let live = level.live_sim().expect("live copies");
     let ids: Vec<&str> = live.copies.iter().map(|c| c.id.as_str()).collect();
-    assert_eq!(ids, ["lamp", "console-a", "console-b", "press", "crate", "gate"]);
+    assert_eq!(ids, ["lamp", "console-a", "console-b", "press", "crate", "gate", "spot"]);
     let copy = |id: &str| live.copy_by_id(id).unwrap();
     // The lamp: three states, starting dim, a click entering Off.
     let lamp = copy("lamp");
@@ -58,7 +58,10 @@ fn a_live_level_loads_its_copies() {
     assert_eq!(lamp.states[usize::from(lamp.state("Off").unwrap())].enter_sound, Some(click));
     let strength: Vec<i64> = lamp.states.iter().map(|s| s.values[0].1).collect();
     assert_eq!(strength, [80, 0, 30]);
-    assert_eq!(lamp.props[0].target, LiveTarget::GlowStrength(1));
+    assert_eq!(lamp.props[1].target, LiveTarget::GlowStrength(1));
+    // Its bulb's light intensity, exposed (issue #93).
+    let light = &lamp.props[usize::from(lamp.prop("lamp_light").unwrap())];
+    assert_eq!((light.target, light.default), (LiveTarget::LightIntensity(1), 300));
     assert!(lamp.states[0].parts.iter().any(|p| p.kind == LivePartKind::Background));
     // The consoles: one asset, apart in colour and width.
     let (a, b) = (copy("console-a"), copy("console-b"));
@@ -98,7 +101,17 @@ fn a_live_level_loads_its_copies() {
     // Presentation's share: the pictures and the sound's bytes.
     let source = &level.live.as_ref().unwrap().source;
     assert!(source.sounds[usize::from(click)].starts_with(b"RIFF"));
-    assert_eq!(source.pictures.len(), 6);
+    assert_eq!(source.pictures.len(), 7);
+    // The spot (issue #93): its lens a background part beaming, its
+    // direction and spread exposed, its beams derived.
+    let spot = copy("spot");
+    let dir = &spot.props[usize::from(spot.prop("beam_dir").unwrap())];
+    assert_eq!((dir.target, dir.default), (LiveTarget::BeamDirection(1), 45));
+    let light = &level.live.as_ref().unwrap().light.copies[usize::from(live.copy("spot").unwrap())];
+    let lens = spot.states[0].parts.iter().find(|p| p.layer == Some(1)).unwrap();
+    let patches = &light.patches[usize::from(lens.picture)];
+    assert_eq!(patches.len(), 1, "one patch: the lens");
+    assert!(patches[0].source.back && (patches[0].direction, patches[0].spread) == (0, 20));
 }
 
 #[test]
@@ -259,7 +272,7 @@ fn a_level_lit_only_by_live_copies_draws_lit() {
     let groups = map.glow_groups().expect("a glow channel for the live copies");
     let live = level.live.as_ref().unwrap();
     let ids: Vec<&str> = live.groups.iter().flatten().map(|g| g.id.as_str()).collect();
-    assert_eq!(ids, ["lamp", "screen", "screen"], "the lamp's, then each console's");
+    assert_eq!(ids, ["lamp", "screen", "screen", "spot"], "the lamp's, then each console's, the spot's");
     let at = |id: &str| live.sim.copy_by_id(id).unwrap().at;
     let shown = |id: &str| {
         let (x, y) = at(id);

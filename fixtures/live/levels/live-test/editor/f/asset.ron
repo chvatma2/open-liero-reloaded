@@ -1,0 +1,55 @@
+(
+    name: "Spot",
+    size: (7, 4),
+    elements: [
+        (
+            id: "housing",
+            name: "Housing",
+            kind: Drawn(
+                material: Rock,
+                size: (6, 4),
+            ),
+        ),
+        (
+            id: "lens",
+            name: "Lens",
+            kind: Drawn(
+                material: Background,
+                at: (6, 1),
+                size: (1, 2),
+            ),
+            glow: (
+                strength: 100,
+                group: "spot",
+                beam: (
+                    direction: 0,
+                    spread: 20,
+                ),
+            ),
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "spot",
+            colour: Tint("#fff0c0"),
+            intensity: 1000,
+            reach: Pixels(120),
+        ),
+    ],
+    exposed: [
+        (
+            name: "beam_dir",
+            property: BeamDirection("lens"),
+            default: Int(45),
+            min: 0,
+            max: 359,
+        ),
+        (
+            name: "beam_spread",
+            property: BeamSpread("lens"),
+            default: Int(20),
+            min: 1,
+            max: 90,
+        ),
+    ],
+)
