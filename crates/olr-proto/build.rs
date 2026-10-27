@@ -1,7 +1,7 @@
 //! Computes the simulation fingerprint: a hash of the source of every crate
 //! that decides what peers compute together (spec §2.2): what a tick does,
 //! and the session's semantics (olr-netcode: checksum cadence, acks, resends,
-//! `WorldSim`'s checksum). olr-netcode is a peer of this crate's layer that
+//! `WorldSim`'s checksum), the scripts' runtime included (olr-script). olr-netcode is a peer of this crate's layer that
 //! depends on it; only its source files are read here, never its code.
 
 use std::fs;
@@ -9,7 +9,10 @@ use std::path::{Path, PathBuf};
 
 include!("src/fingerprint_impl.rs");
 
-const DIRS: [&str; 6] = ["olr-math", "olr-data", "olr-terrain", "olr-sim", "olr-modes", "olr-netcode"];
+// `olr-script` (issue #88): the live copies' scripts run in the tick, and
+// its `RHAI_VERSION` names the interpreter whose operation count they keep.
+const DIRS: [&str; 7] =
+    ["olr-math", "olr-data", "olr-terrain", "olr-sim", "olr-script", "olr-modes", "olr-netcode"];
 
 fn collect(dir: &Path, rel: &str, out: &mut Vec<(String, PathBuf)>) {
     let rd =

@@ -32,8 +32,9 @@ mod fingerprint_impl;
 /// Wire protocol version, checked in the handshake. 6: the keys' top five
 /// bits are Weapon 1-5 (issue #48), and the state transfer's latches
 /// gained theirs. 7: the state transfer's live copies (`olr_sim::LiveWire`,
-/// issue #86); later changes to them bump it again.
-pub const PROTOCOL_VERSION: u16 = 7;
+/// issue #86); later changes to them bump it again. 8: the live part's
+/// script state (`olr_sim::ScriptWire`, issue #88).
+pub const PROTOCOL_VERSION: u16 = 8;
 /// At most this many slots in a match.
 pub const MAX_SLOTS: usize = 32;
 /// Largest accepted inputs datagram.

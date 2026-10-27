@@ -76,12 +76,13 @@ plan 12b: a member's `Path`, the STUN binding codec and `is_global`.
   never listed, plan 13c).
   `MAX_ARCHIVE_BYTES` restates olr-pack's `MAX_ARCHIVE`. `valid_hash` is 64
   lowercase hex; `NO_HASH` is valid and means unknown. `Look::skin_hash`
-  and `Member::download` (percent) are new; `PROTOCOL_VERSION` is 7 (3: plan 13c, skins are matched by id and hash, never transferred;
+  and `Member::download` (percent) are new; `PROTOCOL_VERSION` is 8 (3: plan 13c, skins are matched by id and hash, never transferred;
   4: issue #5, `MatchSetupWire::loadout` replaces `bonuses`, `loading_time` and `restrictions`;
   5: issue #23, keys are `u16` (Strafe, Previous/NextWeapon) and the state transfer's latches gained three;
   6: issue #48, the keys' bits 11-15 are Weapon 1-5 and the latches gained five;
   7: issue #86, `WorldState`'s last field is the live copies' `Option<LiveWire>`;
-  #88, #89 and #90 change `LiveWire` and bump it again).
+  8: issue #88, `LiveWire` gained the scripts' state (`olr_sim::ScriptWire`);
+  #89 and #90 change `LiveWire` and bump it again).
 - **Loadouts** (issue #5): `MatchSetupWire::loadout` is a `LoadoutWire {
   name, weapons, loading_time, unique }`, the host's loadout in full
   (weapons by the mod's names, empty for every weapon); `valid_loadout`:
@@ -128,14 +129,17 @@ plan 12b: a member's `Path`, the STUN binding codec and `is_global`.
 - **Never panic:** every decoder bounds and validates; `tests/fuzz.rs` (marks
   included: `host_datagrams_with_marks_never_panic`), `tests/fuzz_lobby.rs`.
 - **Fingerprint** (`build.rs`, `fingerprint_impl.rs`): FNV-1a over the
-  sources of olr-math, olr-data, olr-terrain, olr-sim, olr-modes, olr-netcode
+  sources of olr-math, olr-data, olr-terrain, olr-sim, olr-script (issue
+  #88: the scripts run in the tick, and its `RHAI_VERSION` names the
+  interpreter, so a Rhai bump changes it), olr-modes, olr-netcode
   (the session's semantics: checksum cadence, acks, resends, `WorldSim`'s
   checksum) and this crate (`\r` stripped; every `.rs` under each `src`,
   `rerun-if-changed` on each; an unreadable source is a build panic). It
   changes whenever that source changes; peers only play with an equal
   fingerprint (spec §2.2). olr-netcode depends on this crate: `build.rs`
   only reads its files, never depends on it. `tests/fingerprint.rs`
-  recomputes it over the list.
+  recomputes it over the list; `the_fingerprint_covers_the_scripts`,
+  `the_protocol_version_is_8`.
 
 Test: `cargo nextest run -p olr-proto` (`tests/stun.rs`: the RFC 5769
 vector, `is_stun`, fuzzed responses; `tests/addr.rs`: `is_global`'s ranges).

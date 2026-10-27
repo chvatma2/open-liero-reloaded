@@ -1,6 +1,7 @@
 //! The simulation fingerprint (spec §2.2) covers every crate whose source
 //! decides what peers compute together: the tick (olr-math, olr-data,
-//! olr-terrain, olr-sim, olr-modes), the wire format (olr-proto) and the
+//! olr-terrain, olr-sim, olr-modes, and issue #88's olr-script, whose
+//! `RHAI_VERSION` names the interpreter), the wire format (olr-proto) and the
 //! session's semantics (olr-netcode: checksum cadence, acks, resends, the
 //! world's checksum).
 
@@ -8,8 +9,8 @@ use std::path::{Path, PathBuf};
 
 use crate::fingerprint_impl;
 
-const HASHED: [&str; 7] =
-    ["olr-math", "olr-data", "olr-terrain", "olr-sim", "olr-modes", "olr-netcode", "olr-proto"];
+const HASHED: [&str; 8] =
+    ["olr-math", "olr-data", "olr-terrain", "olr-sim", "olr-script", "olr-modes", "olr-netcode", "olr-proto"];
 
 fn collect(dir: &Path, rel: &str, out: &mut Vec<(String, PathBuf)>) {
     for e in std::fs::read_dir(dir).unwrap() {
@@ -40,8 +41,18 @@ fn the_fingerprint_hashes_the_simulation_and_session_sources() {
 }
 
 /// Issue #86: the state transfer's live copies changed every state's
-/// encoding.
+/// encoding; issue #88: their script state.
 #[test]
-fn the_protocol_version_is_7() {
-    assert_eq!(olr_proto::PROTOCOL_VERSION, 7);
+fn the_protocol_version_is_8() {
+    assert_eq!(olr_proto::PROTOCOL_VERSION, 8);
+}
+
+/// Issue #88: the scripts' runtime is in the fingerprint, and with it the
+/// Rhai release it names.
+#[test]
+fn the_fingerprint_covers_the_scripts() {
+    assert!(HASHED.contains(&"olr-script"));
+    let lib = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../olr-script/src/lib.rs"))
+        .unwrap();
+    assert!(lib.contains("pub const RHAI_VERSION"), "olr-script names its Rhai release");
 }

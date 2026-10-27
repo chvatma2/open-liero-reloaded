@@ -103,9 +103,9 @@ fn admit_checks_version_fingerprint_and_capacity() {
 /// host builds no link for it.
 #[test]
 fn a_protocol_2_client_is_refused_at_the_handshake() {
-    assert_eq!(olr_proto::PROTOCOL_VERSION, 7, "protocol 7: the state transfer's live copies (issue #86)");
+    assert_eq!(olr_proto::PROTOCOL_VERSION, 8, "protocol 8: the state transfer's script state (issue #88)");
     let core = Core::new(CoreConfig::host(), Instant::now());
-    for (protocol, fingerprint) in [2, 3, 4, 5, 6]
+    for (protocol, fingerprint) in [2, 3, 4, 5, 6, 7]
         .into_iter()
         .flat_map(|p| [(p, olr_proto::FINGERPRINT), (p, olr_proto::FINGERPRINT ^ 1)])
     {
