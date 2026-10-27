@@ -5,7 +5,7 @@
 //! types and limits, the asset's default script, Distant), the copies'
 //! and the level's scripts set as one step each (`olr_edit::placed::
 //! set_copy_script`, `set_level_script`), and the scripts' syntax errors
-//! as the level's warnings (`olr_script::check`; nothing runs them yet).
+//! as the level's warnings (`olr_script::check`; issue #88 runs them in matches).
 
 use std::sync::Arc;
 

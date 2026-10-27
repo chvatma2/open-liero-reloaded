@@ -708,7 +708,7 @@ whose column tab is `LAYERS`);
     `remove_sound(name)`, `IMPORT_SOUND`, the shown state's
     `LOOP_SOUND` and `ENTER_SOUND` pickers (`NO_SOUND`). Script:
     `NEW_SCRIPT` | `REMOVE_SCRIPT`, the size against `MAX_SCRIPT_BYTES`,
-    `SCRIPT_NOT_RUN`, the errors as buttons `script_error(issue)`
+    the errors as buttons `script_error(issue)`
     (`line:column: message`, or `NO_SCRIPT_ERRORS`); the central panel
     becomes `SCRIPT_EDITOR` (a `code_editor` `TextEdit`, unwrapped, a
     line-number gutter marking the error's line with ▶).

@@ -300,8 +300,6 @@ pub mod labels {
     pub const REMOVE_SCRIPT: &str = "Remove script";
     /// The middle's script editor while Script is chosen.
     pub const SCRIPT_EDITOR: &str = "Script editor";
-    /// The Script tab's note until scripts run (#88).
-    pub const SCRIPT_NOT_RUN: &str = "Scripts run from a later version: checked for syntax only";
     pub const NO_SCRIPT_ERRORS: &str = "No syntax errors";
 
     // The copy panel, the level script, the library-change notice, export

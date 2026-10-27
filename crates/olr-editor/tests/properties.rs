@@ -399,7 +399,6 @@ fn the_script_commits_on_pause_and_lists_syntax_errors() {
     h.run();
     h.get_by_label(labels::SCRIPT).click();
     crate::fits::settle(&mut h);
-    h.get_by_label(labels::SCRIPT_NOT_RUN);
     h.get_by_label(labels::NEW_SCRIPT).click();
     crate::fits::settle(&mut h);
     let script = |h: &egui_kittest::Harness<'static, crate::fits::App>| {

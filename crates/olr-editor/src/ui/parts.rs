@@ -627,7 +627,6 @@ pub(super) fn script_column(
 ) {
     let Some(doc) = state.active_document() else { return };
     let has = doc.parts_snap().is_some_and(|p| p.script.is_some());
-    ui.add(egui::Label::new(egui::RichText::new(labels::SCRIPT_NOT_RUN).weak()).wrap());
     if !has {
         if ui.button(labels::NEW_SCRIPT).on_hover_text("a script run on every live copy").clicked() {
             out.push(EditorAction::NewScript);

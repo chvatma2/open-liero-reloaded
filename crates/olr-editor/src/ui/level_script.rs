@@ -57,7 +57,6 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
                 out.push(EditorAction::RemoveTargetScript(target.clone()));
             }
         });
-        ui.add(egui::Label::new(egui::RichText::new(labels::SCRIPT_NOT_RUN).weak()).wrap());
         let d = &mut data.level_script;
         let issues = d.issues().to_vec();
         if issues.is_empty() {

@@ -21,7 +21,7 @@ use crate::ops::NOTHING;
 pub const DEFAULT_HEALTH: u32 = 100;
 
 /// What a new script holds.
-pub const NEW_SCRIPT: &str = "// Runs on every live copy of this asset (from a later version).\n";
+pub const NEW_SCRIPT: &str = "// Runs on every live copy of this asset.\n";
 
 fn bad(e: AssetError) -> DocError {
     DocError::Bad(e.to_string())
