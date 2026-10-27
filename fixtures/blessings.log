@@ -280,3 +280,9 @@
   fixtures/render/live-states.png
 2026-10-27 bless-regression: #89: live scripts
   fixtures/matches-live/classic-live-test-4dm.ron
+2026-10-27 bless-render: #89: the live fixture's scripts
+  fixtures/render/live-beam-turned.png
+  fixtures/render/live-beam.png
+  fixtures/render/live-light.png
+  fixtures/render/live-start.png
+  fixtures/render/live-states.png
