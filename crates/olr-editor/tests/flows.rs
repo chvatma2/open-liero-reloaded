@@ -1843,8 +1843,8 @@ fn paint_an_asset(narrow: bool) {
         h.run();
         assert!(h.query_by_label(labels::DRAW).is_none());
     }
-    h.get_by_label("Lamps").click();
-    h.run();
+    // Narrow, the states panel (issue #79) puts the row below the fold.
+    pick(&mut h, None, "Lamps");
     if narrow {
         h.get_by_role_and_label(Role::Button, labels::TOOLS_TAB).click();
         h.run();
@@ -1874,6 +1874,58 @@ fn paint_an_asset(narrow: bool) {
     assert_eq!(s.doc_tab(), olr_editor::DocTab::Level);
     assert!(!s.active_document().unwrap().is_asset() && !s.dirty());
     assert_eq!(s.active_document().unwrap().to_asset(), level, "the level unchanged");
+}
+
+/// Issue #79's flow: Add state, rename it Off, paint the lamps dark in it,
+/// make it the starting state, save; the panels show ★ on Off, and the dot
+/// on the lamps where a state paints them itself.
+#[test]
+fn make_an_off_state_and_paint_it() {
+    let Some((tmp, mut s)) = crate::fits::lamp_open() else { return };
+    let yours = tmp.path().join("yours");
+    run(&mut s, A::AssetsChanged(crate::common::set_library(&crate::common::built_in_assets(), &yours)));
+    let mut h = harness(s);
+    h.run();
+    h.get_by_label(labels::ADD_STATE).click();
+    // The panel scrolls to the name field taking the keyboard.
+    h.run_steps(12);
+    assert_eq!(h.state().state.active_document().unwrap().states().len(), 2);
+    // Its name field is ready.
+    let field = h.get_by_role_and_label(Role::TextInput, labels::STATE_NAME);
+    assert!(field.is_focused(), "the new state's name takes the keyboard");
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.get_by_role_and_label(Role::TextInput, labels::STATE_NAME).type_text("Off");
+    h.key_press(egui::Key::Enter);
+    h.run();
+    let names = |h: &Harness<'static, App>| -> Vec<String> {
+        h.state().state.active_document().unwrap().states().iter().map(|s| s.name.clone()).collect()
+    };
+    assert_eq!(names(&h), ["Normal", "Off"]);
+    h.get_by_label("Lamps").click();
+    h.run();
+    h.get_by_label(labels::DRAW).click();
+    h.run();
+    act(&mut h, A::Paint(PaintChoice::Colour(olr_data::image::Rgba::rgb(20, 20, 20))));
+    let (from, to) = (canvas_point(&h, (-10.0, 0.0)), canvas_point(&h, (10.0, 0.0)));
+    hover(&mut h, from);
+    press(&mut h, from, true);
+    hover(&mut h, to);
+    press(&mut h, to, false);
+    assert!(h.state().state.active_document().unwrap().shown_owns("lamps"));
+    h.get_by_label(&labels::owned("Lamps"));
+    h.get_by_label(labels::MAKE_START).click();
+    h.run();
+    h.get_by_role_and_label(Role::Button, &labels::state("Off", true));
+    assert!(h.query_by_label(&labels::state("Normal", true)).is_none());
+    file(&mut h, labels::SAVE);
+    assert!(!h.state().state.active_dirty());
+    let saved = olr_edit::asset::load_dir(&yours.join("ceiling-lamp")).unwrap();
+    assert_eq!((saved.states[saved.start].name.as_str(), saved.states.len()), ("Off", 2));
+    assert!(saved.states[0].own.contains_key("lamps"), "Normal keeps its look: the lamps as they were");
+    // Normal now paints the lamps itself: the dot.
+    h.get_by_role_and_label(Role::Button, &labels::state("Normal", false)).click();
+    h.run();
+    h.get_by_label(&labels::owned("Lamps"));
 }
 
 /// Issue #78: the previews are made again when an edit is done, never

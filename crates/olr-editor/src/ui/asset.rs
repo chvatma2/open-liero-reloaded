@@ -3,7 +3,7 @@
 //! session bar on top (the Level | Asset switch, File ▾, Undo, Redo, the
 //! asset's name and its unsaved mark, View ▾), the tools on the left (the
 //! rail's buttons, then the chosen tool's options), the layers on the
-//! right (room for issue #79's states, the Layers tree, the selection's
+//! right (issue #79's states, the Layers tree, the selection's
 //! properties or the asset's, the previews), the status line, and the
 //! canvas in the middle. It fits any window (issue #55's rules): the side
 //! panels take a share of its width, and below [`NARROW`] one shows at a
@@ -13,7 +13,9 @@
 
 use egui::Ui;
 
-use super::{EditorData, canvas, elements, labels, level, previews, properties, rail, status, toolbar};
+use super::{
+    EditorData, canvas, elements, labels, level, previews, properties, rail, states, status, toolbar,
+};
 use crate::state::{EditorAction, EditorState, Selection};
 
 /// Below this width (points) one side panel shows at a time.
@@ -80,7 +82,9 @@ pub(super) fn show(
     if !narrow || data.side == Side::Layers {
         egui::Panel::right("olr-editor-asset-layers").exact_size(layers_w).resizable(false).show(ui, |ui| {
             egui::ScrollArea::vertical().id_salt("olr-editor-asset-layers").show(ui, |ui| {
-                // Issue #79's states panel comes first, above the layers.
+                // Issue #79: the states panel first, above the layers.
+                states::show(ui, state, data, fields);
+                ui.separator();
                 ui.strong(labels::LAYERS);
                 elements::tree(ui, state, list);
                 ui.separator();

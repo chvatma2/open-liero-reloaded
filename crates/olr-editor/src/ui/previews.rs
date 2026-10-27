@@ -1,7 +1,8 @@
 //! The asset tab's previews (issue #78), as the skin editor's preview: the
 //! asset light (`labels::PREVIEW_LIGHT`, full bright) and dark
 //! (`labels::PREVIEW_DARK`, under `olr_edit::asset::preview_look`, its
-//! glowing pixels lit), each at game size and enlarged (a whole number of
+//! glowing pixels lit), of the shown state fully posed (issue #79), each
+//! at game size and enlarged (a whole number of
 //! points a pixel, fitting the panel). They are drawn on the CPU
 //! (`olr_edit::asset::preview`) when the document's bake changed and no
 //! stroke or drag is in progress, never every frame, and kept as egui
@@ -27,7 +28,8 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData) {
     if data.previews.as_ref().is_none_or(|(k, _)| *k != key) && !state.dragging() {
         let asset = doc.to_asset();
         let texture = |dark: bool, name: &str| {
-            let img = olr_edit::asset::preview(&asset, dark);
+            // Issue #79: the shown state, fully posed.
+            let img = olr_edit::asset::preview_state(&asset, doc.shown_state().unwrap_or(asset.start), dark);
             let size = [img.width() as usize, img.height() as usize];
             ui.ctx().load_texture(
                 name,

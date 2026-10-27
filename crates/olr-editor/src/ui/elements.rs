@@ -182,6 +182,17 @@ fn element_row(ui: &mut Ui, state: &EditorState, id: &str, fit: bool, out: &mut 
         ElementKind::Raster => "▦",
     };
     ui.label(kind);
+    // Issue #79: the shown state paints it itself, a filled dot (drawn: a
+    // font may lack "●").
+    if doc.shown_owns(&e.id) {
+        let side = ui.spacing().interact_size.y;
+        let (r, painter) = ui.allocate_painter(egui::vec2(side * 0.5, side), egui::Sense::hover());
+        painter.circle_filled(r.rect.center(), side * 0.18, ui.visuals().strong_text_color());
+        let owner = doc.shown_state_name();
+        let what = labels::owned(if e.name.is_empty() { &e.id } else { &e.name });
+        super::relabel(&r, egui::WidgetType::Label, None, &what);
+        r.on_hover_text(format!("{owner} paints it itself"));
+    }
     if let Some(depth) = e.distant {
         ui.label("🌄").on_hover_text(format!("{}: depth {depth} %", labels::DISTANT));
     }

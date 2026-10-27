@@ -59,6 +59,14 @@ fn element(ui: &mut Ui, state: &EditorState, data: &mut EditorData, id: &str, ou
     if let Some(name) = text(ui, data, &format!("{id}/name"), labels::NAME, &e.name, false) {
         set(out, Property::Name(name));
     }
+    // Issue #79: the shown state's own picture of it can go.
+    if doc.shown_owns(id) {
+        let hint =
+            format!("{} paints it itself: show the starting state's picture again", doc.shown_state_name());
+        if ui.button(labels::FOLLOW_START).on_hover_text(hint).clicked() {
+            out.push(EditorAction::FollowStart(id.to_string()));
+        }
+    }
     let material = match &e.kind {
         ElementKind::Image { material, .. } | ElementKind::Drawn { material, .. } => Some(*material),
         ElementKind::Raster => None,

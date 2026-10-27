@@ -6,8 +6,9 @@
 //! window's height / 720 × the UI scale), below `ui::NARROW` each side
 //! panel in turn: the built-in ceiling lamp with nothing selected (the
 //! asset's panel, its Lighting and Materials) and the Draw tool, with a
-//! layer selected (its properties) and the Glow brush, and with that layer
-//! made glass (its sliders) and the Surface brush.
+//! layer selected (its properties) and the Glow brush, with that layer
+//! made glass (its sliders) and the Surface brush, and (issue #79) with
+//! 32 states, the most an asset has.
 //!
 //! What fits (the skin editor's `tests/fits.rs`, issue #55): every widget
 //! lies across the window, and each side panel's within it; every enabled
@@ -213,15 +214,22 @@ fn the_asset_tab_fits() {
         // Nothing selected and Draw; a layer and the Glow brush; the layer
         // glass and the Surface brush.
         let lamps = || Selection::Element("lamps".into());
+        // Issue #79: an asset of 32 states (`MAX_STATES`), every state's
+        // button reachable without a horizontal scroll.
         let setups = [
-            ("the asset, Draw", Selection::None, Tool::Brush, false),
-            ("a layer, the Glow brush", lamps(), Tool::Glow, false),
-            ("a glass layer, the Surface brush", lamps(), Tool::Surface, true),
+            ("the asset, Draw", Selection::None, Tool::Brush, false, 1),
+            ("a layer, the Glow brush", lamps(), Tool::Glow, false, 1),
+            ("a glass layer, the Surface brush", lamps(), Tool::Surface, true, 1),
+            ("an asset of 32 states", Selection::None, Tool::Brush, false, 32),
         ];
         for &side in sides {
-            for (what, selection, tool, glass) in &setups {
+            for (what, selection, tool, glass, states) in &setups {
                 cases += 1;
                 let (_tmp, mut s) = lamp_open().unwrap();
+                for _ in 1..*states {
+                    run(&mut s, A::AddState);
+                }
+                assert_eq!(s.active_document().unwrap().states().len(), *states);
                 if *glass {
                     let g = ElementGlass { opacity: 35, tint: 0, frost: 0 };
                     run(&mut s, A::Set("lamps".into(), Property::Glass(Some(g))));

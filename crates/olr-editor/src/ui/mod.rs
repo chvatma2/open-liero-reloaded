@@ -17,6 +17,7 @@ mod look;
 mod previews;
 mod properties;
 mod rail;
+mod states;
 mod status;
 mod toolbar;
 
@@ -225,6 +226,26 @@ pub mod labels {
     pub const SURFACE_FRONT: &str = "Front";
     pub const SURFACE_BACK: &str = "Back";
 
+    // The states panel (issue #79).
+    pub const STATES: &str = "States";
+    pub const ADD_STATE: &str = "Add state";
+    pub const DUPLICATE_STATE: &str = "Duplicate";
+    pub const MAKE_START: &str = "Make starting state";
+    pub const REMOVE_STATE: &str = "Remove state";
+    pub const STATE_NAME: &str = "State name";
+    /// A layer's properties: the shown state drops its own picture.
+    pub const FOLLOW_START: &str = "Follow start";
+
+    /// A state's picture in the states panel, by its name (★ on the start).
+    pub fn state(name: &str, start: bool) -> String {
+        if start { format!("{name} ★") } else { name.to_string() }
+    }
+
+    /// The layer list's dot on a layer the shown state paints itself.
+    pub fn owned(name: &str) -> String {
+        format!("{name}: painted in this state")
+    }
+
     /// A material's Remove button's name (issue #43).
     pub fn remove_material(name: &str) -> String {
         format!("Remove {name}")
@@ -303,6 +324,14 @@ pub struct EditorData {
     /// The asset tab's previews, light and dark, for (the canvas's
     /// document generation, its bake generation).
     previews: Option<((u64, u64), [egui::TextureHandle; 2])>,
+    /// The states panel's pictures (issue #79) and their textures, by
+    /// state.
+    state_pictures: crate::state_ops::StatePictures,
+    state_textures: Vec<Option<egui::TextureHandle>>,
+    /// `EditorState::state_named` last seen, and the text field (by draft
+    /// key) to take the keyboard when next drawn.
+    state_named: Option<u64>,
+    focus_text: Option<String>,
 }
 
 /// The file browser's drafts, for the directory shown.
@@ -325,6 +354,12 @@ impl EditorData {
     #[doc(hidden)]
     pub fn swatch_keys(&self) -> Vec<String> {
         self.swatches.keys().cloned().collect()
+    }
+
+    /// How many state pictures the states panel made (tests, issue #79).
+    #[doc(hidden)]
+    pub fn state_pictures_made(&self) -> u64 {
+        self.state_pictures.made()
     }
 
     /// The bake generation the asset tab's previews were made at (tests).
@@ -678,6 +713,10 @@ pub(crate) fn text(
             egui::TextEdit::singleline(&mut v)
         };
         let r = ui.add(edit).labelled_by(l);
+        if data.focus_text.as_deref() == Some(key) {
+            data.focus_text = None;
+            r.request_focus();
+        }
         if r.has_focus() {
             data.texts.insert(key.into(), v);
             return None;
