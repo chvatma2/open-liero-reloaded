@@ -269,3 +269,6 @@
   fixtures/render/look-occlusion-light.png
   fixtures/render/look-rocket.png
   fixtures/render/look-skin.png
+2026-10-27 bless-render: #87: live assets drawn by state
+  fixtures/render/live-start.png
+  fixtures/render/live-states.png
