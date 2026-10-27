@@ -17,6 +17,11 @@
 #              the lens's beam direction and spread exposed as beam_dir and
 #              beam_spread, its facing as spot_facing and its lens shown as
 #              lens_on (issue #93).
+# Its scripts (issue #89): the lamp's default stutters it; the consoles
+# cycle Normal and Alarm every 300 ticks, console-a by the console's
+# default script, console-b by its own with the default switched off; the
+# press moves its head between its min and max every 2 s; the level script
+# sets the consoles to Alarm while the press moves.
 # Run from the repository root; OLR picks the binary.
 set -euo pipefail
 OLR=${OLR:-target/debug/olr-cli}
@@ -89,7 +94,51 @@ fmt = struct.pack('<HHIIHH', 1, 1, rate, rate, 1, 8)
 body = b'WAVE' + b'fmt ' + struct.pack('<I', len(fmt)) + fmt + b'data' + struct.pack('<I', n) + data
 open(sys.argv[1], 'wb').write(b'RIFF' + struct.pack('<I', len(body)) + body)
 EOF
-printf 'fn on_enter(state) {}\n' > "$W/lamp.rhai"
+cat > "$W/lamp.rhai" <<'EOF'
+// Stutters: now and then Dim or Off for a few ticks.
+fn start() { this.after(1 + this.rand(50), "stutter"); }
+fn stutter() {
+  if this.state() == "On" {
+    this.set_state(if this.rand(3) == 0 { "Off" } else { "Dim" });
+    this.after(3 + this.rand(8), "stutter");
+  } else {
+    this.set_state("On");
+    this.after(20 + this.rand(120), "stutter");
+  }
+}
+EOF
+cat > "$W/console.rhai" <<'EOF'
+// Normal and Alarm in turn every 300 ticks.
+fn start() { this.every(300, "next"); }
+fn next() { this.set_state(if this.state() == "Normal" { "Alarm" } else { "Normal" }); }
+EOF
+cat > "$W/console-b.rhai" <<'EOF'
+// The console's cycle by a timer of its own (its default is off).
+fn start() { this.after(300, "next"); }
+fn next() {
+  this.set_state(if this.state() == "Alarm" { "Normal" } else { "Alarm" });
+  this.after(300, "next");
+}
+EOF
+cat > "$W/press.rhai" <<'EOF'
+// The head goes to its other end every 2 s: 0.6 s moving, then a rest.
+fn start() { this.move_to("head_y", this.max("head_y"), 10); }
+fn arrived(name) { this.after(138, "back"); }
+fn back() {
+  let to = if this.get("head_y") == this.max("head_y") { this.min("head_y") } else { this.max("head_y") };
+  this.move_to("head_y", to, 10);
+}
+EOF
+cat > "$W/level.rhai" <<'EOF'
+// The consoles in Alarm while the press moves.
+fn tick() {
+  if this.moving(this.copy("press"), "head_y") {
+    this.alarm(this.copy("console-a"));
+    this.alarm(this.copy("console-b"));
+  }
+}
+fn alarm(c) { if this.state(c) != "Alarm" { this.set_state(c, "Alarm"); } }
+EOF
 printf 'fn tick() {}\n' > "$W/gate.rhai"
 
 S() { "$OLR" asset state "$@"; }
@@ -107,8 +156,10 @@ S set "$A/lamp" Off --enter-sound click.wav
 "$OLR" asset expose "$A/console" screen_colour screen.glow-colour
 S add "$A/console" Alarm
 S value "$A/console" Alarm screen.glow-colour '#ff2020'
+"$OLR" asset script "$A/console" --set "$W/console.rhai"
 # The press: its head's height.
 "$OLR" asset expose "$A/press" head_y head.y --default 0 --min 0 --max 6
+"$OLR" asset script "$A/press" --set "$W/press.rhai"
 # The crate: Normal hides the debris, Wrecked the box.
 S add "$A/crate" Wrecked
 S value "$A/crate" Normal debris.visible false
@@ -138,11 +189,14 @@ add gate gate 270,156
 add spot spot 150,40
 set_ lamp --live --state Dim
 set_ console-a --live --value 'screen_colour=#20ff40'
-set_ console-b --live --value 'screen_colour=#4080ff' --state Alarm
+set_ console-b --live --value 'screen_colour=#4080ff' --state Alarm --default-script off
 set_ press --live --value head_y=3
 set_ crate --live
 set_ gate --live --value gate_x=-2
 set_ spot --live
 "$OLR" level copy script "$P" gate --set "$W/gate.rhai"
+"$OLR" level copy script "$P" console-b --set "$W/console-b.rhai"
+"$OLR" level script "$P" --set "$W/level.rhai"
 "$OLR" level bake "$P"
 "$OLR" pack check "$P"
+"$OLR" level check-scripts "$P"

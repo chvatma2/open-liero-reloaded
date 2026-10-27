@@ -180,6 +180,9 @@
                     reach: Pixels(24),
                 ),
             ],
+            scripts: [
+                1,
+            ],
         ),
         (
             id: "console-b",
@@ -255,6 +258,9 @@
                     reach: Pixels(24),
                 ),
             ],
+            scripts: [
+                2,
+            ],
         ),
         (
             id: "press",
@@ -299,6 +305,9 @@
             ],
             start_values: [
                 (0, 3),
+            ],
+            scripts: [
+                3,
             ],
         ),
         (
@@ -426,7 +435,7 @@
                 (0, -2),
             ],
             scripts: [
-                1,
+                4,
             ],
         ),
         (
@@ -507,7 +516,12 @@
     scripts: [
         "live/0.rhai",
         "live/1.rhai",
+        "live/2.rhai",
+        "live/3.rhai",
+        "live/4.rhai",
+        "live/5.rhai",
     ],
+    level_script: 5,
     sounds: [
         "live/0.wav",
     ],

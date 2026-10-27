@@ -62,6 +62,8 @@
             values: {
                 "screen_colour": Colour("#4080ff"),
             },
+            script: true,
+            default_script: false,
         ),
         (
             id: "press",
@@ -95,4 +97,5 @@
             live: true,
         ),
     ],
+    script: true,
 )

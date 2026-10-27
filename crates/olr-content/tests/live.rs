@@ -95,9 +95,17 @@ fn a_live_level_loads_its_copies() {
         gate.states[0].parts.iter().map(|p| (p.layer, p.kind)).collect();
     assert_eq!(kinds, [(Some(0), LivePartKind::Background), (Some(0), LivePartKind::Rock)]);
     assert_eq!(gate.start_values, [(gate.prop("gate_x").unwrap(), -2)]);
-    // Scripts: the lamp's default, the gate's own.
+    // Scripts: the lamp's default, the gate's own; console-b its own only
+    // (its default switched off, issue #89), and the level script.
     let script = |c: &olr_sim::LiveCopy| live.scripts[usize::from(c.scripts[0])].clone();
-    assert_eq!((script(lamp), script(gate)), ("fn on_enter(state) {}\n".into(), "fn tick() {}\n".into()));
+    assert!(script(lamp).contains("fn stutter()"), "{}", script(lamp));
+    assert_eq!(script(gate), "fn tick() {}\n");
+    let (a, b) = (copy("console-a"), copy("console-b"));
+    assert_eq!((a.scripts.len(), b.scripts.len()), (1, 1));
+    assert!(script(a).contains("every(300") && script(b).contains("after(300"));
+    assert!(
+        live.scripts[usize::from(live.level_script.unwrap())].contains("this.moving(this.copy(\"press\")")
+    );
     // Presentation's share: the pictures and the sound's bytes.
     let source = &level.live.as_ref().unwrap().source;
     assert!(source.sounds[usize::from(click)].starts_with(b"RIFF"));
