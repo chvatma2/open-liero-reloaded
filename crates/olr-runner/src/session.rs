@@ -1,5 +1,7 @@
 //! A headless Claude Code session with a watchdog: no stream event for
-//! `idle`, or more than `budget` of running time, interrupts it.
+//! `idle`, or more than `budget` of running time, interrupts it. A session
+//! whose last line is a result has ended its turn and only waits on its
+//! background tasks; the watchdog then ends it with that result.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::process::CommandExt;
@@ -166,17 +168,25 @@ pub fn run(spec: &SessionSpec) -> Result<(Outcome, Duration)> {
     });
 
     let mut last_result = None;
+    // Whether the last line was a result: the turn is over, and only a
+    // background task (one that never ends, say) keeps the session alive.
+    let mut turn_ended = false;
     let stopped = loop {
         let left = spec.budget.saturating_sub(started.elapsed());
         match rx.recv_timeout(spec.idle.min(left)) {
             Ok(line) => {
                 writeln!(log, "{line}")?;
+                turn_ended = false;
                 if let Line::Result { is_error, text } = stream::scan(&line) {
                     last_result = Some((is_error, text));
+                    turn_ended = true;
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
                 interrupt(&mut child);
+                if turn_ended {
+                    break None;
+                }
                 break Some(if started.elapsed() >= spec.budget { Outcome::Ceiling } else { Outcome::Idle });
             }
             Err(RecvTimeoutError::Disconnected) => break None,

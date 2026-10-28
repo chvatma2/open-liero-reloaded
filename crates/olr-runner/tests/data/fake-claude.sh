@@ -2,7 +2,7 @@
 # A stand-in for `claude -p … --output-format stream-json`, driven by
 # `fake.env` in the working directory, or `target/fake.env` (where the
 # runner's workspace keeps it out of git's way):
-#   FAKE_MODE    done | silent | limit-then-done | crash | commit
+#   FAKE_MODE    done | silent | linger | limit-then-done | crash | commit
 #   FAKE_RESULT  the result file to write (done, limit-then-done, commit)
 #   FAKE_FILE, FAKE_SUBJECT  what `commit` commits
 #   FAKE_LIMIT_TEXT  the limit message (default: resets 3:45pm)
@@ -29,6 +29,8 @@ finish() {
 case "${FAKE_MODE:-done}" in
   done) activity; finish ;;
   silent) activity; sleep 30 ;;
+  # Finishes, then waits on a background task that never ends.
+  linger) activity; finish; sleep 30 ;;
   limit-then-done)
     activity
     if [ "$resume" = yes ]; then finish; else

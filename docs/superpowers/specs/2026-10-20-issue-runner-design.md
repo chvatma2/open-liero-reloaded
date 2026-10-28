@@ -301,7 +301,10 @@ What it should be:
   run for hours and features can be big. A session is stopped when it
   shows no activity (no stream event) for 45 minutes or runs past 8 hours.
   Both values are in the config. The watchdog stops a session with SIGINT
-  first, so the turn is recorded, and the issue is handed back.
+  first, so the turn is recorded, and the issue is handed back. A session
+  whose last stream line is a result has ended its turn and only waits on
+  a background task (#91's never ended); the watchdog then ends it with
+  that result, and the run goes on to the result file and the gate.
 - **Being a good neighbour:** sessions and their builds run under `nice`
   and idle I/O priority (my call), so a match or the user's own build stays
   responsive.

@@ -88,6 +88,17 @@ fn idle_watchdog_fires() {
 }
 
 #[test]
+fn a_finished_turn_outlives_the_watchdog() {
+    let (tmp, mut spec) = workdir("linger", "");
+    spec.idle = Duration::from_secs(1);
+    let t = Instant::now();
+    let (outcome, _) = run(&spec).unwrap();
+    assert_eq!(outcome, Outcome::Finished { is_error: false, text: "Finished.".into() });
+    assert!(t.elapsed() < Duration::from_secs(5), "took {:?}", t.elapsed());
+    assert!(std::fs::read_to_string(tmp.path().join("result.md")).unwrap().starts_with("done"));
+}
+
+#[test]
 fn ceiling_fires() {
     let (_tmp, mut spec) = workdir("silent", "");
     spec.budget = Duration::from_secs(1);
