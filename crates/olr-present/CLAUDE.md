@@ -179,7 +179,9 @@ wired in the frame loop's order **once**, so each mode that draws a world
     restored area). Both forget the end flashes and muzzle lights.
   - `follow(worm)` / `followed()`: the worm the first view's camera
     follows (worm 0 when new; the game's local slot, or a spectator's
-    choice).
+    choice). `look_at(x, y)` (issue #97, tools: `olr-cli render-match
+    --at`) fixes the first view's camera on a world point instead
+    (`olr_scene::Camera::look_at`).
   - **Views** (issue #27, split screen): `set_views(&[worm id])` makes a
     view per worm (1 to `olr_scene::MAX_VIEWS`; a view kept keeps its
     camera, a new one is seeded from `seed` by its index), `views()`,

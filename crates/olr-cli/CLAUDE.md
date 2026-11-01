@@ -457,7 +457,7 @@ The headless command-line tool. Its commands:
   `tests/look_preview.rs` (`look_preview_writes_a_png` edits a copy of
   Dirt Level with `level look` and a glowing patch, `level group add` and
   `level element set|glow`; `render_match_writes_a_png`: also 2, 3 and 4 local players' views and the PNG's size, issue #30).
-- `olr-cli render-match <match flags> --out f.png [--scale 2] [--skin ID] [--packs DIR]... [--content DIR] [--live COPY=STATE]... [--live-value COPY.NAME=VALUE]...`
+- `olr-cli render-match <match flags> --out f.png [--scale 2] [--skin ID] [--packs DIR]... [--content DIR] [--live COPY=STATE]... [--live-value COPY.NAME=VALUE]... [--at X,Y]`
   (plan 15a Task 16, `render_match.rs`) plays a headless bot match (the
   runner's `advance`, unsettled: no invariants, no recording) on
   `--content` with each `--packs` directory laid over it (the first wins;
@@ -467,7 +467,10 @@ The headless command-line tool. Its commands:
   local player's worm, split screen as the game lays it out on a 16:9
   window, `split_areas`: two stacked, three or four in a 2 × 2 grid with
   the fourth quarter black, a seam of 2 world pixels, OLX's 4 screen
-  pixels; each view the solo view at `--scale`; it says how many views); prints the number of glowing discs (play's lights). `--scale` is in (0, 16];
+  pixels; each view the solo view at `--scale`; it says how many views); prints the number of glowing discs (play's lights).
+  `--at X,Y` (issue #97) fixes the camera on a world point, the view's
+  centre (clamped to the level), instead of following worm 0
+  (`Presentation::look_at`); refused with two or more `--locals`. `--scale` is in (0, 16];
   worms wear the default skin (issue #12: `--skin` a skin pack's id or
   OLX name, an error when unknown) and colours, worm 0 the local one; the
   packs' warnings print on stderr. The rocket golden (`look-rocket.png`)
@@ -519,6 +522,9 @@ The headless command-line tool. Its commands:
   `live-beam.png` (`spot.beam_dir=100`, `spot.beam_spread=30`) and
   `live-beam-turned.png` (`spot.beam_dir=10`, `spot.beam_spread=10`): the
   spot's beam worked out each frame at two directions.
+  Issue #97's `factory-crane.png` (`factory_crane`): idle bots on Liero
+  Factory Reloaded, seed 1, tick 275 (the claw halfway through its first
+  crossing, the console in `Alarm`), `--at 870,300`.
 - `olr-cli frame-hashes <match flags> [--frames 30] [--content DIR] [--out f.ron]`
   (issue #34, `frame_hash.rs`, the command in `frame_hashes_cmd.rs`):
   byte identity. Plays a headless bot match as `render-match` does (the
@@ -1181,11 +1187,30 @@ pixel; each pixel's glow group and surface material by their settings,
 not their numbers; the look but for its groups and materials),
 `the_new_factory_is_made_of_assets` (the copies by id with key, origin,
 place and size, all static, `level library` printing `same` for every
-built-in key), `the_new_factory_plays_as_after_dark` (Classic, 4 bots,
-seed 1, 1000 ticks: the world checksum every tick, which covers the
-terrain, not the level's hash) and, on the GPU tier,
-`the_new_factory_draws_as_after_dark` (`look-preview` at four cameras,
-the same PNG bytes). `tests/digest.rs` pins a SHA-256 of what
+built-in key) and, on the GPU tier,
+`the_new_factory_draws_as_after_dark` (`look-preview`, the same PNG
+bytes). Issue #97 narrows them to outside `LIVE_BOXES` (the crane's and
+the console's boxes: the ground leaves live copies out), the drawing to
+the truck's camera, the one of four holding no live copy, and retires
+`the_new_factory_plays_as_after_dark` (the crane changes play;
+`docs/porting/STATUS.md`). Its live factory (`factory_world` places
+worm 0, a human, where a test wants): `the_live_factory_has_its_live_copies`
+(the crane and the console Live, in their starting states, the Crane's
+default script, the level script naming both), `the_crane_crosses_and_the_console_alarms`
+(2000 ticks: rests of 200, crossings of 150 then 170, `Moving` while
+`claw_x` changes, the console in `Alarm` at most 2 ticks behind),
+`live_states_keep_their_solid_pixels` (every state's rock, from the
+asset files and in a match), `the_crane_carries_and_pushes_a_worm` (a
+worm on the claw's shoulders carried 75 px, one hanging by its rope in
+the claw's path pushed aside, neither `Crushed`),
+`explosions_leave_the_factorys_live_copies_alone` (`World::explode_for_test`
+on the claw, the dirt and the console: the copies unchanged, the
+ground dug as After Dark's outside the boxes), `the_factory_scripts_never_fail`
+(6000 ticks, no `ScriptError`, both still running, at most half of
+`olr_script`'s operation limits), `bots_play_the_live_factory` (both
+mods, 3000 ticks, invariants every tick) and
+`the_live_factory_stays_in_sync` (`netsim`: 3 clients, the `bad`
+profile, a late spectator, an `Ok` verdict with rollbacks). `tests/digest.rs` pins a SHA-256 of what
 the game receives from every bundled pack (each skin's drawn frames, the
 images the runtime uses, level and theme data; plan 13c): a pack format or
 importer change that alters a drawn pixel changes the snapshot. To accept a reviewed snapshot change, run
@@ -1251,8 +1276,11 @@ golden checksum streams in `fixtures/matches/`; issue #89's
 `live_golden_match_checksums`: those of `fixtures/matches-live/` (Classic,
 4 Deathmatch bots on `fixtures/live/levels`' live-test, 3000 ticks, its
 scripts running; issue #94's `classic-live-test-4chaos`, chaos bots,
-whose explosions wreck the crate, and some golden must wreck a copy) on the fixture levels laid over the content
-(`Content::open_layers`), each also `verify`d (determinism and the replay
+whose explosions wreck the crate, and some golden must wreck a copy;
+issue #97's `classic-factory-live-4dm`, 4 Deathmatch bots on Liero
+Factory Reloaded, its crane and console live) on the fixture levels and
+`content/reloaded` laid over the content (`common::live_content`,
+`Content::open_layers`), each also `verify`d (determinism and the replay
 round trip) and its coverage asserting state changes, arrivals and no
 script error; accept a change with `cargo xtask bless-regression --reason
 "<why>"`, which records both directories) run in `check`; so does
@@ -1263,8 +1291,9 @@ whose last hit was a chunk right after its `Crushed` marker);
 `tests/grid.rs` (both mods × 4 levels × 3 seeds, chaos and Deathmatch
 bots, every weapon and action kind covered; issue #91's
 `live_levels_play_through_the_grid`: the same grid on `common::LIVE_LEVELS`
-(the live fixture; #97 adds the factory) through `common::live_content`
-(`fixtures/live/levels` laid over the content), each run `verify`d and
+(the live fixture and, since #97, Liero Factory Reloaded) through
+`common::live_content` (`fixtures/live/levels` laid over
+`olr_content::bundled_roots` of the content), each run `verify`d and
 within the 10 ms p99 tick, the weapons' coverage staying the imported
 levels'; `long_bot_match_bounded`, 30 minutes) runs in `full`
 (`OLR_FULL_TESTS=1`).

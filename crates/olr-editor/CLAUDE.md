@@ -791,7 +791,9 @@ whose column tab is `LAYERS`);
     Reloaded links them). Issue #96's
     `liero_factory_reloaded_opens_with_its_copies`: the shipped level
     built from assets opens unchanged, its copies listed by id, its bake
-    the pack's; Edit library asset and a double click open a built-in
+    the pack's (since issue #97 outside the crane's and the console's
+    boxes: the pack's bake leaves its Live copies out, the canvas draws
+    them); Edit library asset and a double click open a built-in
     copy as the library's asset, Edit in level the ground.
   - **Operations** run `olr_edit::placed`'s on a light pack
     (`placement_op`: the ground's asset a one-pixel stand-in with the

@@ -18,7 +18,9 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
   same without the camera shake (`Camera::shake_for(&[Event], now)` shakes
   for an explosion first seen in it). `build(&world, alpha, &assets, &mut list)`
   per drawn frame: `Camera::process` (hard lock, shake, clamp), then the
-  layers. The game's view is `Viewport::GAME`, 427 × 192 world pixels for
+  layers. `Camera::look_at(x, y)` (issue #97, tools; no OLX counterpart)
+  centres a camera on a world point and follows no worm (target −1), so
+  `process` keeps it there, clamped. The game's view is `Viewport::GAME`, 427 × 192 world pixels for
   every window (spec §19 E4 as amended after the v0.1 playtest);
   `Viewport::from_aspect` (240 high) stays for tools and the goldens. The caller appends `olr-fx`'s entities to `Layer::Entities`.
 - **Views** (issue #27, split screen): `Scene::new` makes one view
