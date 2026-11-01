@@ -43,4 +43,9 @@ byte for byte, and running one again changes nothing.
   script, notes, `level bake`, `level check-scripts` and `pack check`.
   Its inputs are under `tools/levels/factory/`: `crane.rhai` (the
   Crane's default script), `level.rhai` (the level script), `art/` and
-  `sounds/` (`tools/sounds/factory_sounds.py`).
+  `sounds/` (`tools/sounds/factory_sounds.py`). Issue #98: it also
+  paints the Strip light's `strip-dim.png` (60 %) and `strip-off.png`
+  (the unlit grey `OFF`) from After Dark's first strip, makes the Strip
+  light again by its block (states `On`, `Dim`, `Off`, `buzz.wav` and
+  `tick.wav`, the default script `tube.rhai`), updates `s` and switches
+  `LIVE_STRIPS` (`strip-2`, `strip-4`, `strip-7`) live.
