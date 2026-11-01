@@ -1,0 +1,113 @@
+(
+    name: "Control desk",
+    size: (30, 11),
+    elements: [
+        (
+            id: "backdrop",
+            name: "Background",
+            kind: Drawn(
+                material: Background,
+                size: (30, 11),
+            ),
+            surface: "concrete",
+            surface_map: true,
+        ),
+        (
+            id: "screens",
+            name: "Screens",
+            kind: Drawn(
+                material: Background,
+                at: (2, 1),
+                size: (26, 3),
+            ),
+            glow: (
+                strength: 90,
+                group: "screens",
+            ),
+            surface: "glass",
+        ),
+        (
+            id: "displays",
+            name: "Displays",
+            kind: Drawn(
+                material: Background,
+                at: (5, 5),
+                size: (21, 1),
+            ),
+            glow: (
+                strength: 100,
+                group: "displays",
+            ),
+            surface: "glass",
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "screens",
+            intensity: 450,
+            reach: Pixels(48),
+        ),
+        (
+            id: "displays",
+            intensity: 180,
+            reach: Pixels(28),
+            animation: Flicker(
+                speed: 6,
+                depth: 25,
+            ),
+        ),
+    ],
+    materials: [
+        (
+            id: "concrete",
+            name: "Concrete",
+            notes: "Heavy and dense: slow to warm, slow to cool.",
+            light_soak: 2,
+            heat: (
+                capacity: 140,
+                conductivity: 80,
+                cooling: 80,
+            ),
+        ),
+        (
+            id: "metal",
+            name: "Metal",
+            notes: "Steel: heat runs far through it, so a blast warms a wide patch less; it sheds heat fast to the air.",
+            heat: (
+                capacity: 80,
+                conductivity: 600,
+                cooling: 150,
+            ),
+        ),
+        (
+            id: "glass",
+            name: "Glass",
+            notes: "Glows amber when hot and lights little around it.",
+            heat: (
+                capacity: 90,
+                conductivity: 40,
+                cooling: 70,
+                look: (
+                    ramp: [
+                        (
+                            temperature: 120,
+                            colour: "#401800",
+                            glow: 0,
+                        ),
+                        (
+                            temperature: 400,
+                            colour: "#d06010",
+                            glow: 60,
+                        ),
+                        (
+                            temperature: 1000,
+                            colour: "#ffd890",
+                            glow: 100,
+                        ),
+                    ],
+                    light: 50,
+                ),
+            ),
+        ),
+    ],
+)

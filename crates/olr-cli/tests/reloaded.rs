@@ -18,7 +18,8 @@ use olr_content::Content;
 use olr_data::manifest::PackKind;
 use olr_vfs::DirFs;
 
-const FACTORY: &str = "olr-level-liero-factory-after-dark";
+const AFTER_DARK: &str = "olr-level-liero-factory-after-dark";
+const FACTORY: &str = "olr-level-liero-factory-reloaded";
 const CASTLE: &str = "olr-level-castlestrike-reloaded";
 const RELOADED_MOD: &str = "olr-mod-liero-v1-reloaded";
 const CLASSIC: &str = "olx-classic";
@@ -60,7 +61,7 @@ fn reloaded_packs_check_clean() {
     let o = cli(&["pack", "check", dir.to_str().unwrap(), "--content", packs.to_str().unwrap()]);
     let out = String::from_utf8_lossy(&o.stdout);
     assert!(
-        o.status.success() && out.contains("checked 4 packs: 0 errors, 0 warnings"),
+        o.status.success() && out.contains("checked 5 packs: 0 errors, 0 warnings"),
         "{out}{}",
         String::from_utf8_lossy(&o.stderr)
     );
@@ -71,7 +72,7 @@ fn reloaded_packs_check_clean() {
 #[test]
 fn reloaded_and_imported_packs_share_no_id() {
     let own = ids(&reloaded_dir());
-    assert_eq!(own, BTreeSet::from([FACTORY, CASTLE, RELOADED_MOD, FIREFLY].map(String::from)));
+    assert_eq!(own, BTreeSet::from([AFTER_DARK, FACTORY, CASTLE, RELOADED_MOD, FIREFLY].map(String::from)));
     let imported = ids(&packs_dir());
     let shared: Vec<&String> = own.intersection(&imported).collect();
     assert!(shared.is_empty(), "content/reloaded and content/packs share {shared:?}");
@@ -83,7 +84,11 @@ fn reloaded_and_imported_packs_share_no_id() {
 fn the_bundled_content_lists_the_reloaded_levels() {
     let content = Content::open_bundled(&packs_dir()).unwrap();
     let levels = content.ids(PackKind::Level);
-    for (id, name) in [(FACTORY, "Liero Factory After Dark"), (CASTLE, "Castle Strike Reloaded")] {
+    for (id, name) in [
+        (AFTER_DARK, "Liero Factory After Dark"),
+        (FACTORY, "Liero Factory Reloaded"),
+        (CASTLE, "Castle Strike Reloaded"),
+    ] {
         assert!(levels.contains(&id.to_string()), "{id}");
         assert_eq!(content.pack_name(id), Some(name));
         assert!(content.load_level(id).unwrap().has_look(), "{id} is lit");
@@ -109,7 +114,7 @@ fn the_bundled_content_lists_the_reloaded_levels() {
 #[test]
 fn the_factory_is_the_imported_level_but_for_its_look() {
     use olr_format::image_io::decode_rgba;
-    let (ours, olx) = (reloaded_dir().join(FACTORY), packs_dir().join("olx-level-liero-factory"));
+    let (ours, olx) = (reloaded_dir().join(AFTER_DARK), packs_dir().join("olx-level-liero-factory"));
     let read = |p: PathBuf| decode_rgba(&std::fs::read(&p).unwrap()).unwrap();
     assert!(
         std::fs::read(ours.join("material.png")).unwrap() == std::fs::read(olx.join("material.png")).unwrap()
@@ -188,7 +193,7 @@ fn the_factory_is_the_imported_level_but_for_its_look() {
 /// air and the sky in a beam glow with its own light.
 #[test]
 fn the_factorys_pcs_and_headlights_cast_beams() {
-    let src = olr_format::levels::read_level_files(&DirFs::new(reloaded_dir().join(FACTORY))).unwrap();
+    let src = olr_format::levels::read_level_files(&DirFs::new(reloaded_dir().join(AFTER_DARK))).unwrap();
     assert_eq!(src.look.as_ref().unwrap().haze, 50);
     assert!(src.haze.is_none(), "no haze map: the haze is even");
     let map = src.glow_beams.expect("look/glow-beam.png");
@@ -247,7 +252,7 @@ fn assert_bakes_as(level: &str, want: &[(&str, &str)]) {
 #[test]
 fn after_dark_bakes_as_the_old_factory() {
     assert_bakes_as(
-        FACTORY,
+        AFTER_DARK,
         &[
             ("material.png", "cc750fbac345973c858b238fd1352756d34854e8f54373aaf6ff63963ce33d2e"),
             ("front.png", "24fed3d690832539f89a784b271b8b7ec93c1dc404784f988892decb791bd99a"),
@@ -386,11 +391,18 @@ fn bots_arm_for_liero_reloaded_as_for_classic() {
 }
 
 /// A headless bot match plays on each level, and on Liero v1.0 Reloaded
-/// (invariants every tick).
+/// (invariants every tick); Liero Factory Reloaded (issue #96) with both
+/// mods.
 #[test]
 fn the_reloaded_packs_play() {
     let packs = packs_dir();
-    for (m, level) in [(CLASSIC, FACTORY), (CLASSIC, CASTLE), (RELOADED_MOD, FACTORY)] {
+    for (m, level) in [
+        (CLASSIC, AFTER_DARK),
+        (CLASSIC, CASTLE),
+        (RELOADED_MOD, AFTER_DARK),
+        (CLASSIC, FACTORY),
+        (RELOADED_MOD, FACTORY),
+    ] {
         let o = cli(&[
             "match",
             "--mod",
@@ -424,7 +436,7 @@ fn the_reloaded_levels_draw_lit() {
     }
     let tmp = tempfile::tempdir().unwrap();
     let packs = packs_dir();
-    for (m, level) in [(CLASSIC, FACTORY), (CLASSIC, CASTLE), (RELOADED_MOD, CASTLE)] {
+    for (m, level) in [(CLASSIC, AFTER_DARK), (CLASSIC, CASTLE), (RELOADED_MOD, CASTLE)] {
         let out = tmp.path().join(format!("{m}-{level}.png"));
         let o = cli(&[
             "render-match",
@@ -445,5 +457,225 @@ fn the_reloaded_levels_draw_lit() {
         ]);
         assert!(o.status.success(), "{m} on {level}: {}", String::from_utf8_lossy(&o.stderr));
         assert!(String::from_utf8_lossy(&o.stdout).contains("glowing discs"), "{m} on {level}: a lit match");
+    }
+}
+
+/// The baked level of a Reloaded pack, as the game reads it.
+fn baked(level: &str) -> olr_format::levels::LevelSource {
+    olr_format::levels::read_level_files(&DirFs::new(reloaded_dir().join(level))).unwrap()
+}
+
+/// Issue #96: Liero Factory Reloaded, built from assets, bakes as Liero
+/// Factory After Dark. `material.png`, `front.png`, `back.png` and the
+/// distant sky byte for byte; per pixel, the glow's strength, its group's
+/// settings (colour, intensity, reach, animation: groups are internal to
+/// assets, so the bake may number or name them otherwise), the beams'
+/// direction and spread, the glass and the surface materials (by their
+/// settings, not their numbers); and the look but for its groups and
+/// materials, which hold the same settings.
+#[test]
+fn the_new_factory_bakes_as_after_dark() {
+    use olr_format::look::GlowGroupSource;
+    use olr_format::materials::MaterialSource;
+    let (ours, theirs) = (reloaded_dir().join(FACTORY), reloaded_dir().join(AFTER_DARK));
+    for file in ["material.png", "front.png", "back.png", "distant/0.png"] {
+        let same = std::fs::read(ours.join(file)).unwrap() == std::fs::read(theirs.join(file)).unwrap();
+        assert!(same, "{file} differs from After Dark's");
+    }
+    let (a, b) = (baked(FACTORY), baked(AFTER_DARK));
+    assert_eq!((a.size, a.art_scale, &a.theme, &a.objects), (b.size, b.art_scale, &b.theme, &b.objects));
+    let (la, lb) = (a.look.as_ref().unwrap(), b.look.as_ref().unwrap());
+    // A group or a material by its settings, its id left out.
+    let group = |l: &olr_format::look::LookSource, i: u8| {
+        (i > 0).then(|| GlowGroupSource { id: String::new(), ..l.glow_groups[usize::from(i) - 1].clone() })
+    };
+    let material = |l: &olr_format::look::LookSource, i: u8| {
+        (i > 0).then(|| MaterialSource { id: String::new(), ..l.materials[usize::from(i) - 1].clone() })
+    };
+    let bare = |l: &olr_format::look::LookSource| {
+        let mut l = l.clone();
+        l.glow_groups.clear();
+        l.materials.clear();
+        l
+    };
+    assert!(bare(la) == bare(lb), "the look differs");
+    let settings = |l: &olr_format::look::LookSource| {
+        let mut g: Vec<_> = (1..=l.glow_groups.len() as u8).map(|i| format!("{:?}", group(l, i))).collect();
+        let mut m: Vec<_> = (1..=l.materials.len() as u8).map(|i| format!("{:?}", material(l, i))).collect();
+        g.sort();
+        m.sort();
+        (g, m)
+    };
+    assert_eq!(settings(la), settings(lb), "the groups' and materials' settings");
+    // The distant sky's glow.
+    assert_eq!(a.distant.len(), 1);
+    let (da, db) = (&a.distant[0], &b.distant[0]);
+    assert_eq!((da.at, da.depth), (db.at, db.depth));
+    let (ga, gb) = (da.glow.as_ref().unwrap(), db.glow.as_ref().unwrap());
+    assert_eq!((ga.strength, &ga.mask), (gb.strength, &gb.mask));
+    assert_eq!(group(la, ga.group), group(lb, gb.group), "the sky's group");
+    assert_eq!(
+        a.distant_surfaces.iter().map(|s| s.is_some()).collect::<Vec<_>>(),
+        b.distant_surfaces.iter().map(|s| s.is_some()).collect::<Vec<_>>()
+    );
+    // The glow maps, per pixel.
+    let (wa, wb) = (a.glow.as_ref().unwrap(), b.glow.as_ref().unwrap());
+    assert_eq!((wa.art, wa.world), (wb.art, wb.world));
+    assert!(wa.front == wb.front && wa.back == wb.back, "the glow's strength");
+    let (w, h) = a.size;
+    let mut groups = BTreeSet::new();
+    for i in 0..(w * h) as usize {
+        let (x, y) = (i as u32 % w, i as u32 / w);
+        for (ga, gb, side) in
+            [(wa.groups[i], wb.groups[i], "front"), (wa.groups_back[i], wb.groups_back[i], "back")]
+        {
+            assert_eq!(group(la, ga), group(lb, gb), "({x}, {y}): the {side} glow group");
+            groups.insert(ga);
+        }
+    }
+    assert!(groups.len() >= 9, "every group glows somewhere: {groups:?}");
+    let (ba, bb) = (a.glow_beams.as_ref().unwrap(), b.glow_beams.as_ref().unwrap());
+    assert!(ba.world == bb.world && ba.front == bb.front && ba.back == bb.back, "the beams");
+    let (sa, sb) = (a.glass.as_ref().unwrap(), b.glass.as_ref().unwrap());
+    assert!(sa.art == sb.art && sa.texels == sb.texels, "the glass");
+    let (ma, mb) = (a.surface.as_ref().unwrap(), b.surface.as_ref().unwrap());
+    assert_eq!(ma.world, mb.world);
+    for i in 0..(w * h) as usize {
+        let (x, y) = (i as u32 % w, i as u32 / w);
+        assert_eq!(material(la, ma.front[i]), material(lb, mb.front[i]), "({x}, {y}): the front material");
+        assert_eq!(material(la, ma.back[i]), material(lb, mb.back[i]), "({x}, {y}): the back material");
+    }
+    assert_eq!((a.clear.is_some(), a.haze.is_some(), a.live.is_some()), (false, false, false));
+    assert_eq!((b.clear.is_some(), b.haze.is_some()), (false, false));
+}
+
+/// Issue #96: Liero Factory Reloaded is made of assets: its copies by id,
+/// each with its key, asset, origin, place and size, every one static;
+/// the ground and the sky the level's own (the sky distant at 90), the
+/// rest built-in and as the library has them (`level library` says
+/// `same`: a built-in asset changed without the level fails here).
+#[test]
+fn the_new_factory_is_made_of_assets() {
+    use olr_format::levels::{AssetOrigin, read_placed_files};
+    let dir = reloaded_dir().join(FACTORY);
+    let placed = read_placed_files(&DirFs::new(&dir)).unwrap().expect("editor/placed.ron");
+    let strips = [
+        (778, 80),
+        (1004, 80),
+        (1119, 80),
+        (984, 177),
+        (1067, 177),
+        (314, 286),
+        (427, 286),
+        (524, 286),
+        (187, 342),
+    ];
+    let mut want: Vec<(String, &str, Option<&str>, (i32, i32), (u32, u32))> = vec![
+        ("ground".into(), "ground", None, (0, 0), (1200, 480)),
+        ("sky".into(), "y", None, (0, 0), (1200, 480)),
+    ];
+    for (i, at) in strips.into_iter().enumerate() {
+        want.push((format!("strip-{}", i + 1), "s", Some("strip-light"), at, (29, 2)));
+    }
+    for (id, key, folder, at, size) in [
+        ("ceil-lamp", "l", "ceiling-lamp", (319, 137), (13, 6)),
+        ("screen", "c", "computer-screen", (906, 83), (14, 14)),
+        ("desk", "d", "control-desk", (903, 119), (30, 11)),
+        ("beacon", "w", "warning-beacon", (951, 45), (25, 28)),
+        ("crane", "k", "crane", (762, 269), (114, 50)),
+        ("console", "o", "console", (933, 269), (33, 64)),
+        ("sign", "t", "lit-sign", (934, 299), (31, 21)),
+        ("gauge", "g", "gauge", (1059, 144), (48, 27)),
+    ] {
+        want.push((id.into(), key, Some(folder), at, size));
+    }
+    let file = &placed.file;
+    let got: Vec<_> = file
+        .copies
+        .iter()
+        .map(|c| {
+            let asset = file.assets.iter().find(|a| a.key == c.asset).unwrap();
+            let origin = match &asset.origin {
+                AssetOrigin::Own => None,
+                AssetOrigin::Builtin(f) => Some(f.as_str()),
+                o => panic!("{}: {o:?}", c.id),
+            };
+            let size = olr_format::levels::placed_size(c, &placed.assets[&c.asset].file);
+            (c.id.clone(), c.asset.as_str(), origin, c.at, size)
+        })
+        .collect();
+    assert_eq!(got, want);
+    for c in &file.copies {
+        assert!(!c.live && c.state.is_none() && c.values.is_empty(), "{}: static", c.id);
+        assert!(!c.free_aspect, "{}: its aspect kept", c.id);
+        assert_eq!(c.distant, (c.id == "sky").then_some(90), "{}", c.id);
+    }
+    assert!(placed.level_script.is_none() && placed.scripts.is_empty(), "no scripts");
+    let o = cli(&["level", "library", dir.to_str().unwrap(), "--content", packs_dir().to_str().unwrap()]);
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert!(o.status.success(), "{out}{}", String::from_utf8_lossy(&o.stderr));
+    let lines: Vec<&str> = out.lines().collect();
+    let builtin: BTreeSet<&str> = want.iter().filter_map(|w| w.2.map(|f| (w.1, f))).map(|(k, _)| k).collect();
+    assert_eq!(lines.len(), builtin.len(), "{out}");
+    for (key, folder) in want.iter().filter_map(|w| Some((w.1, w.2?))).collect::<BTreeSet<_>>() {
+        assert!(lines.contains(&format!("{key}: same (built-in {folder})").as_str()), "{key}: {out}");
+    }
+}
+
+/// Issue #96: the same bot match (Classic, 4 bots, seed 1, 1000 ticks) on
+/// Liero Factory Reloaded and on After Dark gives the same world checksum
+/// every tick (the checksum covers the terrain, not the level's hash).
+#[test]
+fn the_new_factory_plays_as_after_dark() {
+    use olr_cli::runner::{Match, Options};
+    use olr_cli::spec::MatchSpec;
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    let run = |level: &str| {
+        let spec = MatchSpec::new(CLASSIC, level, 4, 1, 1000);
+        let mut m = Match::new(&content, &spec, &Options::default()).unwrap();
+        let mut sums = vec![m.world().checksum()];
+        while m.step() {
+            sums.push(m.world().checksum());
+        }
+        let run = m.finish();
+        assert!(run.failure().is_none(), "{level}: {}", run.summary());
+        assert_eq!(run.ticks, 1000, "{level}");
+        sums
+    };
+    let (ours, theirs) = (run(FACTORY), run(AFTER_DARK));
+    assert_eq!(ours.len(), theirs.len());
+    if let Some(t) = (0..ours.len()).find(|&t| ours[t] != theirs[t]) {
+        panic!("tick {t}: Liero Factory Reloaded played differently from After Dark");
+    }
+}
+
+/// Issue #96, on the GPU tier: `olr-cli look-preview` of Liero Factory
+/// Reloaded and of After Dark gives the same PNG at the offices, the
+/// crane, the control room and the truck.
+#[test]
+fn the_new_factory_draws_as_after_dark() {
+    if std::env::var_os("OLR_GPU_TESTS").is_none() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let packs = packs_dir();
+    for at in ["400,200", "800,300", "930,110", "100,420"] {
+        let draw = |level: &str| {
+            let out = tmp.path().join(format!("{level}-{at}.png"));
+            let dir = reloaded_dir().join(level);
+            let o = cli(&[
+                "look-preview",
+                dir.to_str().unwrap(),
+                "--at",
+                at,
+                "--content",
+                packs.to_str().unwrap(),
+                "--out",
+                out.to_str().unwrap(),
+            ]);
+            assert!(o.status.success(), "{level} at {at}: {}", String::from_utf8_lossy(&o.stderr));
+            std::fs::read(&out).unwrap()
+        };
+        assert!(draw(FACTORY) == draw(AFTER_DARK), "at {at}: the new factory draws otherwise");
     }
 }

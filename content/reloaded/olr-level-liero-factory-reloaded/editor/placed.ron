@@ -1,0 +1,145 @@
+(
+    assets: [
+        (
+            key: "ground",
+            origin: Own,
+        ),
+        (
+            key: "y",
+            origin: Own,
+        ),
+        (
+            key: "s",
+            origin: Builtin("strip-light"),
+        ),
+        (
+            key: "l",
+            origin: Builtin("ceiling-lamp"),
+        ),
+        (
+            key: "c",
+            origin: Builtin("computer-screen"),
+        ),
+        (
+            key: "d",
+            origin: Builtin("control-desk"),
+        ),
+        (
+            key: "w",
+            origin: Builtin("warning-beacon"),
+        ),
+        (
+            key: "k",
+            origin: Builtin("crane"),
+        ),
+        (
+            key: "o",
+            origin: Builtin("console"),
+        ),
+        (
+            key: "t",
+            origin: Builtin("lit-sign"),
+        ),
+        (
+            key: "g",
+            origin: Builtin("gauge"),
+        ),
+    ],
+    copies: [
+        (
+            id: "ground",
+            asset: "ground",
+            locked: true,
+        ),
+        (
+            id: "sky",
+            asset: "y",
+            distant: 90,
+        ),
+        (
+            id: "strip-1",
+            asset: "s",
+            at: (778, 80),
+        ),
+        (
+            id: "strip-2",
+            asset: "s",
+            at: (1004, 80),
+        ),
+        (
+            id: "strip-3",
+            asset: "s",
+            at: (1119, 80),
+        ),
+        (
+            id: "strip-4",
+            asset: "s",
+            at: (984, 177),
+        ),
+        (
+            id: "strip-5",
+            asset: "s",
+            at: (1067, 177),
+        ),
+        (
+            id: "strip-6",
+            asset: "s",
+            at: (314, 286),
+        ),
+        (
+            id: "strip-7",
+            asset: "s",
+            at: (427, 286),
+        ),
+        (
+            id: "strip-8",
+            asset: "s",
+            at: (524, 286),
+        ),
+        (
+            id: "strip-9",
+            asset: "s",
+            at: (187, 342),
+        ),
+        (
+            id: "ceil-lamp",
+            asset: "l",
+            at: (319, 137),
+        ),
+        (
+            id: "screen",
+            asset: "c",
+            at: (906, 83),
+        ),
+        (
+            id: "desk",
+            asset: "d",
+            at: (903, 119),
+        ),
+        (
+            id: "beacon",
+            asset: "w",
+            at: (951, 45),
+        ),
+        (
+            id: "crane",
+            asset: "k",
+            at: (762, 269),
+        ),
+        (
+            id: "console",
+            asset: "o",
+            at: (933, 269),
+        ),
+        (
+            id: "sign",
+            asset: "t",
+            at: (934, 299),
+        ),
+        (
+            id: "gauge",
+            asset: "g",
+            at: (1059, 144),
+        ),
+    ],
+)

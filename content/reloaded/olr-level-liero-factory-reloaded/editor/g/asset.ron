@@ -1,0 +1,147 @@
+(
+    name: "Gauge",
+    size: (48, 27),
+    elements: [
+        (
+            id: "rock",
+            name: "Rock",
+            kind: Drawn(
+                material: Rock,
+                size: (48, 27),
+            ),
+            surface: "stone",
+            surface_map: true,
+        ),
+        (
+            id: "rock-scr",
+            name: "Screens in rock",
+            kind: Drawn(
+                material: Rock,
+                at: (17, 18),
+                size: (11, 6),
+            ),
+            glow: (
+                strength: 90,
+                group: "screens",
+            ),
+            surface: "glass",
+        ),
+        (
+            id: "rock-disp",
+            name: "Displays in rock",
+            kind: Drawn(
+                material: Rock,
+                at: (6, 6),
+                size: (33, 16),
+            ),
+            glow: (
+                strength: 100,
+                group: "displays",
+            ),
+            surface: "glass",
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "screens",
+            intensity: 450,
+            reach: Pixels(48),
+        ),
+        (
+            id: "displays",
+            intensity: 180,
+            reach: Pixels(28),
+            animation: Flicker(
+                speed: 6,
+                depth: 25,
+            ),
+        ),
+    ],
+    materials: [
+        (
+            id: "stone",
+            name: "Stone",
+            notes: "Grey rock: the reference every heat value is a percent of. A blast leaves the rim glowing like lava, cooling slowly.",
+            light_soak: 2,
+            heat: (
+                capacity: 100,
+                conductivity: 100,
+                cooling: 100,
+            ),
+        ),
+        (
+            id: "metal",
+            name: "Metal",
+            notes: "Steel: heat runs far through it, so a blast warms a wide patch less; it sheds heat fast to the air.",
+            heat: (
+                capacity: 80,
+                conductivity: 600,
+                cooling: 150,
+            ),
+        ),
+        (
+            id: "wood",
+            name: "Wood",
+            notes: "Smoulders: warms easily, keeps its heat where it lands and glows like embers.",
+            heat: (
+                capacity: 50,
+                conductivity: 15,
+                cooling: 60,
+                look: (
+                    ramp: [
+                        (
+                            temperature: 80,
+                            colour: "#300c00",
+                            glow: 0,
+                        ),
+                        (
+                            temperature: 250,
+                            colour: "#9a2400",
+                            glow: 45,
+                        ),
+                        (
+                            temperature: 550,
+                            colour: "#ff6410",
+                            glow: 85,
+                        ),
+                        (
+                            temperature: 1000,
+                            colour: "#ffc060",
+                            glow: 100,
+                        ),
+                    ],
+                ),
+            ),
+        ),
+        (
+            id: "glass",
+            name: "Glass",
+            notes: "Glows amber when hot and lights little around it.",
+            heat: (
+                capacity: 90,
+                conductivity: 40,
+                cooling: 70,
+                look: (
+                    ramp: [
+                        (
+                            temperature: 120,
+                            colour: "#401800",
+                            glow: 0,
+                        ),
+                        (
+                            temperature: 400,
+                            colour: "#d06010",
+                            glow: 60,
+                        ),
+                        (
+                            temperature: 1000,
+                            colour: "#ffd890",
+                            glow: 100,
+                        ),
+                    ],
+                    light: 50,
+                ),
+            ),
+        ),
+    ],
+)

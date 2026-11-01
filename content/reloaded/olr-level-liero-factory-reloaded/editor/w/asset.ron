@@ -1,0 +1,76 @@
+(
+    name: "Warning beacon",
+    size: (25, 28),
+    elements: [
+        (
+            id: "backdrop",
+            name: "Background",
+            kind: Drawn(
+                material: Background,
+                size: (25, 28),
+            ),
+            surface: "concrete",
+            surface_map: true,
+        ),
+        (
+            id: "beacons",
+            name: "Beacons",
+            kind: Drawn(
+                material: Background,
+                at: (3, 1),
+                size: (19, 19),
+            ),
+            glow: (
+                strength: 100,
+                group: "beacons",
+            ),
+            surface: "metal",
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "beacons",
+            intensity: 200,
+            reach: Pixels(20),
+            animation: Pulse(
+                period_ms: 2400,
+                low: 30,
+                high: 100,
+            ),
+        ),
+    ],
+    materials: [
+        (
+            id: "stone",
+            name: "Stone",
+            notes: "Grey rock: the reference every heat value is a percent of. A blast leaves the rim glowing like lava, cooling slowly.",
+            light_soak: 2,
+            heat: (
+                capacity: 100,
+                conductivity: 100,
+                cooling: 100,
+            ),
+        ),
+        (
+            id: "concrete",
+            name: "Concrete",
+            notes: "Heavy and dense: slow to warm, slow to cool.",
+            light_soak: 2,
+            heat: (
+                capacity: 140,
+                conductivity: 80,
+                cooling: 80,
+            ),
+        ),
+        (
+            id: "metal",
+            name: "Metal",
+            notes: "Steel: heat runs far through it, so a blast warms a wide patch less; it sheds heat fast to the air.",
+            heat: (
+                capacity: 80,
+                conductivity: 600,
+                cooling: 150,
+            ),
+        ),
+    ],
+)

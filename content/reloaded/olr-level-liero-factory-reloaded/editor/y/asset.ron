@@ -1,0 +1,28 @@
+(
+    name: "Night sky",
+    size: (1200, 480),
+    elements: [
+        (
+            id: "sky",
+            name: "Sky",
+            kind: Image(
+                material: Background,
+                source: "sky.png",
+                at: (0, 0),
+                size: (1200, 480),
+            ),
+            glow: (
+                strength: 35,
+                group: "sky",
+            ),
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "sky",
+            colour: Tint("#8098d0"),
+            intensity: 300,
+            reach: Unlimited,
+        ),
+    ],
+)

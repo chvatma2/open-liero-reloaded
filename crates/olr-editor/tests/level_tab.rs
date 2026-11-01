@@ -371,8 +371,14 @@ fn every_shipped_level_saves_byte_identical() {
         .collect();
     levels.sort();
     assert!(!levels.is_empty());
+    // The built-in assets, as the game's host has them (issue #96: Liero
+    // Factory Reloaded links them; without them it opens on the library
+    // notice).
+    let yours = tempfile::tempdir().unwrap();
+    crate::common::set_library(&built_in_assets(), yours.path());
     for level in levels {
         let (_tmp, mut s) = editor_at(&root, &level);
+        assert!(s.dialog().is_none(), "{}: opens on no dialog", level.display());
         let dir = s.document().unwrap().dir().to_path_buf();
         edit_ground(&mut s);
         run(&mut s, A::ShowTab(DocTab::Level));
@@ -1043,4 +1049,53 @@ fn move_and_resize_a_copy_through_the_canvas() {
     canvas_drag(&mut h, edge, (edge.0 + 10, edge.1), egui::Modifiers::NONE);
     assert_eq!(size(&h.state().state, &id), (38, 32));
     assert_eq!(at(&h.state().state, &id), moved);
+}
+
+/// Issue #96: Liero Factory Reloaded, built from assets, opens whole in
+/// the level tab: unchanged, its copies listed by id bottom first, its
+/// bake the pack's. A built-in copy opens in the asset tab as the
+/// library's asset (Edit library asset, and a double click), the ground
+/// through Edit in level.
+#[test]
+fn liero_factory_reloaded_opens_with_its_copies() {
+    let Some(root) = content() else { return };
+    let level =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content/reloaded/olr-level-liero-factory-reloaded");
+    let yours = tempfile::tempdir().unwrap();
+    let assets = crate::common::set_library(&built_in_assets(), yours.path());
+    let (_t, mut s) = editor_at(&root, &level);
+    assert!(s.dialog().is_none(), "no library notice: every copy is the library's");
+    run(&mut s, A::AssetsChanged(assets));
+    run(&mut s, A::Tool(Tool::Select));
+    assert!(!s.dirty(), "{:?}", s.status().message);
+    let strips = (1..=9).map(|i| format!("strip-{i}"));
+    let rest = ["ceil-lamp", "screen", "desk", "beacon", "crane", "console", "sign", "gauge"];
+    let want: Vec<String> =
+        ["ground", "sky"].map(String::from).into_iter().chain(strips).chain(rest.map(String::from)).collect();
+    assert_eq!(copy_ids(&s), want);
+    use olr_format::levels::AssetOrigin;
+    let doc = s.document().unwrap();
+    assert_eq!(doc.copy_origin("ground"), Some(AssetOrigin::Own));
+    assert_eq!(doc.copy_origin("sky"), Some(AssetOrigin::Own));
+    assert_eq!(doc.copy_origin("crane"), Some(AssetOrigin::Builtin("crane".into())));
+    assert_eq!(doc.copy_origin("strip-7"), Some(AssetOrigin::Builtin("strip-light".into())));
+    assert_eq!(doc.copy_box("crane"), Some(((762, 269), (114, 50))));
+    let pack = olr_edit::pack::load(&level).unwrap();
+    let olr_edit::pack::Source::Level(stored) = &pack.source else { panic!() };
+    let l = doc.level();
+    assert!(l.material == stored.material && l.front == stored.front && l.back == stored.back, "the bake");
+    // A library copy opens as the library's asset.
+    run(&mut s, A::EditCopy("crane".into()));
+    assert_eq!(s.doc_tab(), DocTab::Asset);
+    assert_eq!(s.asset_key(), Some(&olr_editor::AssetKey { builtin: true, id: "crane".into() }));
+    run(&mut s, A::ShowTab(DocTab::Level));
+    let p = on(&s, "gauge");
+    run(&mut s, A::DoubleClick { world: p });
+    assert_eq!(s.asset_key(), Some(&olr_editor::AssetKey { builtin: true, id: "gauge".into() }));
+    // The ground through Edit in level.
+    run(&mut s, A::ShowTab(DocTab::Level));
+    run(&mut s, A::EditCopy("ground".into()));
+    assert!(s.ground_open());
+    run(&mut s, A::ShowTab(DocTab::Level));
+    assert!(!s.dirty());
 }

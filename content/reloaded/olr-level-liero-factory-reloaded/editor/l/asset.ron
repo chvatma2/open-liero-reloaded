@@ -1,0 +1,92 @@
+(
+    name: "Ceiling lamp",
+    size: (13, 6),
+    elements: [
+        (
+            id: "rock",
+            name: "Rock",
+            kind: Drawn(
+                material: Rock,
+                size: (13, 3),
+            ),
+            surface: "stone",
+            surface_map: true,
+        ),
+        (
+            id: "lamps",
+            name: "Lamps",
+            kind: Drawn(
+                material: Background,
+                at: (2, 3),
+                size: (9, 3),
+            ),
+            glow: (
+                strength: 100,
+                group: "lamps",
+            ),
+            surface: "glass",
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "lamps",
+            colour: Tint("#ffe6c0"),
+            intensity: 500,
+            reach: Pixels(90),
+        ),
+    ],
+    materials: [
+        (
+            id: "stone",
+            name: "Stone",
+            notes: "Grey rock: the reference every heat value is a percent of. A blast leaves the rim glowing like lava, cooling slowly.",
+            light_soak: 2,
+            heat: (
+                capacity: 100,
+                conductivity: 100,
+                cooling: 100,
+            ),
+        ),
+        (
+            id: "concrete",
+            name: "Concrete",
+            notes: "Heavy and dense: slow to warm, slow to cool.",
+            light_soak: 2,
+            heat: (
+                capacity: 140,
+                conductivity: 80,
+                cooling: 80,
+            ),
+        ),
+        (
+            id: "glass",
+            name: "Glass",
+            notes: "Glows amber when hot and lights little around it.",
+            heat: (
+                capacity: 90,
+                conductivity: 40,
+                cooling: 70,
+                look: (
+                    ramp: [
+                        (
+                            temperature: 120,
+                            colour: "#401800",
+                            glow: 0,
+                        ),
+                        (
+                            temperature: 400,
+                            colour: "#d06010",
+                            glow: 60,
+                        ),
+                        (
+                            temperature: 1000,
+                            colour: "#ffd890",
+                            glow: 100,
+                        ),
+                    ],
+                    light: 50,
+                ),
+            ),
+        ),
+    ],
+)
