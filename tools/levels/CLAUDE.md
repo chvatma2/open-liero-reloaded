@@ -22,3 +22,12 @@ byte for byte, and running one again changes nothing.
   stars (SplitMix64, seed 63). Writes its images to
   `target/reloaded-skies/`; a level already holding a distant layer is
   left alone. `reloaded_materials.py` leaves distant elements out.
+- `factory_assets.py` (issue #96): Liero Factory Reloaded from assets:
+  the Crane, the Console and the Gauge made by their blocks in
+  `content/assets/README.md` (each on a fresh copy of After Dark), then
+  the level: a copy of After Dark (`pack new --keep-origin`), its notes,
+  the pieces' rectangles erased from the ground's layers (empty layers
+  removed), the sky as its own distant copy and each built-in asset
+  placed 1:1 where its pixels were. Its scratch is
+  `target/factory-assets/`. The bake stays After Dark's
+  (`olr-cli`'s `tests/reloaded.rs`).

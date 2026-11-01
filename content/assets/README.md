@@ -9,12 +9,25 @@ programs find this directory beside the content directory
 README stays behind). `cargo xtask check` reads every one whole
 (`olr-cli asset check`, in `olr-cli`'s `tests/asset.rs`).
 They are in the 0.3 asset format (issue #71) and stateless: one state,
-nothing exposed, no sounds, health or script.
+nothing exposed, no sounds, health or script. All glow but the Crane.
 
 Each was cut from OLR's own Reloaded levels (`content/reloaded/`) with
-`olr-cli asset save`; to make one again, run its command from the
-repository's root. They carry the surface materials their pixels have
-there (issue #46), so placed in a level they heat as they did in it.
+`olr-cli asset save`. Its entry below holds one block of `olr-cli` lines
+(issue #96) that makes it: its `asset save … --out
+content/assets/<folder>`; lines before it may prepare the source level
+(`level element …` on After Dark's path), lines after it may edit the
+folder (`asset state`, `asset expose`, `asset sound`, `asset script`).
+Blocks read only committed inputs: the Reloaded packs and files under
+`tools/levels/factory/`. `olr-cli`'s `tests/asset.rs`
+(`built_in_assets_are_what_their_commands_make`) runs each block on fresh
+copies of the packs it names and compares the result with the folder
+(`asset.ron`, the element files, sounds and script; never `thumb.png`),
+one block per asset. To run one by hand, from the repository's root, run
+its preparing lines on a copy of the level, never on the committed pack
+(or restore it with `git checkout` after). They carry the surface
+materials their pixels have there (issue #46), so placed in a level they
+heat as they did in it. Liero Factory Reloaded (`content/reloaded/`) is
+built from them.
 
 A level places one as a copy (issue #75): `olr-cli level copy add <pack>
 content/assets/<id> --at X,Y` (the level holds its own copy of the

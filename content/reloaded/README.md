@@ -277,6 +277,63 @@ Remade OLX content is named "<Old name> Reloaded".
   python3 -I tools/levels/reloaded_materials.py target/debug/olr-cli
   ```
 
+- `olr-level-liero-factory-reloaded/`: **Liero Factory Reloaded**
+  (issue #96), Liero Factory After Dark rebuilt from assets (the design
+  `docs/superpowers/specs/2026-10-26-asset-based-levels-design.md`,
+  "Liero Factory"): its origin, size, theme, spawns, look and surface
+  materials are After Dark's, and so is its bake, byte for byte
+  (`material.png`, `front.png`, `back.png`, the distant sky and every
+  `look/` file; `olr-cli`'s `tests/reloaded.rs`). Nothing moves yet:
+  every copy is static, and issues #97, #98 and #99 bring it alive (the
+  pieces they animate are already copies of their own). Laid out as #73
+  and #74 lay a level out: `editor/placed.ron`, the ground at `editor/`,
+  each other asset at `editor/<key>/`, and the baked files beside, so it
+  plays without any library.
+
+  | Key | Asset (origin) | Where (world pixels) | Copy ids |
+  |---|---|---|---|
+  | `ground` | the level's own: Ground (After Dark's `backdrop`, `dirt` and `rock` and its glowing, glass and beam layers no piece takes) | the whole level | `ground` |
+  | `y` | the level's own: Night sky (After Dark's sky image), distant at 90 | the whole level | `sky` |
+  | `s` | built-in `strip-light` | the nine two-row strips (29 × 2) at (778, 80), (1004, 80), (1119, 80), (984, 177), (1067, 177), (314, 286), (427, 286), (524, 286), (187, 342) | `strip-1` … `strip-9` |
+  | `l` | built-in `ceiling-lamp` | (319, 137), 13 × 6 | `ceil-lamp` |
+  | `c` | built-in `computer-screen` | (906, 83), 14 × 14 | `screen` |
+  | `d` | built-in `control-desk` | (903, 119), 30 × 11 | `desk` |
+  | `w` | built-in `warning-beacon` | the first roof speaker, (951, 45), 25 × 28 | `beacon` |
+  | `k` | built-in `crane` | (762, 269), 114 × 50 (x 762-875, y 269-318) | `crane` |
+  | `o` | built-in `console` | (933, 269), 33 × 64, the sign's rectangle empty | `console` |
+  | `t` | built-in `lit-sign` | (934, 299), 31 × 21, above the console | `sign` |
+  | `g` | built-in `gauge` | (1059, 144), 48 × 27 | `gauge` |
+
+  Each copy is 1:1, its aspect kept, and the ground lost exactly its
+  pixels (`level element erase --rect` on the layers the piece was cut
+  from); the ground's `screens`, `ctrl-scr`, `rock-scr`, `displays` and
+  `rock-disp` were left empty and removed. Stays in the ground, in After
+  Dark's layers:
+  - **the five one-row strips** (x 318, 444 and 537 at y 183; x 373 and
+    498 at y 237): they show one row of the 29 × 2 Strip light (the
+    second lies under rock), so the Strip light there would add pixels;
+  - **the second roof speaker** (about x 987): it is drawn broken (a dark
+    hole in its ring), not the Warning beacon's picture;
+  - the windows and their broken panes (`glass`, `glass-rim`), the PCs
+    (`rock-pcs`, `pcs-right`, `pcs-left`), the truck's `headlights`, the
+    laser by the ramp (`rock-bcn`), and the brackets beside the gauge.
+
+  Made with `tools/levels/factory_assets.py` (stdlib only), `olr-cli`
+  commands only: the Crane, the Console and the Gauge by their blocks in
+  `content/assets/README.md`, then `pack new level … --from <After Dark>
+  --keep-origin`, `level notes`, the ground's `level element erase`s,
+  the sky cut with `asset save --elements sky` (made near first) and
+  placed with `level copy add … --key y --id sky`, `level copy set sky
+  --distant 90`, and each built-in asset placed with `level copy add …
+  --key <k> --id <id> --at X,Y` (a second strip reusing the first's
+  asset). Running it again makes the same bytes; its scratch files are
+  in `target/factory-assets/`.
+
+  ```sh
+  cargo build -p olr-cli
+  python3 -I tools/levels/factory_assets.py target/debug/olr-cli
+  ```
+
 - `olr-skin-firefly/`: **Firefly** (issue #13), a double-resolution skin
   (art scale 4, 40 × 36 frames) for judging double resolution and the
   skin light in play. OLX's default skin (`origin`:
