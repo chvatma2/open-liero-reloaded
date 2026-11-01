@@ -7124,7 +7124,8 @@ The design is `docs/superpowers/specs/2026-10-26-asset-based-levels-design.md`
 (calls 8, 11, 13, 14 and 19). Issue #85 gives Live copies their played
 form; #86 puts them in the world, #87 draws them, #88 runs their scripts
 (#89 adds motion and the scripts' name checks), #90 makes their rock
-solid, #93 lights them by their values, #92 plays their sounds.
+solid, #93 lights them by their values, #92 plays their sounds, #94 lets
+explosions damage the destructible ones.
 
 - **The played form is play files (#85).** `live.ron` and `live/` sit
   beside `level.ron`, outside `editor/`, so `olr_pack::content_hash`
@@ -7578,6 +7579,60 @@ solid, #93 lights them by their values, #92 plays their sounds.
   `a_hidden_copy_is_silent`). The live match golden was re-blessed;
   `fixtures/matches/` is unchanged. Unheard by the session: a listening
   test on a real device (`docs/deferred-verification.md`).
+- **Explosions damage destructible copies (#94, call 21; no OLX
+  counterpart).** A copy with `health` (`LiveCopy::health`, #85) whose
+  health value (its `Health` prop, #86) is above 0 is hit by an
+  explosion (`effects::explosion`, OLX's `CClient::Explosion`, the one
+  path every explosion takes: explode actions, timers, bounces, bonuses
+  blown up, by a beam too) whose centre lies within **5 world pixels**
+  (the worms' radius) of a pixel one of its visible parts **covers**:
+  rock and background parts alike, at their place now (mirrored by
+  `Facing`), the distance to the nearest point of the pixel's square. A
+  picture covers the world pixels its art shows (any art pixel of the
+  block not fully transparent) and its rock: `LiveSolid::cover`, derived
+  from the pictures at load (`olr_content::live_level`), so the played
+  form is unchanged. **When:** after the explosion's worm loop, so the
+  worms' damage, its order and the `rand()` draws are untouched
+  (`worms_take_explosion_damage_as_before_beside_a_copy`), each copy in
+  level order; a copy's bounding rectangle (`LiveLevel::destructible`,
+  every place its parts can take, computed once) is checked first, so an
+  explosion far from them costs one comparison a copy, and a level
+  without destructible copies takes no part of it (one `Option` check:
+  the oracle and the match goldens are bit-exact). **How much:** the
+  explosion's own damage (what a worm there would take before its
+  damage and shield factors) **truncated toward zero** (`as i64`:
+  saturating, NaN 0; 4.9 takes 4, -0.5 heals nothing), once an
+  explosion; a negative amount heals up to the points; the subtraction
+  saturates and the result is clamped to `0..=points`. An amount of 0 is
+  no hit. **No credit:** no owner, no damage score, no kill, no mode
+  callback (`asset_damage_credits_nobody`). **At 0** the copy enters its
+  `at_zero` state once (`EventKind::LiveState`, so its entry sound plays,
+  #92) and its health is set to 0 after the state's look, whatever health
+  that names; at 0 it takes no more damage (a healing explosion
+  included) until a script or a state sets its health above 0, a
+  **repair**, after which it can be wrecked again. From then on the state's
+  pictures decide what is solid (#90): a wrecked crate whose rubble has a
+  gap lets worms through the gap. Within a physics sub-step the copy's
+  values change at once (a later explosion of the pass sees its new
+  state) and its rock parts' index is rebuilt right after the
+  projectiles' pass (`LiveWorld::refresh_if_stale`; after the shots'
+  delivery for a bonus a beam blew up), before the bonuses fall. **Events and
+  scripts:** each hit emits `EventKind::LiveDamaged { copy, amount,
+  wrecked }` (gameplay class; online keyed by its copy; `amount` an `i32`,
+  saturated, so an event keeps its 36 bytes), right before the
+  `LiveState`; `olr-script`'s handlers `hit(amount)` and `wrecked()` (this
+  copy's) run in the tick's script phase, which follows the physics (#88),
+  then `entered(state)`. Health is a value of the world, so it is hashed,
+  transferred and rolled back with the rest (#86): nothing new in the
+  state. **Not damage:** a beam's own damage, a projectile's direct hit,
+  crushing, digging, bonuses picked up. **The fixture:** the crate (40
+  points, `Wrecked` at 0, its debris a background picture) has a script
+  setting `console-b` to Alarm in `wrecked()`; a second live golden,
+  `classic-live-test-4chaos.ron` (4 chaos bots, seed 1), wrecks it, and
+  `olr-cli`'s golden test asserts a wreck among the live goldens
+  (`Coverage::live_wrecked`). The live goldens were re-blessed;
+  `fixtures/matches/` is unchanged. `World::explode_for_test` (doc-hidden)
+  sets off an explosion between ticks for tests.
 
 ## Kept OLX quirks
 
