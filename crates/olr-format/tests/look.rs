@@ -1263,7 +1263,11 @@ fn background_glow_beams_count_once() {
 }
 
 /// Issue #78: `level_lit` at `THUMB_SIZE` is the thumbnail, byte for byte:
-/// every committed level's `thumb.png` is made again from its pack.
+/// every committed level's `thumb.png` is made again from its pack. A
+/// level with Live copies is left out (issue #97's Liero Factory
+/// Reloaded): its thumbnail shows them as placed while its baked files
+/// leave them out (#85), so only `olr-edit`'s bake makes it again, which
+/// `pack check` compares (`olr-cli`'s `tests/reloaded.rs` runs it).
 #[test]
 fn level_lit_at_thumb_size_is_the_thumbnail() {
     use olr_format::levels::{THUMB_SIZE, level_lit, level_thumbnail, read_level_files_without_thumb};
@@ -1278,6 +1282,9 @@ fn level_lit_at_thumb_size_is_the_thumbnail() {
         dirs.sort();
         for dir in dirs {
             let level = read_level_files_without_thumb(&olr_vfs::DirFs::new(&dir)).unwrap();
+            if level.live.is_some() {
+                continue;
+            }
             let lit = level_lit(&level, THUMB_SIZE);
             assert!(lit == level_thumbnail(&level), "{dir:?}");
             let thumb = std::fs::read(dir.join("thumb.png")).unwrap();

@@ -864,7 +864,9 @@ mod tests {
         let mut fs = MemFs::new();
         write_asset_files(&mut fs, &sample()).unwrap();
         assert!(!fs.exists(&VPath::new(SCRIPT_FILE).unwrap()));
-        // Every built-in asset reads and writes byte for byte.
+        // Every built-in asset reads and writes byte for byte, stateless
+        // but for those Liero Factory Reloaded brings alive (issue #97).
+        let live = ["crane", "console"];
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content/assets");
         let Ok(entries) = std::fs::read_dir(&dir) else { return };
         let mut seen = 0;
@@ -872,11 +874,14 @@ mod tests {
             let disk = olr_vfs::DirFs::new(entry.path());
             let src = read_asset_files(&disk).unwrap();
             check_asset(&src).unwrap();
-            assert!(!src.file.has_states() && src.script.is_none(), "{}", entry.path().display());
+            let stateless = !src.file.has_states() && src.script.is_none() && src.sounds.is_empty();
+            assert!(stateless || live.iter().any(|l| entry.file_name() == *l), "{}", entry.path().display());
             let mut fs = MemFs::new();
             write_asset_files(&mut fs, &src).unwrap();
             let mut paths = vec![ASSET_FILE.to_string()];
             paths.extend(src.files.keys().cloned());
+            paths.extend(src.sounds.keys().map(|n| format!("{SOUNDS_DIR}/{n}")));
+            paths.extend(src.script.is_some().then(|| SCRIPT_FILE.to_string()));
             for p in paths {
                 let v = VPath::new(&p).unwrap();
                 assert_eq!(fs.read(&v).unwrap(), disk.read(&v).unwrap(), "{}: {p}", entry.path().display());
