@@ -1,0 +1,50 @@
+(
+    name: "Crane",
+    size: (114, 50),
+    elements: [
+        (
+            id: "rail",
+            name: "Rail",
+            kind: Drawn(
+                material: Rock,
+                at: (3, 0),
+                size: (108, 3),
+            ),
+            surface: "stone",
+        ),
+        (
+            id: "claw",
+            name: "Claw",
+            kind: Drawn(
+                material: Rock,
+                at: (10, 3),
+                size: (29, 47),
+            ),
+            surface: "stone",
+            surface_map: true,
+        ),
+    ],
+    materials: [
+        (
+            id: "stone",
+            name: "Stone",
+            notes: "Grey rock: the reference every heat value is a percent of. A blast leaves the rim glowing like lava, cooling slowly.",
+            light_soak: 2,
+            heat: (
+                capacity: 100,
+                conductivity: 100,
+                cooling: 100,
+            ),
+        ),
+        (
+            id: "metal",
+            name: "Metal",
+            notes: "Steel: heat runs far through it, so a blast warms a wide patch less; it sheds heat fast to the air.",
+            heat: (
+                capacity: 80,
+                conductivity: 600,
+                cooling: 150,
+            ),
+        ),
+    ],
+)

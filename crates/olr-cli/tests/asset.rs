@@ -1,6 +1,6 @@
 //! `olr-cli asset save|check` (issue #9) and the built-in assets in
-//! `content/assets/`: each reads whole and is what its command in the
-//! README makes; the torch carries Castle Strike Reloaded's `flames`, not
+//! `content/assets/`: each reads whole and is what its block of commands
+//! in the README makes (issue #96); the torch carries Castle Strike Reloaded's `flames`, not
 //! its `sky`. Placing one is a copy now (issue #75, `copy.rs`).
 
 use std::path::{Path, PathBuf};
@@ -42,7 +42,10 @@ fn built_in_assets_check() {
     let (list, warnings) = olr_edit::asset::list_library(&assets_dir(), usize::MAX);
     assert!(warnings.is_empty(), "{warnings:?}");
     assert_eq!(list.len(), dirs.len());
-    assert!(list.iter().all(|(_, s)| s.thumb.is_some() && s.glows), "every starter asset glows");
+    assert!(list.iter().all(|(_, s)| s.thumb.is_some()), "every starter asset has a thumbnail");
+    // Every one glows but the factory's crane (issue #96), rock alone.
+    let dark: Vec<&str> = list.iter().filter(|(_, s)| !s.glows).map(|(_, s)| s.name.as_str()).collect();
+    assert_eq!(dark, ["Crane"]);
 }
 
 /// Every file under `dir`, by `/`-separated relative path, with its bytes.
@@ -83,23 +86,147 @@ fn words(line: &str) -> Vec<String> {
     out
 }
 
+/// The README's blocks (issue #96): each run of `olr-cli` lines in the
+/// list of assets (before the first `## ` heading), split into words.
+fn blocks(readme: &str) -> Vec<Vec<Vec<String>>> {
+    let (mut out, mut block) = (Vec::new(), Vec::new());
+    for line in readme.lines().take_while(|l| !l.starts_with("## ")) {
+        match line.trim() {
+            l if l.starts_with("olr-cli ") => block.push(words(l)),
+            _ if !block.is_empty() => out.push(std::mem::take(&mut block)),
+            _ => {}
+        }
+    }
+    if !block.is_empty() {
+        out.push(block);
+    }
+    out
+}
+
+/// The folder a block's `olr-cli asset save … --out` writes.
+fn block_folder(block: &[Vec<String>]) -> Option<String> {
+    let save = block.iter().find(|w| w.get(1..3) == Some(&["asset".to_string(), "save".to_string()][..]))?;
+    let i = save.iter().position(|w| w == "--out")?;
+    save.get(i + 1).cloned()
+}
+
+/// Every file of an asset folder but `thumb.png` (#76's comparison:
+/// the thumbnail is never compared).
+fn compared(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    let mut t = tree(dir);
+    t.remove("thumb.png");
+    t
+}
+
+/// Runs a README block in `tmp` (issue #96): each `content/reloaded/…`
+/// pack it names is a fresh copy there (a block may prepare its source
+/// level), and its folder `content/assets/<folder>` a new one there too;
+/// the result must be the committed folder by #76's comparison. An error
+/// names the folder.
+fn run_block(block: &[Vec<String>], tmp: &Path) -> Result<(), String> {
+    let folder = block_folder(block).ok_or("a block without olr-cli asset save --out")?;
+    let fresh = tmp.join("out").join(Path::new(&folder).file_name().unwrap());
+    let mut copies = std::collections::BTreeMap::new();
+    for line in block {
+        let mut args = Vec::new();
+        for w in &line[1..] {
+            let arg = if *w == folder {
+                fresh.clone()
+            } else if w.starts_with("content/reloaded/") {
+                copies
+                    .entry(w.clone())
+                    .or_insert_with(|| {
+                        let to = tmp.join("packs").join(Path::new(w).file_name().unwrap());
+                        crate::common::copy_dir(&repo().join(w), &to);
+                        to
+                    })
+                    .clone()
+            } else {
+                PathBuf::from(w)
+            };
+            args.push(arg.to_str().unwrap().to_string());
+        }
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let o = cli(&args);
+        if !o.status.success() {
+            return Err(format!("{folder}: {line:?}: {}", text(&o)));
+        }
+    }
+    let (made, committed) = (compared(&fresh), compared(&repo().join(&folder)));
+    if made != committed {
+        let files: Vec<&String> = made
+            .keys()
+            .chain(committed.keys())
+            .filter(|f| made.get(*f) != committed.get(*f))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        return Err(format!("{folder}: its block makes other files: {files:?}"));
+    }
+    let read = |d: &Path| olr_edit::asset::read_dir(d).map_err(|e| format!("{folder}: {e}"));
+    if !olr_edit::placed::same_asset(&read(&fresh)?, &read(&repo().join(&folder))?) {
+        return Err(format!("{folder}: not the same asset"));
+    }
+    Ok(())
+}
+
+/// Issue #96: every built-in asset's entry in the README holds one block
+/// of `olr-cli` lines (its `asset save`, lines before it preparing the
+/// source level, lines after it editing the folder), run in order on
+/// fresh copies of the packs they name; each makes its committed folder.
 #[test]
 fn built_in_assets_are_what_their_commands_make() {
     let readme = std::fs::read_to_string(assets_dir().join("README.md")).unwrap();
-    let commands: Vec<Vec<String>> =
-        readme.lines().map(str::trim).filter(|l| l.starts_with("olr-cli asset save ")).map(words).collect();
-    assert_eq!(commands.len(), built_in().len(), "one command per asset");
-    let t = tempfile::tempdir().unwrap();
-    for c in commands {
-        let out = c.iter().position(|w| w == "--out").map(|i| c[i + 1].clone()).unwrap();
-        let fresh = t.path().join(Path::new(&out).file_name().unwrap());
-        let mut args: Vec<&str> = c[1..].iter().map(String::as_str).collect();
-        let i = args.iter().position(|w| *w == "--out").unwrap();
-        args[i + 1] = fresh.to_str().unwrap();
-        let o = cli(&args);
-        assert!(o.status.success(), "{c:?}: {}", text(&o));
-        assert_eq!(tree(&fresh), tree(&repo().join(&out)), "{out}");
+    let blocks = blocks(&readme);
+    let folders: Vec<String> = blocks.iter().map(|b| block_folder(b).unwrap_or_default()).collect();
+    let mut want: Vec<String> = built_in()
+        .iter()
+        .map(|d| format!("content/assets/{}", d.file_name().unwrap().to_str().unwrap()))
+        .collect();
+    let mut got = folders.clone();
+    got.sort();
+    want.sort();
+    assert_eq!(got, want, "one block per built-in asset");
+    for block in &blocks {
+        let t = tempfile::tempdir().unwrap();
+        if let Err(e) = run_block(block, t.path()) {
+            panic!("{e}");
+        }
     }
+}
+
+/// A block whose result differs from the committed folder fails, naming
+/// the folder (issue #96): the strip light cut one pixel to the right.
+#[test]
+fn a_block_making_another_asset_fails_naming_its_folder() {
+    let readme = std::fs::read_to_string(assets_dir().join("README.md")).unwrap();
+    let mut block = blocks(&readme)
+        .into_iter()
+        .find(|b| block_folder(b).as_deref() == Some("content/assets/strip-light"))
+        .unwrap();
+    let rect = block[0].iter().position(|w| w == "--rect").unwrap() + 1;
+    assert_eq!(block[0][rect], "778,80,29,2");
+    block[0][rect] = "779,80,29,2".into();
+    let t = tempfile::tempdir().unwrap();
+    let e = run_block(&block, t.path()).unwrap_err();
+    assert!(e.starts_with("content/assets/strip-light: its block makes other files"), "{e}");
+}
+
+/// The three assets issue #96 adds check, and are what the README says.
+#[test]
+fn the_factorys_new_assets_check() {
+    let dirs = ["crane", "console", "gauge"].map(|f| assets_dir().join(f));
+    let mut args = vec!["asset", "check"];
+    args.extend(dirs.iter().map(|d| d.to_str().unwrap()));
+    let o = cli(&args);
+    assert!(o.status.success(), "{}", text(&o));
+    let layers = |f: &str| {
+        let a = olr_edit::asset::load_dir(&assets_dir().join(f)).unwrap();
+        (a.size, a.pieces.iter().map(|p| p.element.id.clone()).collect::<Vec<_>>())
+    };
+    assert_eq!(layers("crane"), ((114, 50), vec!["rail".to_string(), "claw".into()]));
+    assert_eq!(layers("console"), ((33, 64), vec!["rock".to_string(), "rock-disp".into()]));
+    assert_eq!(layers("gauge"), ((48, 27), vec!["rock".to_string(), "rock-scr".into(), "rock-disp".into()]));
 }
 
 #[test]

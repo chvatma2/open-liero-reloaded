@@ -60,6 +60,35 @@ is gone.
 
       olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 951,45,25,28 --layers backdrop,beacons --name "Warning beacon" --out content/assets/warning-beacon
 
+- `crane/`: **Crane** (issue #96), the conveyor deck's crane: its rail
+  (`rail`, rows 269-271 of After Dark, x 765-872, with the trolley's
+  pixels in those rows) and its trolley, cable and claw (`claw`, rows
+  272-318, x 772-800), two rock layers that never overlap, cut from
+  After Dark's `rock` with `level element extract`. Its box covers the
+  claw's whole travel along the rail (issue #97 moves `claw`). It does
+  not glow.
+
+      olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 762,272,114,47 --name Claw
+      olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 762,269,114,3 --name Rail
+      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 762,269,114,50 --layers rail,claw --name Crane --out content/assets/crane
+
+- `console/`: **Console** (issue #96), the box hanging under the conveyor
+  deck (`rock`) with its column of yellow LEDs (`rock-disp`, group
+  `displays`, x 942). The Lit sign's rectangle is left empty: the sign
+  is a copy of its own on top of it in Liero Factory Reloaded.
+
+      olr-cli level element erase content/reloaded/olr-level-liero-factory-after-dark rock --rect 934,299,31,21
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark rock-disp --locked false
+      olr-cli level element erase content/reloaded/olr-level-liero-factory-after-dark rock-disp --rect 934,299,31,21
+      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 933,269,33,64 --layers rock,rock-disp --name Console --out content/assets/console
+
+- `gauge/`: **Gauge** (issue #96), the teal device of the upper floor:
+  its yellow gauge and lit buttons (`rock-disp`, group `displays`) and
+  its small screen (`rock-scr`, group `screens`); the grey brackets
+  beside it stay in the level.
+
+      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 1059,144,48,27 --layers rock,rock-scr,rock-disp --name Gauge --out content/assets/gauge
+
 ## Editing an asset from the command line
 
 `olr-cli asset state|expose|unexpose|sound|script|health` (issue #72)
