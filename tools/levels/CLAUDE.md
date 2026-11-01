@@ -29,5 +29,18 @@ byte for byte, and running one again changes nothing.
   the pieces' rectangles erased from the ground's layers (empty layers
   removed), the sky as its own distant copy and each built-in asset
   placed 1:1 where its pixels were. Its scratch is
-  `target/factory-assets/`. The bake stays After Dark's
-  (`olr-cli`'s `tests/reloaded.rs`).
+  `target/factory-assets/`. The bake stays After Dark's outside the
+  live copies (`olr-cli`'s `tests/reloaded.rs`). Issue #97: it also
+  paints the ground's `backdrop` behind the crane's claw (`paint_wall`:
+  the pixels the ground lost in the crane's box and `WALL_EDGE` 2 around
+  them, blended along each row), before any copy is placed (ground
+  edits need the ground alone, issue #75).
+- `factory_live.py` (issue #97; #98 and #99 extend it): brings Liero
+  Factory Reloaded alive after `factory_assets.py`: the Console's state
+  pictures into `tools/levels/factory/art/` (from After Dark's
+  `front.png`), the Crane and the Console made again by their blocks,
+  then `level library update`, the copies switched Live, the level
+  script, notes, `level bake`, `level check-scripts` and `pack check`.
+  Its inputs are under `tools/levels/factory/`: `crane.rhai` (the
+  Crane's default script), `level.rhai` (the level script), `art/` and
+  `sounds/` (`tools/sounds/factory_sounds.py`).

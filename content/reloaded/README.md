@@ -281,11 +281,14 @@ Remade OLX content is named "<Old name> Reloaded".
   (issue #96), Liero Factory After Dark rebuilt from assets (the design
   `docs/superpowers/specs/2026-10-26-asset-based-levels-design.md`,
   "Liero Factory"): its origin, size, theme, spawns, look and surface
-  materials are After Dark's, and so is its bake, byte for byte
-  (`material.png`, `front.png`, `back.png`, the distant sky and every
-  `look/` file; `olr-cli`'s `tests/reloaded.rs`). Nothing moves yet:
-  every copy is static, and issues #97, #98 and #99 bring it alive (the
-  pieces they animate are already copies of their own). Laid out as #73
+  materials are After Dark's, and so is its bake outside its live
+  copies (`material.png`, `front.png`, `back.png`, the distant sky and
+  the `look/` files; `olr-cli`'s `tests/reloaded.rs`). Since issue #97
+  the crane and the console are live: every couple of seconds the
+  crane's claw crosses its rail, humming, carrying worms on its shoulders
+  and pushing those in its way aside (it crushes nobody), and the
+  console under the deck goes red, its lamp pulsing, while it moves.
+  Issues #98 and #99 bring the rest alive. Laid out as #73
   and #74 lay a level out: `editor/placed.ron`, the ground at `editor/`,
   each other asset at `editor/<key>/`, and the baked files beside, so it
   plays without any library.
@@ -326,12 +329,44 @@ Remade OLX content is named "<Old name> Reloaded".
   placed with `level copy add … --key y --id sky`, `level copy set sky
   --distant 90`, and each built-in asset placed with `level copy add …
   --key <k> --id <id> --at X,Y` (a second strip reusing the first's
-  asset). Running it again makes the same bytes; its scratch files are
-  in `target/factory-assets/`.
+  asset). Since issue #97 it also paints the ground's `backdrop` behind
+  the crane's claw (the pixels the ground lost in the crane's box, 2
+  more around them, each blended along its row from its neighbours), so
+  the moving claw leaves no picture of itself behind. Running it again
+  makes the same bytes; its scratch files are in
+  `target/factory-assets/`.
+
+  Then `tools/levels/factory_live.py` (issue #97, stdlib only, `olr-cli`
+  commands only) brings it alive: it paints the Console's two state
+  pictures (`tools/levels/factory/art/`) from After Dark's `front.png`,
+  makes the Crane and the Console again by their blocks in
+  `content/assets/README.md` (states, exposed values, sound, script),
+  and then `level library update <pack> k o`, `level copy set … crane
+  --live` and `… console --live`, `level script --set
+  tools/levels/factory/level.rhai`, `level notes`, `level bake`, `level
+  check-scripts` and `pack check`.
+  - **The crane** (Live, its asset's default script
+    `tools/levels/factory/crane.rhai`): `Idle`, it rests 200 ticks
+    (`REST()`), then enters `Moving` and moves `claw_x` at speed 50
+    (`SPEED()`, half a pixel a tick: 1.5 s from 0 to 75, 1.7 s across)
+    to its maximum and its minimum in turn (`this.max`/`this.min`, never
+    numbers); `arrived` sets `Idle` and rests again; `blocked` stays
+    `Moving`, waits 50 ticks (`WAIT()`) and heads back. Its direction is
+    `mem.up`. Constants are zero-argument functions (Rhai's top-level
+    `const` is not seen in functions).
+  - **The console** (Live, no script): the level script
+    `tools/levels/factory/level.rhai` sets it to `Alarm` while the crane
+    is `Moving` and back to `Normal` otherwise, only on a change (one
+    tick after the crane, ruling R8).
+  - **The hum** (`tools/levels/factory/sounds/hum.wav`, the Crane's
+    `Moving` loop): synthesised for OLR by
+    `tools/sounds/factory_sounds.py`, CC0; the maintainer may replace it.
 
   ```sh
   cargo build -p olr-cli
   python3 -I tools/levels/factory_assets.py target/debug/olr-cli
+  python3 -I tools/sounds/factory_sounds.py
+  python3 -I tools/levels/factory_live.py target/debug/olr-cli
   ```
 
 - `olr-skin-firefly/`: **Firefly** (issue #13), a double-resolution skin

@@ -8,8 +8,10 @@ programs find this directory beside the content directory
 `cargo xtask dist` copies it into the Windows zip and the Flatpak (this
 README stays behind). `cargo xtask check` reads every one whole
 (`olr-cli asset check`, in `olr-cli`'s `tests/asset.rs`).
-They are in the 0.3 asset format (issue #71) and stateless: one state,
-nothing exposed, no sounds, health or script. All glow but the Crane.
+They are in the 0.3 asset format (issue #71) and stateless (one state,
+nothing exposed, no sounds, health or script) but for the Crane and the
+Console, which Liero Factory Reloaded brings alive (issue #97). All glow
+but the Crane.
 
 Each was cut from OLR's own Reloaded levels (`content/reloaded/`) with
 `olr-cli asset save`. Its entry below holds one block of `olr-cli` lines
@@ -78,8 +80,15 @@ is gone.
   pixels in those rows) and its trolley, cable and claw (`claw`, rows
   272-318, x 772-800), two rock layers that never overlap, cut from
   After Dark's `rock` with `level element extract`. Its box covers the
-  claw's whole travel along the rail (issue #97 moves `claw`). It does
-  not glow.
+  claw's whole travel along the rail. It does not glow. Issue #97: the
+  rail's middle row is hollow over the trolley (row 270, x 775-797; rows
+  269 and 271 there `#737373`) and the trolley's top (row 272) is drawn
+  on `claw`, so the trolley rides in the rail; states `Idle` (start) and
+  `Moving`, one shared picture; `claw_x` exposed as `claw.x` (−10..75,
+  default 0); `Moving` loops `hum.wav`, synthesised for OLR by
+  `tools/sounds/factory_sounds.py`, CC0 (the maintainer may replace
+  it); its default script `tools/levels/factory/crane.rhai` crosses the
+  rail every couple of seconds (`content/reloaded/README.md`).
 
       olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 762,272,114,47 --name Claw
       olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 762,269,114,3 --name Rail
@@ -98,7 +107,15 @@ is gone.
 - `console/`: **Console** (issue #96), the box hanging under the conveyor
   deck (`rock`) with its column of yellow LEDs (`rock-disp`, group
   `displays`, x 942). The Lit sign's rectangle is left empty: the sign
-  is a copy of its own on top of it in Liero Factory Reloaded.
+  is a copy of its own on top of it in Liero Factory Reloaded. Issue
+  #97: states `Normal` (start: the LEDs as in After Dark) and `Alarm`
+  (every LED red, `#ff3020`, and the slot under the sign a lit red lamp,
+  `rock-disp.light` 400 and `rock-disp.animation` `Pulse(period_ms: 600,
+  low: 40, high: 100)`), their pictures of `rock-disp` from
+  `tools/levels/factory/art/` (`tools/levels/factory_live.py`);
+  `rock-disp`'s box grows to cover the slot (drawn into it before the
+  save, then the saved starting state swapped for one with the LEDs
+  alone).
 
       olr-cli level element erase content/reloaded/olr-level-liero-factory-after-dark rock --rect 934,299,31,21
       olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark rock-disp --locked false
@@ -129,7 +146,8 @@ edit an asset folder in place: the folder is read whole, changed by one
 operation, checked and written anew with its thumbnail, or left as it
 was with the reason (`<dir>: <why>`, status 1). `olr-cli asset info`
 lists what a folder holds. Work on a copy: these built-in assets stay
-stateless (the factory's get states of their own, issues #96-#99). For
+as their blocks make them (the factory's get states of their own,
+issues #97-#99). For
 a strip light that can be switched off, with a 29 × 2 PNG of its dark
 tube:
 
