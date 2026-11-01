@@ -466,19 +466,40 @@ fn baked(level: &str) -> olr_format::levels::LevelSource {
 }
 
 /// Issue #97: Liero Factory Reloaded's live copies' boxes (x, y, width,
-/// height): the crane's and the console's, and (issue #98) the faulty
-/// tubes' (#99 adds its own). The ground leaves live copies out (#85), so
-/// its bake differs from After Dark's only inside them.
-const LIVE_BOXES: [(u32, u32, u32, u32); 5] =
-    [(762, 269, 114, 50), (933, 269, 33, 64), (1004, 80, 29, 2), (984, 177, 29, 2), (427, 286, 29, 2)];
+/// height): the crane's and the console's, (issue #98) the faulty
+/// tubes' and (issue #99) the screen's, the sign's, the desk's and the
+/// gauge's. The ground leaves live copies out (#85), so its bake differs
+/// from After Dark's only inside them.
+const LIVE_BOXES: [(u32, u32, u32, u32); 9] = [
+    (762, 269, 114, 50),
+    (933, 269, 33, 64),
+    (1004, 80, 29, 2),
+    (984, 177, 29, 2),
+    (427, 286, 29, 2),
+    (906, 83, 14, 14),
+    (934, 299, 31, 21),
+    (903, 119, 30, 11),
+    (1059, 144, 48, 27),
+];
 
 /// Issue #98: the ceiling strips that fail like faulty tubes (live copies
 /// of the Strip light), in copy order; the other six stay static.
 const TUBES: [&str; 3] = ["strip-2", "strip-4", "strip-7"];
 
 /// Liero Factory Reloaded's live copies in copy order (issue #98's tubes
-/// come first: they are placed before the crane).
-const LIVE_COPIES: [&str; 5] = ["strip-2", "strip-4", "strip-7", "crane", "console"];
+/// come first: they are placed before the crane; issue #99's screen and
+/// desk before it too, its sign and gauge after the console).
+const LIVE_COPIES: [&str; 9] =
+    ["strip-2", "strip-4", "strip-7", "screen", "desk", "crane", "console", "sign", "gauge"];
+
+/// Issue #99: the copies whose displays change, with their assets' names,
+/// starting states and default scripts (`tools/levels/factory/`).
+const DISPLAYS: [(&str, &str, &str, &str); 4] = [
+    ("screen", "Computer screen", "Truck", "screen.rhai"),
+    ("sign", "Lit sign", "Normal", "sign.rhai"),
+    ("desk", "Control desk", "A", "desk.rhai"),
+    ("gauge", "Gauge", "A", "gauge.rhai"),
+];
 
 /// Whether world pixel `(x, y)` lies in one of [`LIVE_BOXES`].
 fn in_live_box(x: u32, y: u32) -> bool {
@@ -578,7 +599,9 @@ fn the_new_factory_bakes_as_after_dark() {
             groups.insert(ga);
         }
     }
-    assert!(groups.len() >= 9, "every group glows somewhere: {groups:?}");
+    // Issue #99: the screen's `control`, the displays' and the screens'
+    // groups glow only inside live copies now.
+    assert!(groups.len() >= 7, "every group of the ground glows somewhere: {groups:?}");
     let (ba, bb) = (a.glow_beams.as_ref().unwrap(), b.glow_beams.as_ref().unwrap());
     assert!(ba.world == bb.world && ba.front == bb.front && ba.back == bb.back, "the beams");
     let (sa, sb) = (a.glass.as_ref().unwrap(), b.glass.as_ref().unwrap());
@@ -736,11 +759,13 @@ fn factory_world(content: &Content, at: (i32, i32)) -> olr_sim::World {
 }
 
 /// Issue #97: Liero Factory Reloaded's live copies are exactly the crane
-/// and the console and (issue #98) the tubes `strip-2`, `strip-4` and
-/// `strip-7`, the other strips static (#99 adds its own), each a copy of
-/// its built-in asset in its starting state with its asset's default
-/// script (the Crane's `tools/levels/factory/crane.rhai`, the Strip
-/// light's `tube.rhai`; the Console has none), the level script
+/// and the console, (issue #98) the tubes `strip-2`, `strip-4` and
+/// `strip-7`, the other strips static, and (issue #99) the screen, the
+/// sign, the desk and the gauge ([`DISPLAYS`]), each a copy of its
+/// built-in asset in its starting state with its asset's default script
+/// (the Crane's `tools/levels/factory/crane.rhai`, the Strip light's
+/// `tube.rhai`, the displays' their own; the Console has none), every
+/// other copy static, the level script
 /// (`tools/levels/factory/level.rhai`) names the crane and the console,
 /// and no live asset holds a dirt layer (call 2). A match loads them so.
 #[test]
@@ -758,6 +783,13 @@ fn the_live_factory_has_its_live_copies() {
     let mut want =
         vec![("crane", "Crane", "Idle", Some(&crane_script)), ("console", "Console", "Normal", None)];
     want.extend(TUBES.map(|t| (t, "Strip light", "On", Some(&tube_script))));
+    let display_scripts: Vec<String> = DISPLAYS
+        .iter()
+        .map(|d| std::fs::read_to_string(repo().join("tools/levels/factory").join(d.3)).unwrap())
+        .collect();
+    for (d, script) in DISPLAYS.iter().zip(&display_scripts) {
+        want.push((d.0, d.1, d.2, Some(script)));
+    }
     for (id, name, start, script) in want {
         let c = placed.file.copies.iter().find(|c| c.id == id).unwrap();
         let a = &placed.assets[&c.asset];
@@ -795,6 +827,9 @@ fn the_live_factory_has_its_live_copies() {
         (live_copy(w, "crane").state_name(), live_copy(w, "console").state_name()),
         ("Idle", "Normal")
     );
+    for d in DISPLAYS {
+        assert_eq!(live_copy(w, d.0).state_name(), d.2, "{}", d.0);
+    }
     assert_eq!(claw_x(w), 0, "the claw starts where After Dark has it");
     let crane = live_copy(w, "crane").setup();
     let p = &crane.props[usize::from(crane.prop("claw_x").unwrap())];
@@ -921,19 +956,23 @@ fn rock_by_state(folder: &str) -> Vec<(String, BTreeSet<(u32, u32)>)> {
 }
 
 /// Issue #97: no state switch adds or removes a solid pixel: for the
-/// Crane, the Console and (issue #98) the Strip light, every state's rock
-/// pixels (the stacked pictures included) are the starting state's (the
-/// Strip light's none: its layer is Background), and so are the solid
-/// pixels of each state of the copies as a match loads them.
+/// Crane, the Console, (issue #98) the Strip light and (issue #99) the
+/// Computer screen, the Lit sign, the Control desk and the Gauge, every
+/// state's rock pixels (the stacked pictures included) are the starting
+/// state's (none for the Strip light, the screen and the desk: their
+/// layers are Background), and so are the solid pixels of each state of
+/// the copies as a match loads them.
 #[test]
 fn live_states_keep_their_solid_pixels() {
-    for folder in ["crane", "console", "strip-light"] {
+    let backgrounds = ["strip-light", "computer-screen", "control-desk"];
+    for folder in ["crane", "console", "strip-light", "computer-screen", "lit-sign", "control-desk", "gauge"]
+    {
         let states = rock_by_state(folder);
         assert!(states.len() >= 2, "{folder}: its states");
         for (name, rock) in &states[1..] {
             assert!(*rock == states[0].1, "{folder}: state {name}'s rock differs from {}'s", states[0].0);
         }
-        assert_eq!(states[0].1.is_empty(), folder == "strip-light", "{folder}: its rock");
+        assert_eq!(states[0].1.is_empty(), backgrounds.contains(&folder), "{folder}: its rock");
     }
     // As played: each state's rock parts at their places (no value moving them).
     use olr_cli::runner::{Match, Options};
@@ -958,7 +997,8 @@ fn live_states_keep_their_solid_pixels() {
             px
         };
         let start = solid(&setup.states[usize::from(setup.start_state)]);
-        assert_eq!(start.is_empty(), TUBES.contains(&c.id()), "{}: its solid pixels", c.id());
+        let unsolid = TUBES.contains(&c.id()) || ["screen", "desk"].contains(&c.id());
+        assert_eq!(start.is_empty(), unsolid, "{}: its solid pixels", c.id());
         for s in &setup.states {
             assert!(solid(s) == start, "{}: state {}'s solid pixels", c.id(), s.name);
         }
@@ -1108,6 +1148,9 @@ fn the_factory_scripts_never_fail() {
     let mut last = claw_x(m.world());
     let tube_states = |w: &olr_sim::World| TUBES.map(|t| live_copy(w, t).state());
     let (mut tubes, mut late_switches) = (tube_states(m.world()), [0; 3]);
+    // Issue #99: the screen, the desk and the gauge go on changing.
+    let shows = |w: &olr_sim::World| ["screen", "desk", "gauge"].map(|d| live_copy(w, d).state());
+    let (mut displays, mut late_changes) = (shows(m.world()), [0; 3]);
     while m.step() {
         errors += m.events().iter().filter(|e| matches!(e.kind, EventKind::ScriptError { .. })).count();
         if m.ticks() > 5000 {
@@ -1120,6 +1163,11 @@ fn the_factory_scripts_never_fail() {
             late_switches[i] += usize::from(m.ticks() > 4500 && now[i] != tubes[i]);
         }
         tubes = now;
+        let now = shows(m.world());
+        for i in 0..3 {
+            late_changes[i] += usize::from(m.ticks() > 4500 && now[i] != displays[i]);
+        }
+        displays = now;
     }
     let peak = m.world().script_peak();
     let run = m.finish();
@@ -1131,6 +1179,7 @@ fn the_factory_scripts_never_fail() {
         "the scripts still run: {late_moves} moves, {late_alarms} alarms"
     );
     assert!(late_switches.iter().all(|&n| n > 0), "the tubes still switch: {late_switches:?}");
+    assert!(late_changes.iter().all(|&n| n > 0), "the screen, desk and gauge still change: {late_changes:?}");
     assert!(peak.run * 2 <= olr_script::MAX_RUN_OPERATIONS, "a run used {} operations", peak.run);
     assert!(peak.tick * 2 <= olr_script::MAX_TICK_OPERATIONS, "a tick used {} operations", peak.tick);
 }
@@ -1426,4 +1475,165 @@ fn the_live_factory_stays_in_sync() {
         panic!("{} failed at tick {}: {}", spec.stem(), f.tick, f.what);
     }
     assert!(r.report.stats.values().any(|s| s.rollbacks > 0), "rollbacks re-ran the scripts");
+}
+
+/// Issue #99: each tick's state name of each of [`DISPLAYS`] (after the
+/// tick), in a `ticks`-tick match of two idle bots on the live factory.
+fn display_run(seed: u32, ticks: u32) -> Vec<[String; 4]> {
+    use olr_cli::runner::{Match, Options};
+    use olr_cli::spec::{MatchSpec, Personality};
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    let spec = MatchSpec {
+        personality: Personality::Idle,
+        kill_limit: 0,
+        time_limit: 0.0,
+        ..MatchSpec::new(CLASSIC, FACTORY, 2, seed, ticks)
+    };
+    let mut m = Match::new(&content, &spec, &Options::default()).unwrap();
+    let mut rows = Vec::new();
+    loop {
+        let (before, go) = (m.ticks(), m.step());
+        if m.ticks() == before {
+            break;
+        }
+        rows.push(DISPLAYS.map(|d| live_copy(m.world(), d.0).state_name().to_string()));
+        if !go {
+            break;
+        }
+    }
+    assert!(m.finish().failure().is_none());
+    assert_eq!(rows.len(), ticks as usize);
+    rows
+}
+
+/// The runs of equal values: (value, length), in order.
+fn runs<T: PartialEq + Clone>(values: impl Iterator<Item = T>) -> Vec<(T, usize)> {
+    let mut out: Vec<(T, usize)> = Vec::new();
+    for v in values {
+        match out.last_mut() {
+            Some((last, n)) if *last == v => *n += 1,
+            _ => out.push((v, 1)),
+        }
+    }
+    out
+}
+
+/// Issue #99: over 2000 ticks the security screen shows Truck, Crane,
+/// Offices and Garden in that order, again and again, 250 ticks each (the
+/// first from the match's start, a tick's slack).
+#[test]
+fn the_screen_shows_each_camera() {
+    let rows = display_run(1, 2000);
+    let shows = runs(rows.iter().map(|r| r[0].clone()));
+    let cycle = ["Truck", "Crane", "Offices", "Garden"];
+    assert!(shows.len() >= 8, "{shows:?}");
+    for (i, (name, len)) in shows.iter().enumerate() {
+        assert_eq!(name, cycle[i % 4], "picture {i}: {shows:?}");
+        if i == 0 {
+            assert!(len.abs_diff(250) <= 1, "the first picture {len} ticks: {shows:?}");
+        } else if i + 1 < shows.len() {
+            assert_eq!(*len, 250, "picture {i}: {shows:?}");
+        }
+    }
+}
+
+/// Issue #99: over 6000 ticks the Lit sign leaves Normal at least twice,
+/// each time for one of its faults, and is back within 80 ticks; the
+/// Control desk and the Gauge each change state at least 10 times, never
+/// to the state they show; the same seed changes alike, another seed
+/// otherwise.
+#[test]
+fn the_displays_change_now_and_then() {
+    let rows = display_run(1, 6000);
+    let sign = runs(rows.iter().map(|r| r[1].clone()));
+    let faults: Vec<&(String, usize)> = sign.iter().filter(|(s, _)| s != "Normal").collect();
+    assert!(faults.len() >= 2, "{sign:?}");
+    for (i, (s, len)) in sign.iter().enumerate() {
+        if s != "Normal" {
+            assert!(["No dash", "No LD", "Dying 7"].contains(&s.as_str()), "{s}");
+            assert!(*len <= 81, "{s} for {len} ticks");
+            assert!(i + 1 == sign.len() || sign[i + 1].0 == "Normal", "{sign:?}");
+        }
+    }
+    for (k, name) in [(2, "desk"), (3, "gauge")] {
+        let changes = runs(rows.iter().map(|r| r[k].clone()));
+        assert!(changes.len() > 10, "{name}: {changes:?}");
+        assert!(changes.iter().all(|(s, _)| ["A", "B", "C"].contains(&s.as_str())), "{name}");
+    }
+    let again = display_run(1, 6000);
+    assert!(rows == again, "the same seed, another sequence");
+    let other = display_run(2, 6000);
+    for k in 1..4 {
+        let col = |r: &Vec<[String; 4]>| r.iter().map(|x| x[k].clone()).collect::<Vec<_>>();
+        assert!(col(&rows) != col(&other), "{}: seed 2 changes alike", DISPLAYS[k].0);
+    }
+}
+
+/// Issue #99: the crane's warning beacon is #95's pick. The Crane's
+/// lenses beam right (`lens`, 0°) and left (`lens-b`, 180°); in a match
+/// of idle bots they ride with the claw every tick; while the crane is
+/// `Idle` the beacon is out (`light`, `halo_glow`, `halo_light` 0); while
+/// `Moving` it turns 1.2° a tick (3 s a turn, counted over the moving
+/// ticks only), and at phases 0°, 45°, …, 315° (the nearest tick) its
+/// spread and reach are the design's formulas within 1° and 1 px, its
+/// light within 4 (`400 w`) and the halo's `400 − light`.
+#[test]
+fn the_beacon_follows_the_pick() {
+    use olr_cli::runner::{Match, Options};
+    use olr_cli::spec::{MatchSpec, Personality};
+    let src = olr_format::assets::read_asset_files(&DirFs::new(repo().join("content/assets/crane"))).unwrap();
+    let beam = |id: &str| {
+        let e = src.file.elements.iter().find(|e| e.id == id).unwrap();
+        let b = e.glow.as_ref().unwrap().beam.as_ref().unwrap();
+        (b.direction, b.spread)
+    };
+    assert_eq!((beam("lens"), beam("lens-b")), ((0, 10), (180, 10)));
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    let spec = MatchSpec { personality: Personality::Idle, ..MatchSpec::new(CLASSIC, FACTORY, 2, 1, 3000) };
+    let mut m = Match::new(&content, &spec, &Options::default()).unwrap();
+    // Per moving tick: spread, spread b, reach, light, halo glow, halo light.
+    let mut moving = Vec::new();
+    let px = |c: &olr_sim::LiveCopyView, n: &str| c.value(n).unwrap().div_euclid(olr_sim::LIVE_SUBPIXELS);
+    while m.step() {
+        let c = live_copy(m.world(), "crane");
+        assert_eq!(
+            (px(&c, "lens_x"), px(&c, "lens_b_x")),
+            (px(&c, "claw_x"), px(&c, "claw_x")),
+            "tick {}",
+            m.ticks()
+        );
+        let v = |n: &str| c.value(n).unwrap();
+        let row =
+            [v("beam_spread"), v("beam_spread_b"), v("reach"), v("light"), v("halo_glow"), v("halo_light")];
+        if c.state_name() == "Moving" {
+            moving.push(row);
+        } else {
+            assert_eq!(row[3..], [0, 0, 0], "tick {}: the beacon out while Idle", m.ticks());
+        }
+    }
+    assert!(m.finish().failure().is_none());
+    assert!(moving.len() >= 600, "{} moving ticks", moving.len());
+    let want = |k: usize| {
+        let a = 10f64.to_radians();
+        let l = (k as f64 * 1.2).to_radians().cos().abs();
+        let den = a.cos().powi(2) * l * l - a.sin().powi(2) * (1.0 - l * l);
+        let spread = if den <= 0.0 { 89.0 } else { (a.sin() / den.sqrt()).atan().to_degrees().min(89.0) };
+        let t = ((l - a.sin()) / 0.25).clamp(0.0, 1.0);
+        (spread, (360.0 * l).max(1.0), 400.0 * t * t * (3.0 - 2.0 * t))
+    };
+    // The first moving tick turns from 0 (or, as the script's reads fall, 1).
+    let fits = |o: usize| {
+        (0..8).all(|p| {
+            let k = (p * 300 + 4) / 8;
+            let Some(r) = moving.get(k + o) else { return false };
+            let (spread, reach, light) = want(k);
+            (r[0] as f64 - spread).abs() <= 1.0
+                && r[0] == r[1]
+                && (r[2] as f64 - reach).abs() <= 1.0
+                && (r[3] as f64 - light).abs() <= 4.0
+                && r[5] == 400 - r[3]
+                && r[4] == (400 - r[3]) / 4
+        })
+    };
+    assert!(fits(0) || fits(1), "the beacon's turn: {:?}", &moving[..80]);
 }

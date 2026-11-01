@@ -253,7 +253,8 @@ The headless command-line tool. Its commands:
   folder replaced by a temporary one, and compares by #76's comparison,
   `thumb.png` left out, one block per asset;
   `a_block_making_another_asset_fails_naming_its_folder`;
-  `the_factorys_new_assets_check`, the Crane's, Console's and Gauge's
+  `the_factorys_new_assets_check`, the Crane's (issue #99: its beacon's
+  `lens` and `lens-b` too), Console's and Gauge's
   layers; the torch carries `flames` and not `sky`, bad folders
   and arguments refused; issue #71's `asset_check_counts_states`; its
   place tests are `copy.rs`' now).
@@ -524,7 +525,11 @@ The headless command-line tool. Its commands:
   spot's beam worked out each frame at two directions.
   Issue #97's `factory-crane.png` (`factory_crane`): idle bots on Liero
   Factory Reloaded, seed 1, tick 275 (the claw halfway through its first
-  crossing, the console in `Alarm`), `--at 870,300`.
+  crossing, the console in `Alarm`; issue #99: the warning beacon
+  end-on, flaring), `--at 870,300`. Issue #99's (`factory_golden`):
+  `factory-screen.png` (tick 300, `--at 930,110`: the security screen on
+  `Crane`) and `factory-beacon-side.png` (tick 340, `--at 870,300`: the
+  beacon nearly side-on, both beams).
 - `olr-cli frame-hashes <match flags> [--frames 30] [--content DIR] [--out f.ron]`
   (issue #34, `frame_hash.rs`, the command in `frame_hashes_cmd.rs`):
   byte identity. Plays a headless bot match as `render-match` does (the
@@ -1209,7 +1214,8 @@ the claw's path pushed aside, neither `Crushed`),
 on the claw, the dirt and the console: the copies unchanged, the
 ground dug as After Dark's outside the boxes), `the_factory_scripts_never_fail`
 (6000 ticks, no `ScriptError`, the crane, the console and each tube
-still running, at most half of `olr_script`'s operation limits), issue
+still running, at most half of `olr_script`'s operation limits; issue
+#99: the screen, desk and gauge still changing), issue
 #98's `the_tubes_fail_unevenly` (`tube_run`: 12 000 ticks of idle bots;
 each tube `On` at least 70 %, a burst of 2 flickers or more, the three
 sequences different, the same seed alike and seed 2 not, `lamps.glow`
@@ -1217,7 +1223,15 @@ sequences different, the same seed alike and seed 2 not, `lamps.glow`
 After Dark's) and `the_tubes_buzz_and_tick` (`olr_content::LiveSounds`
 filled from each tick's events and world, as the presentation reads
 them: `buzz.wav` loops exactly while `On` or `Dim`, `tick.wav` once on
-each entry to `On`, nothing at a static strip), `bots_play_the_live_factory` (both
+each entry to `On`, nothing at a static strip), issue #99's
+`the_screen_shows_each_camera` (2000 ticks: `Truck`, `Crane`,
+`Offices`, `Garden`, 250 ticks each, again), `the_displays_change_now_and_then`
+(`display_run`, 6000 ticks: the sign's faults back within 80 ticks, the
+desk and gauge more than 10 changes each, the same seed alike, seed 2
+otherwise) and `the_beacon_follows_the_pick` (the Crane's lenses beam 0°
+and 180° and ride the claw every tick, out while `Idle`, and at the 8
+phases of its 3-s turn the design's spread and reach within 1° and 1
+px), `bots_play_the_live_factory` (both
 mods, 3000 ticks, invariants every tick) and
 `the_live_factory_stays_in_sync` (`netsim`: 3 clients, the `bad`
 profile, a late spectator, an `Ok` verdict with rollbacks). `tests/digest.rs` pins a SHA-256 of what

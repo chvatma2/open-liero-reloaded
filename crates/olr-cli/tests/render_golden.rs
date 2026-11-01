@@ -440,7 +440,8 @@ fn live_beam() {
 /// Alarm: idle bots, at tick 275 the claw halfway through its first
 /// crossing (resting 200 ticks, then 150 to the end of its rail), the
 /// level script having turned the console red, its lamp lit and pulsing;
-/// the view centred on the crane (`--at`).
+/// the view centred on the crane (`--at`). Issue #99: its warning beacon
+/// lit, end-on (the lamp flaring, the beams faded).
 #[test]
 fn factory_crane() {
     let Some(content) = content_dir() else { return };
@@ -464,6 +465,48 @@ fn factory_crane() {
         &content,
     ];
     compare("factory-crane.png", &args, &[]);
+}
+
+/// A render of Liero Factory Reloaded (idle bots, seed 1) at tick `ticks`,
+/// the view centred on `at` (issue #99).
+fn factory_golden(name: &str, ticks: &str, at: &str) {
+    let Some(content) = content_dir() else { return };
+    let args = [
+        "render-match",
+        "--mod",
+        "olx-classic",
+        "--level",
+        "olr-level-liero-factory-reloaded",
+        "--bots",
+        "2",
+        "--personality",
+        "idle",
+        "--seed",
+        "1",
+        "--ticks",
+        ticks,
+        "--at",
+        at,
+        "--content",
+        &content,
+    ];
+    compare(name, &args, &[]);
+}
+
+/// Issue #99: the control room's security screen on its `Crane` picture
+/// (ticks 251-500), the desk's lamps below it.
+#[test]
+fn factory_screen() {
+    factory_golden("factory-screen.png", "300", "930,110");
+}
+
+/// Issue #99: the crane's warning beacon nearly side-on (its 139th moving
+/// tick, 13° past the side), its two beams sweeping left and right from
+/// under the trolley; `factory-crane.png` (tick 275) shows it end-on, the
+/// lamp flaring.
+#[test]
+fn factory_beacon_side() {
+    factory_golden("factory-beacon-side.png", "340", "870,300");
 }
 
 /// Issue #34, byte identity: chaos bots on Castle Strike Reloaded (its

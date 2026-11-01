@@ -43,9 +43,10 @@ fn built_in_assets_check() {
     assert!(warnings.is_empty(), "{warnings:?}");
     assert_eq!(list.len(), dirs.len());
     assert!(list.iter().all(|(_, s)| s.thumb.is_some()), "every starter asset has a thumbnail");
-    // Every one glows but the factory's crane (issue #96), rock alone.
+    // Every one glows, since issue #99 the factory's crane too (its
+    // warning beacon; issue #96's was rock alone).
     let dark: Vec<&str> = list.iter().filter(|(_, s)| !s.glows).map(|(_, s)| s.name.as_str()).collect();
-    assert_eq!(dark, ["Crane"]);
+    assert!(dark.is_empty(), "{dark:?}");
 }
 
 /// Every file under `dir`, by `/`-separated relative path, with its bytes.
@@ -218,7 +219,9 @@ fn a_block_making_another_asset_fails_naming_its_folder() {
     assert!(e.starts_with("content/assets/strip-light: its block makes other files"), "{e}");
 }
 
-/// The three assets issue #96 adds check, and are what the README says.
+/// The three assets issue #96 adds check, and are what the README says
+/// (issue #99: the Crane's warning beacon's two lenses beside its rail
+/// and claw).
 #[test]
 fn the_factorys_new_assets_check() {
     let dirs = ["crane", "console", "gauge"].map(|f| assets_dir().join(f));
@@ -230,7 +233,8 @@ fn the_factorys_new_assets_check() {
         let a = olr_edit::asset::load_dir(&assets_dir().join(f)).unwrap();
         (a.size, a.pieces.iter().map(|p| p.element.id.clone()).collect::<Vec<_>>())
     };
-    assert_eq!(layers("crane"), ((114, 50), vec!["rail".to_string(), "claw".into()]));
+    let crane = ["rail", "claw", "lens", "lens-b"].map(String::from).to_vec();
+    assert_eq!(layers("crane"), ((114, 50), crane));
     assert_eq!(layers("console"), ((33, 64), vec!["rock".to_string(), "rock-disp".into()]));
     assert_eq!(layers("gauge"), ((48, 27), vec!["rock".to_string(), "rock-scr".into(), "rock-disp".into()]));
 }
