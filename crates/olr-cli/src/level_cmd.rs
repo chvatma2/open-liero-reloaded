@@ -120,6 +120,9 @@ enum LevelCommand {
         #[command(flatten)]
         content: ContentArg,
     },
+    /// Set the level's notes (`level.ron`, issue #96); an empty text clears
+    /// them. Prints `set the notes: N characters` or `cleared the notes`.
+    Notes { pack: PathBuf, notes: String },
     /// Rebake a composed level's material, front, back and thumbnail.
     Bake {
         pack: PathBuf,
@@ -393,6 +396,14 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         LevelCommand::Export(a) => crate::library_cmd::export(a),
         LevelCommand::Import(a) => crate::library_cmd::import(a),
         LevelCommand::CheckScripts { pack } => check_scripts(pack),
+        LevelCommand::Notes { pack, notes } => edit(pack, |l| {
+            l.notes = notes.clone();
+            Ok(vec![if notes.is_empty() {
+                "cleared the notes".into()
+            } else {
+                format!("set the notes: {} characters", notes.chars().count())
+            }])
+        }),
         LevelCommand::Script { pack, script, content } => {
             crate::copy_cmd::level_script(pack, script, content)
         }

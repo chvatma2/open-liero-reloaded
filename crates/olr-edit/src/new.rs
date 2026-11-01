@@ -28,6 +28,10 @@ pub enum Template<'a> {
     Skin { double: bool },
     /// A copy of the pack at this directory.
     From(&'a Path),
+    /// A copy of the pack at this directory keeping its origin: a remake
+    /// of the same original work (issue #96: Liero Factory Reloaded from
+    /// After Dark, both OLX's Liero Factory).
+    Remake(&'a Path),
 }
 
 /// Why no pack was made; nothing was written.
@@ -131,7 +135,7 @@ pub fn new_pack_with(
             fresh(Source::Skin(crate::skin::blank(name, double)))
         }
         Template::Skin { .. } => return Err(wrong("skin")),
-        Template::From(from) => {
+        Template::From(from) | Template::Remake(from) => {
             let pack = load(from).map_err(|source| NewError::Load { from: from.into(), source })?;
             if pack.manifest.kind != kind {
                 return Err(wrong(&format!("{:?} pack's", pack.manifest.kind)));
@@ -141,7 +145,9 @@ pub fn new_pack_with(
     };
     pack.manifest.id = id.into();
     pack.manifest.name = name.into();
-    pack.manifest.origin = None;
+    if !matches!(template, Template::Remake(_)) {
+        pack.manifest.origin = None;
+    }
     rename(&mut pack.source, name);
     edit(&mut pack.source)?;
     // `replace_dir` swaps the new pack in over an empty directory. A failed

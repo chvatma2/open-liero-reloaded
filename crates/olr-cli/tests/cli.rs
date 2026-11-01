@@ -199,6 +199,51 @@ fn pack_new_level_then_check() {
     assert!(!skin.exists() && !tmp.path().join("m").exists());
 }
 
+/// Issue #96: `pack new --from … --keep-origin` keeps the copied pack's
+/// origin (a remake of the same original), without it the copy has none;
+/// `level notes` sets and clears a level's notes.
+#[test]
+fn pack_new_keeps_the_origin_and_level_notes_set() {
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let from = repo.join("content/reloaded/olr-level-liero-factory-after-dark");
+    let tmp = tempfile::tempdir().unwrap();
+    let origin = |dir: &std::path::Path| olr_pack::read_manifest(&olr_vfs::DirFs::new(dir)).unwrap().origin;
+    let make = |id: &str, keep: bool| {
+        let dir = tmp.path().join(id);
+        let mut cmd = olr_cli();
+        cmd.args(["pack", "new", "level", id, "--name", "Remade", "--from"])
+            .arg(&from)
+            .arg("--out")
+            .arg(&dir);
+        if keep {
+            cmd.arg("--keep-origin");
+        }
+        let out = cmd.output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        dir
+    };
+    let (kept, plain) = (make("kept", true), make("plain", false));
+    assert!(origin(&from).is_some());
+    assert_eq!(origin(&kept), origin(&from));
+    assert_eq!(origin(&plain), None);
+    let out = olr_cli().args(["pack", "new", "level", "x", "--keep-origin"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(2), "--keep-origin needs --from");
+    let notes = |dir: &std::path::Path| {
+        olr_format::levels::read_level_files(&olr_vfs::DirFs::new(dir)).unwrap().notes
+    };
+    let set = |text: &str| {
+        let out = olr_cli().args(["level", "notes"]).arg(&kept).arg(text).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    assert_eq!(set("Rebuilt, \"quoted\"."), "set the notes: 18 characters\n");
+    assert_eq!(notes(&kept), "Rebuilt, \"quoted\".");
+    assert_eq!(set(""), "cleared the notes\n");
+    assert_eq!(notes(&kept), "");
+    let out = olr_cli().args(["pack", "check"]).arg(&kept).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+}
+
 #[test]
 fn reimport_replaces_stale_files() {
     let tmp = tempfile::tempdir().unwrap();

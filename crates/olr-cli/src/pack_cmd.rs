@@ -56,6 +56,10 @@ enum PackCommand {
         /// Copy this pack (of the same kind) under the new id and name.
         #[arg(long)]
         from: Option<PathBuf>,
+        /// Keep the --from pack's origin (a remake of the same original
+        /// work); without it the copy has none.
+        #[arg(long, requires = "from")]
+        keep_origin: bool,
     },
 }
 
@@ -101,9 +105,10 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
     match &args.command {
         PackCommand::Check { paths, content } => check(paths, content),
         PackCommand::Fmt { check, paths } => fmt(paths, *check),
-        PackCommand::New { kind, id, out, name, size, theme, from } => {
+        PackCommand::New { kind, id, out, name, size, theme, from, keep_origin } => {
             let out = out.clone().unwrap_or_else(|| PathBuf::from(id));
-            new(*kind, id, &out, name.as_deref().unwrap_or(id), *size, theme.as_deref(), from.as_deref())
+            let name = name.as_deref().unwrap_or(id);
+            new(*kind, id, &out, name, *size, theme.as_deref(), from.as_deref(), *keep_origin)
         }
     }
 }
@@ -229,6 +234,7 @@ pub(crate) fn warn(warnings: &[String]) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn new(
     kind: Kind,
     id: &str,
@@ -237,11 +243,13 @@ fn new(
     size: Option<(u32, u32)>,
     theme: Option<&str>,
     from: Option<&Path>,
+    keep_origin: bool,
 ) -> anyhow::Result<bool> {
     if !matches!(kind, Kind::Level) && (size.is_some() || theme.is_some()) {
         anyhow::bail!("--size and --theme apply to level packs only");
     }
     let template = match (kind, from) {
+        (_, Some(from)) if keep_origin => Template::Remake(from),
         (_, Some(from)) => Template::From(from),
         (Kind::Mod, None) => Template::Mod,
         (Kind::Level, None) => {
