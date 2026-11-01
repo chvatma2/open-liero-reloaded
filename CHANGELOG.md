@@ -245,6 +245,14 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   tick. The built-in Strip light has `On`, `Dim` and `Off` states, their
   sounds and the stutter as its default script; a static strip stays
   steady.
+- The rest of Liero Factory Reloaded comes alive: the control room's
+  screen is a security camera, showing the truck, the crane, the offices
+  and the roof garden in turn; the 13-37 sign now and then loses its
+  dash, its "-LD-" or half its 7; the control desk's lamps and the
+  gauge's needle change every few seconds; and an orange warning beacon
+  under the crane's trolley turns, two beams sweeping the hall, while
+  the crane moves. The built-in Computer screen, Lit sign, Control desk
+  and Gauge carry these states and scripts, and the Crane its beacon.
 
 ### Changed
 

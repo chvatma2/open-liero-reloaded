@@ -7912,6 +7912,74 @@ to this section.
   each entry to `On`, no sound at a static strip).
   `explosions_leave_the_factorys_live_copies_alone` leaves the tubes'
   states out of its snapshot (their scripts switch them at any tick).
+- **The security screen (#99).** The Computer screen's states `Truck`
+  (start), `Crane`, `Offices` and `Garden` are painted miniatures of
+  `ctrl-scr` (12 × 11), made once by `tools/levels/factory_live.py`
+  (`make_screen_art`) from After Dark drawn full bright (`look-preview
+  --view full`, lavapipe): each part's box downsampled (a box's most
+  saturated colour where it covers a quarter of it, else its mean),
+  saturation × 1.6, mapped to the colours of the truck's picture. Plain
+  averaging washed the plants, the moon and the offices' walls to grey;
+  the garden is still touched up in code (`GARDEN_*`: sky, a white moon
+  pixel, four green stalks under gold heads). `screen.rhai` shows each
+  250 ticks (`every`), no randomness.
+- **The displays (#99).** The Lit sign's `No dash`, `No LD` and `Dying
+  7` keep every `rock-disp` pixel (solid), its dark ones painted the
+  board's unlit face `#727272` with glow mask 0 (a state picture's mask
+  needs the layer to have one: the block gives `rock-disp`, and the
+  desk's `displays`, a whole mask before `asset save`). The Control
+  desk's `B` and `C` are pictures of `displays` with masks (a dark dot
+  `#001428`, mask 0; `C`'s third dot red). The Gauge's `B` and `C`
+  move its cyan needle 2 and 4 pixels right over `rock-disp`'s own pixels
+  only (a hole skipped, the dial's yellow where it was), `C` swapping
+  the buttons' colours. The scripts draw only `this.rand`: the sign
+  300-900 ticks `Normal`, then a fault 20-80; the desk and the gauge
+  another state every 100-400 and 150-500 ticks. State names are the
+  assets' style (`Truck`, `No dash`, `A`), not the issue's lower case.
+- **The warning beacon (#99, #95's pick).** The maintainer judged a
+  slow cone (#95) and picked instead an orange rotating warning beacon
+  on the ceiling, then moved it onto the crane, lit and turning only
+  while it moves (the design, "The spotlight's look (issue #95)"). So
+  there is no Spotlight asset and no copy `spot`: the Crane carries it.
+  With τ 0 one beam always points right and the other left, so the
+  lenses' beam directions are fixed (`lens` 0°, `lens-b` 180°, layers
+  of their own because a layer has one beam) and only the spread, reach
+  and light turn (ℓ = |cos φ|, the look repeating every half turn).
+  The housing and the dome are painted into `claw`, so they move with
+  it; the dome glows in its own group `halo` through `claw`'s mask. A
+  layer's offset is one exposed property, so `crane.rhai`'s `tick()`
+  sets `lens_x` and `lens_b_x` to `claw_x` every tick (the same tick:
+  motions step before the scripts run); `turn()` reads a 26-entry table
+  of the half turn's first quarter (every 3 ticks, 1.2° a tick,
+  interpolated in integers: arrays stay under 64 items, and #88 has no
+  trigonometry), the halo `(400 − light) / 4` and `400 − light`. `Idle`'s
+  state values put it out; `mem.turn` counts moving ticks only, so each
+  crossing goes on where the last stopped. **Against #95's frames** (by
+  eye, `factory-beacon-side.png` at tick 340 and `factory-crane.png` at
+  275, the lamp flaring end-on): the same colour, width, fade and flare;
+  side-on both beams now show (the judged ceiling mount's left beam was
+  lost under the rail), as the maintainer asked ("going in both
+  directions").
+- **Tests (#99)** (`olr-cli`'s `tests/reloaded.rs`): `LIVE_BOXES` gains
+  the screen's, the sign's, the desk's and the gauge's boxes (the bake
+  test's ground then glows in 7 groups, not 9: the screen's and the
+  displays' groups live in live copies only); `LIVE_COPIES` the four
+  displays (`DISPLAYS`: assets, starts and scripts);
+  `live_states_keep_their_solid_pixels` the Computer screen, the Lit
+  sign, the Control desk and the Gauge; `the_factory_scripts_never_fail`
+  the screen, desk and gauge still changing after tick 4500; the new
+  `the_screen_shows_each_camera` (2000 ticks: the cycle, 250 ticks
+  each), `the_displays_change_now_and_then` (6000 ticks: the sign's
+  faults back within 80 ticks, the desk and gauge more than 10 changes,
+  the same seed alike, seed 2 otherwise) and `the_beacon_follows_the_pick`
+  (the lenses' beams 0° and 180°, riding the claw every tick, out while
+  `Idle`, and at the 8 phases the design's spread and reach within 1° and
+  1 px, the light within 4). `tests/asset.rs`: every built-in asset
+  glows now, the Crane's four layers. Render goldens
+  `factory-screen.png` (tick 300, `Crane` showing) and
+  `factory-beacon-side.png` (tick 340); `factory-crane.png` re-blessed
+  (the beacon end-on); the live golden
+  `classic-factory-live-4dm.ron` re-blessed.
 - **Unmeasured:** the bot grid with the factory, the rollback cost and
   the render cost with the live copies in view
   (`docs/deferred-verification.md`); the liveliness, the crane's
