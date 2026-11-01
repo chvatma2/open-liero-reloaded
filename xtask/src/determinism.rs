@@ -302,7 +302,10 @@ fn record(goldens: &[Recorded]) -> Result<Vec<PathBuf>, String> {
 
 fn native_stream(replays: &[PathBuf]) -> Result<String, String> {
     let mut c = Command::new(root().join("target/release/olr-detcheck"));
-    c.current_dir(root()).args(contents(LIVE_LEVELS, RELOADED, "content/packs")).args(["--bake", BAKE]).args(replays);
+    c.current_dir(root())
+        .args(contents(LIVE_LEVELS, RELOADED, "content/packs"))
+        .args(["--bake", BAKE])
+        .args(replays);
     ok_output(c, "olr-detcheck (native)")
 }
 

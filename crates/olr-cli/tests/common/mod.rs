@@ -30,7 +30,8 @@ pub fn live_content() -> Option<Content> {
     let dir = content_dir()?;
     let live = live_levels_dir();
     let bundled = olr_content::bundled_roots(Path::new(&dir));
-    let roots: Vec<&Path> = std::iter::once(live.as_path()).chain(bundled.iter().map(|p| p.as_path())).collect();
+    let roots: Vec<&Path> =
+        std::iter::once(live.as_path()).chain(bundled.iter().map(|p| p.as_path())).collect();
     Some(Content::open_layers(&roots).expect("the layered content"))
 }
 

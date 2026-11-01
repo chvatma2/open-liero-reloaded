@@ -218,7 +218,9 @@ mod tests {
     fn a_camera_point_parses() {
         assert_eq!(super::point("870,300"), Ok((870.0, 300.0)));
         assert_eq!(super::point("-4.5, 12"), Ok((-4.5, 12.0)));
-        assert!(super::point("870").is_err() && super::point("a,1").is_err() && super::point("inf,1").is_err());
+        assert!(
+            super::point("870").is_err() && super::point("a,1").is_err() && super::point("inf,1").is_err()
+        );
     }
 
     #[test]

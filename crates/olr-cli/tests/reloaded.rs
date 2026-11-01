@@ -684,25 +684,24 @@ fn the_new_factory_draws_as_after_dark() {
     }
     let tmp = tempfile::tempdir().unwrap();
     let packs = packs_dir();
-    for at in ["100,420"] {
-        let draw = |level: &str| {
-            let out = tmp.path().join(format!("{level}-{at}.png"));
-            let dir = reloaded_dir().join(level);
-            let o = cli(&[
-                "look-preview",
-                dir.to_str().unwrap(),
-                "--at",
-                at,
-                "--content",
-                packs.to_str().unwrap(),
-                "--out",
-                out.to_str().unwrap(),
-            ]);
-            assert!(o.status.success(), "{level} at {at}: {}", String::from_utf8_lossy(&o.stderr));
-            std::fs::read(&out).unwrap()
-        };
-        assert!(draw(FACTORY) == draw(AFTER_DARK), "at {at}: the new factory draws otherwise");
-    }
+    let at = "100,420";
+    let draw = |level: &str| {
+        let out = tmp.path().join(format!("{level}-{at}.png"));
+        let dir = reloaded_dir().join(level);
+        let o = cli(&[
+            "look-preview",
+            dir.to_str().unwrap(),
+            "--at",
+            at,
+            "--content",
+            packs.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ]);
+        assert!(o.status.success(), "{level} at {at}: {}", String::from_utf8_lossy(&o.stderr));
+        std::fs::read(&out).unwrap()
+    };
+    assert!(draw(FACTORY) == draw(AFTER_DARK), "at {at}: the new factory draws otherwise");
 }
 
 /// The factory's live copy `id` as the world has it now.
@@ -723,10 +722,7 @@ fn factory_world(content: &Content, at: (i32, i32)) -> olr_sim::World {
     use olr_cli::spec::MatchSpec;
     let assets = LevelAssets::load(content, CLASSIC, FACTORY).unwrap();
     let spec = MatchSpec { locals: 1, ..MatchSpec::new(CLASSIC, FACTORY, 1, 3, 1000) };
-    let w = olr_content::build_match_spawning(assets.match_assets(), &spec.match_options(), Some(at))
-        .unwrap()
-        .world;
-    w
+    olr_content::build_match_spawning(assets.match_assets(), &spec.match_options(), Some(at)).unwrap().world
 }
 
 /// Issue #97: Liero Factory Reloaded's live copies are exactly the crane

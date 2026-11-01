@@ -1092,11 +1092,14 @@ fn liero_factory_reloaded_opens_with_its_copies() {
     let w = l.size.0 as usize;
     let outside = |i: usize| {
         let (x, y) = ((i % w) as i32, (i / w) as i32);
-        !live.iter().any(|&((bx, by), (bw, bh))| x >= bx && x < bx + bw as i32 && y >= by && y < by + bh as i32)
+        !live
+            .iter()
+            .any(|&((bx, by), (bw, bh))| x >= bx && x < bx + bw as i32 && y >= by && y < by + bh as i32)
     };
     let pixel = |img: &olr_data::image::RgbaImage, i: usize| img.as_raw()[i * 4..i * 4 + 4].to_vec();
     let differs = |i: usize| {
-        l.material[i] != stored.material[i] || pixel(&l.front, i) != pixel(&stored.front, i)
+        l.material[i] != stored.material[i]
+            || pixel(&l.front, i) != pixel(&stored.front, i)
             || pixel(&l.back, i) != pixel(&stored.back, i)
     };
     assert!((0..l.material.len()).filter(|&i| outside(i)).all(|i| !differs(i)), "the bake");
