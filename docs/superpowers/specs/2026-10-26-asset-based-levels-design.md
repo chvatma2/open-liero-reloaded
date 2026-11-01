@@ -185,6 +185,41 @@ This is the first and strongest focus of 0.3. It prepares the 0.4 campaign
 - It is the test bed: what the factory needs, the editor and the runtime
   must do.
 
+### The spotlight's look (issue #95)
+
+Picked by the maintainer on 2026-11-01 from real rendered frames (a
+throwaway spike: a live copy in a scratch copy of the factory, its beam
+values set per frame with `render-match --live-value`, 48 frames a turn,
+shown in motion and as 8-phase strips). Round 1 showed the cone of the
+model below; the maintainer asked instead for **an orange rotating
+warning beacon**, like those in factories and on automatic gates, and
+then for it to **ride the crane**, lit and turning only while the crane
+moves.
+
+| | |
+|---|---|
+| What | a rotating warning beacon: two beams 180° apart |
+| Mount | on the crane's trolley, under the rail beside the cable, moving with the claw (judged at (905, 272) under the deck; the maintainer moved it onto the crane, 2026-11-01) |
+| When | lit and turning only while the crane is `Moving`; dark and still while `Idle` |
+| Tilt τ, half-angle α | τ 0° (both beams level, turning about the vertical), α 10° |
+| Period T | 3 s a turn |
+| Colour | deep orange `#ff6a10` |
+| Intensity, reach | 400, 360 px (lower than the headlights', longer) |
+| End-on handling | halo: the beams fade, `w = smoothstep(sin α, sin α + 0.25, ℓ)`, while the lamp's own glow and light rise by `1 − w` (a third glowing layer, no beam, in a group of its own, reach 60) |
+| Brightening | none |
+| Model | A: today's 2D beams, driven per frame (#93); no renderer issue |
+| Direction precision | whole degrees (settled 2026-10-26) |
+
+Per beam at phase φ the axis is `a = (±cos φ, 0, ±sin φ)`, the second
+beam the first's opposite: direction `atan2(a.y, a.x)` (0° and 180° at
+the sides), projected length `ℓ = |cos φ|`, reach `360 · ℓ`, apparent
+spread `atan(sin α / sqrt(cos²α · ℓ² − sin²α · (1 − ℓ²)))` (89° where
+undefined) and light `400 · w`; the halo's glow `100 · (1 − w)` and
+light `400 · (1 − w)`. With τ 0 both beams are end-on together, so the
+lamp flares twice a turn. The kept frames (8 phases, the game's view at
+2× and a 160 × 100 close-up at 4×, the ceiling mount) are in
+`2026-10-26-spotlight/`.
+
 ## Calls I made (the maintainer may overrule)
 
 1. **After Dark's pack id** becomes `olr-level-liero-factory-after-dark`;
