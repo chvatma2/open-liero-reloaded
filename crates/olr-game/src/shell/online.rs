@@ -1090,6 +1090,7 @@ impl Shell {
         let mut audio = self.audio.take().unwrap_or_else(Audio::silent);
         audio.stop_all();
         audio.load(&assets.m, assets.content.core());
+        audio.load_level_sounds(&assets.level);
         self.log(audio.take_warnings());
         session.audio = audio;
         // The ticks the pump ran during the load are not presented: the

@@ -350,6 +350,7 @@ fn direct(
     );
     let mut audio = audio;
     audio.load(&assets.m, assets.content.core());
+    audio.load_level_sounds(&assets.level);
     for w in audio.take_warnings() {
         log::warn!("{w}");
     }

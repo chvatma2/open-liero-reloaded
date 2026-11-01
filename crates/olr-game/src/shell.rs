@@ -824,6 +824,7 @@ impl Shell {
         let mut audio = self.audio.take().unwrap_or_else(Audio::silent);
         audio.stop_all();
         audio.load(&assets.m, assets.content.core());
+        audio.load_level_sounds(&assets.level);
         self.log(audio.take_warnings());
         session.audio = audio;
         self.data.weapons = weapon_menu(&assets);
@@ -906,6 +907,10 @@ impl Shell {
     /// (`Session::tick_locals`, issue #29).
     pub fn tick_locals(&mut self, keys: &[Keys]) -> bool {
         let held = self.paused || self.ui.screen() == Screen::WeaponSelect;
+        if held && let Some(s) = self.session_mut() {
+            // Issue #92: a held game's live copies hum no more.
+            s.audio.stop_loops();
+        }
         self.session_mut().filter(|_| !held).is_some_and(|s| s.tick_locals(keys))
     }
 

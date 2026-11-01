@@ -870,6 +870,11 @@ impl Session {
             self.audio.play_heard(&self.heard, &self.present.listeners());
         }
         self.present.on_tick(&self.world, &self.events);
+        // Issue #92: the live copies' sounds, as the tick presents them.
+        if self.sound {
+            self.audio.play_live(self.present.live_sounds(), &self.present.listeners());
+        }
+        self.present.live_sounds_played();
         self.ticks += 1;
         self.note_weapon_changes(weapons, players);
         if cfg!(any(debug_assertions, test)) && self.ticks.is_multiple_of(DRIFT_CHECK_TICKS) {
@@ -1061,6 +1066,12 @@ impl Session {
             }
         };
         let shown = d.present(events, pumped, self.frozen, &mut self.present, &mut self.throws, &mut play);
+        // Issue #92: the live copies' sounds of the advances presented: the
+        // starts of the events admitted, the loops of the newest world.
+        if self.sound {
+            self.audio.play_live(self.present.live_sounds(), &self.present.listeners());
+        }
+        self.present.live_sounds_played();
         let (confirmed, rest, resynced) = (shown.confirmed, shown.rest, shown.resynced);
         if let Some(t) = shown.current_tick {
             self.ticks = u64::from(t);

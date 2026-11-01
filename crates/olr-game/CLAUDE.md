@@ -505,6 +505,19 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   takes throws back plays none); every other sound plays as before.
   `Session::sounds` is what the last tick or poll played (or would have,
   with `sound` off).
+  **Live copies' sounds** (issue #92): where the mod's sounds load
+  (`Shell`'s match and online starts, `main.rs`' direct start) the level's
+  load too (`Audio::load_level_sounds(&assets.level)`, its warnings logged
+  once). `Session::tick_locals` (offline matches, the sandbox, replays,
+  the editor's play test `EditedPlay`) after `Presentation::on_tick`, and
+  `present_polled` (online play, spectators) after the poll's
+  `NetPresenter::apply`, call `audio.play_live(present.live_sounds(),
+  listeners)` when `sound` is on, then `live_sounds_played()`: the entry
+  and script sounds start once (online once per `EventKey`), the loops
+  follow the presented world. A held game (the pause, the weapon
+  selection: `Shell::tick_locals`) stops the loops (`Audio::stop_loops`);
+  they come back with the next tick. Ending a game stops them with every
+  voice.
 - **Online** (`online.rs`, plan 10 task 10; spec §3.4, decision N20):
   `Session::online(assets, OnlineDriver::new(handle, &start), ..)` after the
   peer's `MatchStarting` (`handle`: the peer's `net::PeerHandle`, below;

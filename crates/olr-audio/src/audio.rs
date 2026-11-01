@@ -486,6 +486,16 @@ impl<B: Backend> Audio<B> {
         self.preview.as_ref().is_some_and(Voice::playing)
     }
 
+    /// Stops the asset loops with the short fade (the game is held: the
+    /// pause, the weapon selection); the world's start again at the next
+    /// [`Audio::play_live`].
+    pub fn stop_loops(&mut self) {
+        for mut l in self.loops.drain(..) {
+            l.handle.stop(fade());
+        }
+        self.voices.set_reserved(0);
+    }
+
     /// Stops every voice, the asset loops too (a restart; the loops a
     /// world plays start again at the next [`Audio::play_live`]).
     pub fn stop_all(&mut self) {
@@ -493,10 +503,7 @@ impl<B: Backend> Audio<B> {
             v.stop(Tween::default());
         }
         self.voices.clear();
-        for mut l in self.loops.drain(..) {
-            l.handle.stop(fade());
-        }
-        self.voices.set_reserved(0);
+        self.stop_loops();
     }
 
     /// kira's manager, if a device is open (tests drive a mock backend
