@@ -549,6 +549,11 @@ fn the_new_factory_bakes_as_after_dark() {
     assert_eq!((b.clear.is_some(), b.haze.is_some()), (false, false));
 }
 
+/// A copy as `the_new_factory_is_made_of_assets` reads it: its id, its
+/// asset's key, its built-in folder (`None` the level's own), its place
+/// and its size.
+type CopyRow<'a> = (String, &'a str, Option<&'a str>, (i32, i32), (u32, u32));
+
 /// Issue #96: Liero Factory Reloaded is made of assets: its copies by id,
 /// each with its key, asset, origin, place and size, every one static;
 /// the ground and the sky the level's own (the sky distant at 90), the
@@ -570,7 +575,7 @@ fn the_new_factory_is_made_of_assets() {
         (524, 286),
         (187, 342),
     ];
-    let mut want: Vec<(String, &str, Option<&str>, (i32, i32), (u32, u32))> = vec![
+    let mut want: Vec<CopyRow> = vec![
         ("ground".into(), "ground", None, (0, 0), (1200, 480)),
         ("sky".into(), "y", None, (0, 0), (1200, 480)),
     ];
