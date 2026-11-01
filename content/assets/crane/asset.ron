@@ -47,4 +47,25 @@
             ),
         ),
     ],
+    states: [
+        (
+            name: "Idle",
+        ),
+        (
+            name: "Moving",
+            loop_sound: "hum.wav",
+        ),
+    ],
+    exposed: [
+        (
+            name: "claw_x",
+            property: OffsetX("claw"),
+            default: Int(0),
+            min: -10,
+            max: 75,
+        ),
+    ],
+    sounds: [
+        "hum.wav",
+    ],
 )

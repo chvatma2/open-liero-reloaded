@@ -83,7 +83,17 @@ is gone.
 
       olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 762,272,114,47 --name Claw
       olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 762,269,114,3 --name Rail
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark rail --rect 775,269,23,1 --colour 737373
+      olr-cli level element erase content/reloaded/olr-level-liero-factory-after-dark rail --rect 775,270,23,1
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark rail --rect 775,271,23,1 --colour 737373
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark claw --rect 776,272,21,1 --colour 2c2c2c
       olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 762,269,114,50 --layers rail,claw --name Crane --out content/assets/crane
+      olr-cli asset state set content/assets/crane Normal --name Idle
+      olr-cli asset state add content/assets/crane Moving
+      olr-cli asset expose content/assets/crane claw_x claw.x --default 0 --min -10 --max 75
+      olr-cli asset sound add content/assets/crane tools/levels/factory/sounds/hum.wav
+      olr-cli asset state set content/assets/crane Moving --loop-sound hum.wav
+      olr-cli asset script content/assets/crane --set tools/levels/factory/crane.rhai
 
 - `console/`: **Console** (issue #96), the box hanging under the conveyor
   deck (`rock`) with its column of yellow LEDs (`rock-disp`, group
@@ -93,7 +103,17 @@ is gone.
       olr-cli level element erase content/reloaded/olr-level-liero-factory-after-dark rock --rect 934,299,31,21
       olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark rock-disp --locked false
       olr-cli level element erase content/reloaded/olr-level-liero-factory-after-dark rock-disp --rect 934,299,31,21
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark rock-disp --rect 941,326,17,4 --colour ff3020
       olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 933,269,33,64 --layers rock,rock-disp --name Console --out content/assets/console
+      olr-cli asset state add content/assets/console Plain
+      olr-cli asset state picture content/assets/console Plain rock-disp --art tools/levels/factory/art/console-normal.png
+      olr-cli asset state set content/assets/console Plain --start
+      olr-cli asset state remove content/assets/console Normal
+      olr-cli asset state set content/assets/console Plain --name Normal
+      olr-cli asset state add content/assets/console Alarm
+      olr-cli asset state picture content/assets/console Alarm rock-disp --art tools/levels/factory/art/console-alarm.png
+      olr-cli asset state value content/assets/console Alarm rock-disp.light 400
+      olr-cli asset state value content/assets/console Alarm rock-disp.animation "Pulse(period_ms: 600, low: 40, high: 100)"
 
 - `gauge/`: **Gauge** (issue #96), the teal device of the upper floor:
   its yellow gauge and lit buttons (`rock-disp`, group `displays`) and
