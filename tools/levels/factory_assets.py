@@ -21,11 +21,20 @@
 #    add … --key <k> --id <id> --at X,Y`; a second copy of an asset reuses
 #    it, so only the first names the key), its link recorded as built-in.
 #
-# Every copy is static. The bake is After Dark's (`olr-cli`'s
-# `tests/reloaded.rs`). Scratch files go to `target/factory-assets/`.
-# Running it again makes the same bytes.
+# Issue #97: the wall behind the crane. After Dark never painted its
+# backdrop where the crane's rock stood, so a moving claw would uncover a
+# hole: those pixels (After Dark's rock in the crane's box, air once the
+# ground lost the crane) are painted on the ground's `backdrop` while the
+# ground is alone (`level element draw --mask … --tile …`), each blended
+# along its row between the nearest wall pixels left and right of it.
+#
+# Every copy is static (`factory_live.py`, issue #97, then makes the crane
+# and the console live). The bake is After Dark's but where the crane's
+# pixels were, under the crane (`olr-cli`'s `tests/reloaded.rs`). Scratch
+# files go to `target/factory-assets/`. Running it again makes the same
+# bytes.
 
-import os, shlex, shutil, subprocess, sys
+import os, shlex, shutil, struct, subprocess, sys, zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from reloaded_materials import decode  # noqa: E402
@@ -45,6 +54,8 @@ ASSETS = "content/assets"
 README = os.path.join(ASSETS, "README.md")
 SCRATCH = "target/factory-assets"
 NEW_ASSETS = ["crane", "console", "gauge"]
+# Issue #97: the crane's box, whose wall is painted behind its pixels.
+CRANE_BOX = (762, 269, 114, 50)
 
 # The pieces: key, built-in folder, the ground's layers its pixels come
 # from, its size and its copies (id, top-left), in placing order (later on
@@ -135,6 +146,56 @@ def empty(pack, layer):
     return all(p[3] == 0 for row in px for p in row)
 
 
+def encode_rgba(path, w, h, rows):
+    """An 8-bit RGBA PNG of `rows` (RGBA tuples)."""
+    data = b"".join(b"\x00" + bytes(v for p in row for v in p) for row in rows)
+    chunk = lambda t, d: struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d))
+    ihdr = struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)
+    png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(data, 9)) + chunk(b"IEND", b"")
+    with open(path, "wb") as f:
+        f.write(png)
+    print(f"wrote {path}")
+
+
+def wall_holes():
+    """Issue #97: the crane's pixels the ground lost (After Dark's rock in
+    the crane's box, air in the level's ground now), each with its wall
+    colour: blended along its row between the nearest other pixels of the
+    ground's front left and right of it."""
+    _, _, ad = decode(os.path.join(AFTER_DARK, "material.png"))
+    _, _, ours = decode(os.path.join(OUT, "material.png"))
+    _, _, front = decode(os.path.join(OUT, "front.png"))
+    rock, air = (128, 128, 128), (0, 0, 0)  # material.png's palette
+    bx, by, bw, bh = CRANE_BOX
+    holes = {(x, y) for y in range(by, by + bh) for x in range(bx, bx + bw)
+             if ad[y][x][:3] == rock and ours[y][x][:3] == air}
+    fill = {}
+    for x, y in sorted(holes):
+        l, r = x - 1, x + 1
+        while (l, y) in holes:
+            l -= 1
+        while (r, y) in holes:
+            r += 1
+        a, b, k = front[y][l], front[y][r], (x - l) / (r - l)
+        fill[(x, y)] = tuple(round(a[i] + (b[i] - a[i]) * k) for i in range(3)) + (255,)
+    return fill
+
+
+def paint_wall(cli):
+    """Issue #97: the wall behind the crane, on the ground's backdrop."""
+    fill = wall_holes()
+    w, h = 1200, 480
+    mask = [[(0, 0, 0, 0)] * w for _ in range(h)]
+    tile = [[(0, 0, 0, 0)] * w for _ in range(h)]
+    for (x, y), c in fill.items():
+        mask[y][x] = (255, 255, 255, 255)
+        tile[y][x] = c
+    m, t = os.path.join(SCRATCH, "wall-mask.png"), os.path.join(SCRATCH, "wall-tile.png")
+    encode_rgba(m, w, h, mask)
+    encode_rgba(t, w, h, tile)
+    run(cli, "level", "element", "draw", OUT, "backdrop", "--mask", m, "--tile", t)
+
+
 def make_level(cli):
     shutil.rmtree(OUT, ignore_errors=True)
     run(cli, "pack", "new", "level", ID, "--from", AFTER_DARK, "--keep-origin", "--name", NAME, "--out", OUT)
@@ -153,6 +214,7 @@ def make_level(cli):
     for layer in sorted(set(cut)):
         if empty(OUT, layer):
             run(cli, "level", "element", "remove", OUT, layer)
+    paint_wall(cli)
     gone = {"sky"} | {l for l in cut if not os.path.exists(os.path.join(OUT, "editor/layers", l + ".png"))}
     for layer in locked:
         if layer not in gone:
