@@ -465,22 +465,54 @@ fn baked(level: &str) -> olr_format::levels::LevelSource {
     olr_format::levels::read_level_files(&DirFs::new(reloaded_dir().join(level))).unwrap()
 }
 
+/// Issue #97: Liero Factory Reloaded's live copies' boxes (x, y, width,
+/// height): the crane's and the console's (issues #98 and #99 add theirs).
+/// The ground leaves live copies out (#85), so its bake differs from After
+/// Dark's only inside them.
+const LIVE_BOXES: [(u32, u32, u32, u32); 2] = [(762, 269, 114, 50), (933, 269, 33, 64)];
+
+/// Whether world pixel `(x, y)` lies in one of [`LIVE_BOXES`].
+fn in_live_box(x: u32, y: u32) -> bool {
+    LIVE_BOXES.iter().any(|&(bx, by, w, h)| (bx..bx + w).contains(&x) && (by..by + h).contains(&y))
+}
+
 /// Issue #96: Liero Factory Reloaded, built from assets, bakes as Liero
-/// Factory After Dark. `material.png`, `front.png`, `back.png` and the
-/// distant sky byte for byte; per pixel, the glow's strength, its group's
+/// Factory After Dark; since issue #97 outside its live copies' boxes
+/// ([`LIVE_BOXES`]), which the ground leaves out. `material.png`,
+/// `front.png` and `back.png` pixel for pixel there and the distant sky
+/// byte for byte; per pixel there, the glow's strength, its group's
 /// settings (colour, intensity, reach, animation: groups are internal to
-/// assets, so the bake may number or name them otherwise), the beams'
-/// direction and spread, the glass and the surface materials (by their
-/// settings, not their numbers); and the look but for its groups and
-/// materials, which hold the same settings.
+/// assets, so the bake may number or name them otherwise) and the surface
+/// materials (by their settings, not their numbers); the beams'
+/// direction and spread and the glass everywhere; and the look but for
+/// its groups and materials, which hold the same settings.
 #[test]
 fn the_new_factory_bakes_as_after_dark() {
     use olr_format::look::GlowGroupSource;
     use olr_format::materials::MaterialSource;
     let (ours, theirs) = (reloaded_dir().join(FACTORY), reloaded_dir().join(AFTER_DARK));
-    for file in ["material.png", "front.png", "back.png", "distant/0.png"] {
-        let same = std::fs::read(ours.join(file)).unwrap() == std::fs::read(theirs.join(file)).unwrap();
-        assert!(same, "{file} differs from After Dark's");
+    let same = std::fs::read(ours.join("distant/0.png")).unwrap()
+        == std::fs::read(theirs.join("distant/0.png")).unwrap();
+    assert!(same, "distant/0.png differs from After Dark's");
+    for file in ["material.png", "front.png", "back.png"] {
+        let decode =
+            |dir: &Path| olr_pack::image_io::decode_rgba(&std::fs::read(dir.join(file)).unwrap()).unwrap();
+        let (a, b) = (decode(&ours), decode(&theirs));
+        assert_eq!((a.width(), a.height()), (1200, 480), "{file}: at art scale 1");
+        assert_eq!((b.width(), b.height()), (1200, 480), "{file}");
+        let mut inside = 0;
+        for y in 0..a.height() {
+            for x in 0..a.width() {
+                if in_live_box(x, y) {
+                    inside += usize::from(a.get(x, y) != b.get(x, y));
+                } else {
+                    assert!(a.get(x, y) == b.get(x, y), "{file} at ({x}, {y}) differs from After Dark's");
+                }
+            }
+        }
+        if file == "front.png" {
+            assert!(inside > 0, "the live copies are left out of the ground's front");
+        }
     }
     let (a, b) = (baked(FACTORY), baked(AFTER_DARK));
     assert_eq!((a.size, a.art_scale, &a.theme, &a.objects), (b.size, b.art_scale, &b.theme, &b.objects));
@@ -521,11 +553,15 @@ fn the_new_factory_bakes_as_after_dark() {
     // The glow maps, per pixel.
     let (wa, wb) = (a.glow.as_ref().unwrap(), b.glow.as_ref().unwrap());
     assert_eq!((wa.art, wa.world), (wb.art, wb.world));
-    assert!(wa.front == wb.front && wa.back == wb.back, "the glow's strength");
+    assert_eq!(wa.art, wa.world, "art scale 1");
     let (w, h) = a.size;
     let mut groups = BTreeSet::new();
     for i in 0..(w * h) as usize {
         let (x, y) = (i as u32 % w, i as u32 / w);
+        if in_live_box(x, y) {
+            continue;
+        }
+        assert!(wa.front[i] == wb.front[i] && wa.back[i] == wb.back[i], "({x}, {y}): the glow's strength");
         for (ga, gb, side) in
             [(wa.groups[i], wb.groups[i], "front"), (wa.groups_back[i], wb.groups_back[i], "back")]
         {
@@ -542,10 +578,13 @@ fn the_new_factory_bakes_as_after_dark() {
     assert_eq!(ma.world, mb.world);
     for i in 0..(w * h) as usize {
         let (x, y) = (i as u32 % w, i as u32 / w);
+        if in_live_box(x, y) {
+            continue;
+        }
         assert_eq!(material(la, ma.front[i]), material(lb, mb.front[i]), "({x}, {y}): the front material");
         assert_eq!(material(la, ma.back[i]), material(lb, mb.back[i]), "({x}, {y}): the back material");
     }
-    assert_eq!((a.clear.is_some(), a.haze.is_some(), a.live.is_some()), (false, false, false));
+    assert_eq!((a.clear.is_some(), a.haze.is_some(), a.live.is_some()), (false, false, true));
     assert_eq!((b.clear.is_some(), b.haze.is_some()), (false, false));
 }
 
@@ -555,7 +594,9 @@ fn the_new_factory_bakes_as_after_dark() {
 type CopyRow<'a> = (String, &'a str, Option<&'a str>, (i32, i32), (u32, u32));
 
 /// Issue #96: Liero Factory Reloaded is made of assets: its copies by id,
-/// each with its key, asset, origin, place and size, every one static;
+/// each with its key, asset, origin, place and size, every one static
+/// but the crane and the console (issue #97, in their starting states
+/// with their defaults and their asset's default script);
 /// the ground and the sky the level's own (the sky distant at 90), the
 /// rest built-in and as the library has them (`level library` says
 /// `same`: a built-in asset changed without the level fails here).
@@ -611,11 +652,13 @@ fn the_new_factory_is_made_of_assets() {
         .collect();
     assert_eq!(got, want);
     for c in &file.copies {
-        assert!(!c.live && c.state.is_none() && c.values.is_empty(), "{}: static", c.id);
+        assert_eq!(c.live, ["crane", "console"].contains(&c.id.as_str()), "{}: live", c.id);
+        assert!(c.state.is_none() && c.values.is_empty(), "{}: its start and defaults", c.id);
+        assert!(!c.script && c.default_script, "{}: no script of its own", c.id);
         assert!(!c.free_aspect, "{}: its aspect kept", c.id);
         assert_eq!(c.distant, (c.id == "sky").then_some(90), "{}", c.id);
     }
-    assert!(placed.level_script.is_none() && placed.scripts.is_empty(), "no scripts");
+    assert!(placed.level_script.is_some() && placed.scripts.is_empty(), "the level script, no copy's own");
     let o = cli(&["level", "library", dir.to_str().unwrap(), "--content", packs_dir().to_str().unwrap()]);
     let out = String::from_utf8_lossy(&o.stdout);
     assert!(o.status.success(), "{out}{}", String::from_utf8_lossy(&o.stderr));
@@ -627,36 +670,13 @@ fn the_new_factory_is_made_of_assets() {
     }
 }
 
-/// Issue #96: the same bot match (Classic, 4 bots, seed 1, 1000 ticks) on
-/// Liero Factory Reloaded and on After Dark gives the same world checksum
-/// every tick (the checksum covers the terrain, not the level's hash).
-#[test]
-fn the_new_factory_plays_as_after_dark() {
-    use olr_cli::runner::{Match, Options};
-    use olr_cli::spec::MatchSpec;
-    let content = Content::open_bundled(&packs_dir()).unwrap();
-    let run = |level: &str| {
-        let spec = MatchSpec::new(CLASSIC, level, 4, 1, 1000);
-        let mut m = Match::new(&content, &spec, &Options::default()).unwrap();
-        let mut sums = vec![m.world().checksum()];
-        while m.step() {
-            sums.push(m.world().checksum());
-        }
-        let run = m.finish();
-        assert!(run.failure().is_none(), "{level}: {}", run.summary());
-        assert_eq!(run.ticks, 1000, "{level}");
-        sums
-    };
-    let (ours, theirs) = (run(FACTORY), run(AFTER_DARK));
-    assert_eq!(ours.len(), theirs.len());
-    if let Some(t) = (0..ours.len()).find(|&t| ours[t] != theirs[t]) {
-        panic!("tick {t}: Liero Factory Reloaded played differently from After Dark");
-    }
-}
-
 /// Issue #96, on the GPU tier: `olr-cli look-preview` of Liero Factory
-/// Reloaded and of After Dark gives the same PNG at the offices, the
-/// crane, the control room and the truck.
+/// Reloaded and of After Dark gives the same PNG at the truck. Since
+/// issue #97 only there: `look-preview` draws the bake, which leaves the
+/// live copies out (#87), and the truck's view (100, 420) holds none
+/// (the offices', the crane's and the control room's did; issue #96's
+/// `the_new_factory_plays_as_after_dark` is retired too, the crane
+/// changing play: `docs/porting/STATUS.md`).
 #[test]
 fn the_new_factory_draws_as_after_dark() {
     if std::env::var_os("OLR_GPU_TESTS").is_none() {
@@ -664,7 +684,7 @@ fn the_new_factory_draws_as_after_dark() {
     }
     let tmp = tempfile::tempdir().unwrap();
     let packs = packs_dir();
-    for at in ["400,200", "800,300", "930,110", "100,420"] {
+    for at in ["100,420"] {
         let draw = |level: &str| {
             let out = tmp.path().join(format!("{level}-{at}.png"));
             let dir = reloaded_dir().join(level);
@@ -683,4 +703,456 @@ fn the_new_factory_draws_as_after_dark() {
         };
         assert!(draw(FACTORY) == draw(AFTER_DARK), "at {at}: the new factory draws otherwise");
     }
+}
+
+/// The factory's live copy `id` as the world has it now.
+fn live_copy<'a>(w: &'a olr_sim::World, id: &str) -> olr_sim::LiveCopyView<'a> {
+    w.live().expect("the factory's live copies").copy_by_id(id).unwrap_or_else(|| panic!("no live copy {id}"))
+}
+
+/// The crane's `claw_x` in whole world pixels (rounded down).
+fn claw_x(w: &olr_sim::World) -> i64 {
+    live_copy(w, "crane").value("claw_x").unwrap().div_euclid(olr_sim::LIVE_SUBPIXELS)
+}
+
+/// A world of the factory (Classic) whose worm 0, a human pressing what a
+/// test gives it, first spawns at `at`, and a second worm wherever
+/// `FindSpot` puts it (seed 3: the far left of the upper floor).
+fn factory_world(content: &Content, at: (i32, i32)) -> olr_sim::World {
+    use olr_cli::assets::LevelAssets;
+    use olr_cli::spec::MatchSpec;
+    let assets = LevelAssets::load(content, CLASSIC, FACTORY).unwrap();
+    let spec = MatchSpec { locals: 1, ..MatchSpec::new(CLASSIC, FACTORY, 1, 3, 1000) };
+    let w = olr_content::build_match_spawning(assets.match_assets(), &spec.match_options(), Some(at))
+        .unwrap()
+        .world;
+    w
+}
+
+/// Issue #97: Liero Factory Reloaded's live copies are exactly the crane
+/// and the console (#98 and #99 add theirs), each a copy of its built-in
+/// asset in its starting state with its asset's default script (the
+/// Crane's `tools/levels/factory/crane.rhai`; the Console has none), the
+/// level script (`tools/levels/factory/level.rhai`) names both, and no
+/// live asset holds a dirt layer (call 2). A match loads them so.
+#[test]
+fn the_live_factory_has_its_live_copies() {
+    use olr_format::levels::{ElementKind, ElementMaterial, read_placed_files};
+    let dir = reloaded_dir().join(FACTORY);
+    let placed = read_placed_files(&DirFs::new(&dir)).unwrap().expect("editor/placed.ron");
+    let live: Vec<&str> = placed.file.copies.iter().filter(|c| c.live).map(|c| c.id.as_str()).collect();
+    assert_eq!(live, ["crane", "console"]);
+    let crane_script = std::fs::read_to_string(repo().join("tools/levels/factory/crane.rhai")).unwrap();
+    for (id, name, start, script) in
+        [("crane", "Crane", "Idle", Some(&crane_script)), ("console", "Console", "Normal", None)]
+    {
+        let c = placed.file.copies.iter().find(|c| c.id == id).unwrap();
+        let a = &placed.assets[&c.asset];
+        assert_eq!(a.file.name, name, "{id}");
+        assert!(c.state.is_none(), "{id}: its asset's starting state");
+        assert_eq!(a.file.states.first().map(|s| s.name.as_str()), Some(start), "{id}");
+        assert!(a.file.start.is_none() || a.file.start.as_deref() == Some(start), "{id}");
+        assert!(c.default_script && !c.script, "{id}: its asset's default script, none of its own");
+        assert_eq!(a.script.as_ref(), script, "{id}: the default script");
+        for e in &a.file.elements {
+            let dirt = match e.kind {
+                ElementKind::Drawn { material, mixed, .. } => material == ElementMaterial::Dirt || mixed,
+                ElementKind::Image { material, .. } => material == ElementMaterial::Dirt,
+                ElementKind::Raster => true,
+            };
+            assert!(!dirt, "{id}: layer {} may hold dirt", e.id);
+        }
+    }
+    let level = placed.level_script.as_deref().expect("the level script");
+    assert_eq!(level, std::fs::read_to_string(repo().join("tools/levels/factory/level.rhai")).unwrap());
+    assert!(level.contains("this.copy(\"crane\")") && level.contains("this.copy(\"console\")"));
+    // As a match loads them.
+    use olr_cli::runner::{Match, Options};
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    let m =
+        Match::new(&content, &olr_cli::spec::MatchSpec::new(CLASSIC, FACTORY, 2, 1, 10), &Options::default())
+            .unwrap();
+    let w = m.world();
+    let ids: Vec<&str> = w.live().unwrap().copies().map(|c| c.id()).collect();
+    assert_eq!(ids, ["crane", "console"]);
+    assert_eq!(
+        (live_copy(w, "crane").state_name(), live_copy(w, "console").state_name()),
+        ("Idle", "Normal")
+    );
+    assert_eq!(claw_x(w), 0, "the claw starts where After Dark has it");
+    let crane = live_copy(w, "crane").setup();
+    let p = &crane.props[usize::from(crane.prop("claw_x").unwrap())];
+    assert_eq!((p.min, p.max, p.default), (-10, 75, 0), "claw_x's limits and default (whole pixels)");
+}
+
+/// Issue #97: in a 2000-tick match of two idle bots spawned away from the
+/// crane, its claw rests 200 ticks, crosses to 75 in 150 ticks (±2), and
+/// then goes on resting 200 and crossing the whole rail (85 px) in 170
+/// (±2): 75, −10, 75 and on. The crane is `Moving` while `claw_x`
+/// changes and `Idle` while it rests (2 ticks' slack at each end), and the
+/// console is in `Alarm` while the crane moves, `Normal` otherwise, at
+/// most 2 ticks behind it (ruling R8: the level script reads the crane's
+/// state change the tick after).
+#[test]
+fn the_crane_crosses_and_the_console_alarms() {
+    use olr_cli::runner::{Match, Options};
+    use olr_cli::spec::{MatchSpec, Personality};
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    let spec = MatchSpec { personality: Personality::Idle, ..MatchSpec::new(CLASSIC, FACTORY, 2, 1, 2000) };
+    let mut m = Match::new(&content, &spec, &Options::default()).unwrap();
+    // Per tick (after it): claw_x in 1/256 px, crane moving, console alarmed.
+    let mut rows = vec![(live_copy(m.world(), "crane").value("claw_x").unwrap(), false, false)];
+    let mut spawned = false;
+    loop {
+        let (before, go) = (m.ticks(), m.step());
+        if m.ticks() == before {
+            break;
+        }
+        let w = m.world();
+        if !spawned && w.worms().iter().all(|wm| wm.alive) {
+            spawned = true;
+            for wm in w.worms() {
+                let (x, y) = (wm.pos.x, wm.pos.y);
+                assert!(
+                    !(700.0..1000.0).contains(&x) || !(230.0..380.0).contains(&y),
+                    "a bot by the crane: {x}, {y}"
+                );
+            }
+        }
+        rows.push((
+            live_copy(w, "crane").value("claw_x").unwrap(),
+            live_copy(w, "crane").state_name() == "Moving",
+            live_copy(w, "console").state_name() == "Alarm",
+        ));
+        if !go {
+            break;
+        }
+    }
+    assert!(m.finish().failure().is_none());
+    assert!(spawned);
+    assert_eq!(rows.len(), 2001);
+    // The moves: maximal runs of ticks whose claw_x differs from the tick before.
+    let mut moves: Vec<(usize, usize)> = Vec::new();
+    for t in 1..rows.len() {
+        if rows[t].0 != rows[t - 1].0 {
+            match moves.last_mut() {
+                Some((_, end)) if *end == t - 1 => *end = t,
+                _ => moves.push((t, t)),
+            }
+        }
+    }
+    let px = |t: usize| rows[t].0.div_euclid(olr_sim::LIVE_SUBPIXELS);
+    let ends: Vec<i64> = moves.iter().map(|&(_, e)| px(e)).collect();
+    assert!(
+        ends.len() >= 5 && ends[..5] == [75, -10, 75, -10, 75],
+        "the claw's ends: {ends:?}, moves {moves:?}"
+    );
+    let near = |got: usize, want: usize| got.abs_diff(want) <= 2;
+    for (i, &(s, e)) in moves.iter().enumerate() {
+        let (len, want) = (e - s + 1, if i == 0 { 150 } else { 170 });
+        assert!(near(len, want), "move {i} took {len} ticks, not {want}: {moves:?}");
+        let rest = if i == 0 { s - 1 } else { s - moves[i - 1].1 - 1 };
+        assert!(near(rest, 200), "the rest before move {i} was {rest} ticks: {moves:?}");
+    }
+    // Moving while it moves, Idle while it rests.
+    let moving_at = |t: usize| moves.iter().any(|&(s, e)| (s..=e).contains(&t));
+    let by_an_end = |t: usize| moves.iter().any(|&(s, e)| s.abs_diff(t) <= 2 || e.abs_diff(t) <= 2);
+    for (t, row) in rows.iter().enumerate().skip(1) {
+        if !by_an_end(t) {
+            assert_eq!(row.1, moving_at(t), "tick {t}: the crane Moving");
+        }
+    }
+    // The console follows the crane, at most 2 ticks behind.
+    for t in 2..rows.len() {
+        let crane = [rows[t - 2].1, rows[t - 1].1, rows[t].1];
+        if crane.iter().all(|m| *m) || crane.iter().all(|m| !*m) {
+            assert_eq!(rows[t].2, rows[t].1, "tick {t}: the console's Alarm");
+        }
+    }
+    assert!(rows.iter().any(|r| r.2) && rows.iter().any(|r| !r.2));
+}
+
+/// The rock pixels each state of a built-in asset shows, from its files:
+/// every rock layer's alpha, its state pictures stacked under its own
+/// (#71: a layer's PNG holds its own picture, then one per state owning
+/// it, in state order), by state.
+fn rock_by_state(folder: &str) -> Vec<(String, BTreeSet<(u32, u32)>)> {
+    use olr_format::levels::{ElementKind, ElementMaterial};
+    let src = olr_format::assets::read_asset_files(&DirFs::new(repo().join("content/assets").join(folder)))
+        .unwrap();
+    let file = &src.file;
+    let mut out: Vec<(String, BTreeSet<(u32, u32)>)> =
+        file.states.iter().map(|s| (s.name.clone(), BTreeSet::new())).collect();
+    for e in &file.elements {
+        let ElementKind::Drawn { material: ElementMaterial::Rock, at, .. } = e.kind else { continue };
+        let img = olr_pack::image_io::decode_rgba(&src.files[&format!("layers/{}.png", e.id)]).unwrap();
+        let owners: Vec<usize> =
+            (0..file.states.len()).filter(|&i| file.states[i].own.contains(&e.id)).collect();
+        let h = img.height() / (1 + owners.len() as u32);
+        assert_eq!(h * (1 + owners.len() as u32), img.height(), "{folder}/{}: stacked pictures", e.id);
+        for (i, state) in out.iter_mut().enumerate() {
+            let block = owners.iter().position(|&o| o == i).map_or(0, |k| k as u32 + 1);
+            for y in 0..h {
+                for x in 0..img.width() {
+                    if img.get(x, block * h + y).a != 0 {
+                        state.1.insert((x + at.0 as u32, y + at.1 as u32));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Issue #97: no state switch adds or removes a solid pixel: for the
+/// Crane and the Console, every state's rock pixels (the stacked pictures
+/// included) are the starting state's, and so are the solid pixels of
+/// each state of the copies as a match loads them.
+#[test]
+fn live_states_keep_their_solid_pixels() {
+    for folder in ["crane", "console"] {
+        let states = rock_by_state(folder);
+        assert!(states.len() >= 2, "{folder}: its states");
+        for (name, rock) in &states[1..] {
+            assert!(*rock == states[0].1, "{folder}: state {name}'s rock differs from {}'s", states[0].0);
+        }
+        assert!(!states[0].1.is_empty());
+    }
+    // As played: each state's rock parts at their places (no value moving them).
+    use olr_cli::runner::{Match, Options};
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    let m =
+        Match::new(&content, &olr_cli::spec::MatchSpec::new(CLASSIC, FACTORY, 2, 1, 10), &Options::default())
+            .unwrap();
+    for c in m.world().live().unwrap().copies() {
+        let setup = c.setup();
+        let solid = |state: &olr_sim::LiveState| {
+            let mut px = BTreeSet::new();
+            for p in state.parts.iter().filter(|p| p.kind == olr_sim::LivePartKind::Rock) {
+                let pic = &setup.pictures[usize::from(p.picture)];
+                for y in 0..setup.size.1 {
+                    for x in 0..setup.size.0 {
+                        if pic.solid(x, y) {
+                            px.insert((x as i32 + p.at.0, y as i32 + p.at.1));
+                        }
+                    }
+                }
+            }
+            px
+        };
+        let start = solid(&setup.states[usize::from(setup.start_state)]);
+        assert!(!start.is_empty(), "{}", c.id());
+        for s in &setup.states {
+            assert!(solid(s) == start, "{}: state {}'s solid pixels", c.id(), s.name);
+        }
+    }
+}
+
+/// Issue #97: the crane carries and pushes worms by #90's rules, and as
+/// drawn crushes nobody. A worm standing on the hook's shoulders (their
+/// top at y 301) rides along the rail to the claw's far end, unhurt; a
+/// worm in the air in the claw's path, hanging on its rope from the rail,
+/// is pushed aside as the claw goes by, unhurt.
+#[test]
+fn the_crane_carries_and_pushes_a_worm() {
+    use olr_sim::{EventKind, Keys, TickEvents};
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    // Carried: on the left shoulder (x 776-780 at the start).
+    let mut w = factory_world(&content, (778, 296));
+    let mut ev = TickEvents::new();
+    let mut crushed = 0;
+    for _ in 0..150 {
+        w.tick(&[Keys(0), Keys(0)], &mut ev);
+    }
+    let wm = &w.worms()[0];
+    assert!(wm.alive && wm.on_ground && (wm.pos.y - 296.0).abs() < 1.0, "on the shoulder: {:?}", wm.pos);
+    let x0 = wm.pos.x;
+    for _ in 0..250 {
+        w.tick(&[Keys(0), Keys(0)], &mut ev);
+        crushed += ev.iter().filter(|e| matches!(e.kind, EventKind::Crushed { worm: 0, .. })).count();
+    }
+    let wm = &w.worms()[0];
+    assert_eq!(claw_x(&w), 75, "the claw crossed");
+    assert!((wm.pos.x - x0 - 75.0).abs() < 1.5, "carried 75 px: from {x0} to {}", wm.pos.x);
+    assert!(wm.alive && wm.on_ground && wm.health == 100.0 && crushed == 0, "unhurt: {wm:?}");
+    // Pushed: from the dirt under the claw's travel (x 845), the worm aims
+    // up, ropes onto the rail above and hangs in the claw's path.
+    let mut w = factory_world(&content, (845, 300));
+    let mut hung = None;
+    for t in 0..360u32 {
+        let k = match t {
+            50..110 => Keys::UP,
+            110..112 => Keys::ROPE,
+            _ => 0,
+        };
+        w.tick(&[Keys(k), Keys(0)], &mut ev);
+        crushed += ev.iter().filter(|e| matches!(e.kind, EventKind::Crushed { worm: 0, .. })).count();
+        if t == 200 {
+            hung = Some(w.worms()[0].pos);
+        }
+    }
+    let (hung, wm) = (hung.unwrap(), &w.worms()[0]);
+    assert!(wm.rope.attached && (wm.rope.pos.y - 270.0).abs() < 2.0, "roped to the rail: {:?}", wm.rope.pos);
+    assert!((hung.x - 845.0).abs() < 1.0 && (272.0..319.0).contains(&hung.y), "in the claw's path: {hung:?}");
+    assert_eq!(claw_x(&w), 75, "the claw crossed, not stopped");
+    assert!(wm.pos.x >= hung.x + 15.0, "pushed aside: from {} to {}", hung.x, wm.pos.x);
+    assert!(wm.alive && wm.health == 100.0 && crushed == 0, "unhurt: {wm:?}");
+}
+
+/// The world's solid pixels over the live copies' boxes, and each copy's
+/// state and values.
+fn live_snapshot(w: &olr_sim::World) -> (Vec<bool>, Vec<(u16, Vec<i64>)>) {
+    let solid = w.solid();
+    let mut px = Vec::new();
+    for &(bx, by, bw, bh) in &LIVE_BOXES {
+        for y in by..by + bh {
+            for x in bx..bx + bw {
+                px.push(solid.flags(i64::from(x), i64::from(y)) & olr_terrain::PX_ROCK != 0);
+            }
+        }
+    }
+    let copies = w.live().unwrap().copies().map(|c| (c.state(), c.values().to_vec())).collect();
+    (px, copies)
+}
+
+/// Issue #97, #90's rule: an explosion never digs a live copy. Bazooka
+/// hits (the explosion of its shell striking, damage 4) on the claw, on
+/// the dirt beside it and on the console, between ticks of a match of two
+/// idle bots: the copies'
+/// solid pixels, states and values are unchanged, and the ground changes
+/// where the same explosions change After Dark's (outside the live
+/// copies' boxes, whose rock is the copies' here).
+#[test]
+fn explosions_leave_the_factorys_live_copies_alone() {
+    use olr_cli::runner::{Match, Options};
+    use olr_cli::spec::{MatchSpec, Personality};
+    use olr_math::Vec2;
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    // The claw resting at its far end (x 847-875): its right arm's tip;
+    // the dirt pile beside it; the console's foot.
+    let hits = [Vec2::new(869.5, 319.5), Vec2::new(876.5, 328.5), Vec2::new(949.5, 333.5)];
+    let blast = |level: &str| {
+        let spec = MatchSpec { personality: Personality::Idle, ..MatchSpec::new(CLASSIC, level, 2, 1, 2000) };
+        let mut m = Match::new(&content, &spec, &Options::default()).unwrap();
+        for _ in 0..400 {
+            assert!(m.step());
+        }
+        let mut w = m.world().clone();
+        let before = w.terrain().clone();
+        let live = w.live().map(|_| live_snapshot(&w));
+        for &at in &hits {
+            w.explode_for_test(at, 4.0);
+        }
+        let mut ev = olr_sim::TickEvents::new();
+        w.tick(&[olr_sim::Keys(0), olr_sim::Keys(0)], &mut ev);
+        if let Some(live) = live {
+            assert_eq!(claw_x(&w), 75, "at rest at its far end");
+            assert!(live_snapshot(&w) == live, "{level}: an explosion changed a live copy");
+        }
+        let mut dug = BTreeSet::new();
+        for y in 0..before.height() {
+            for x in 0..before.width() {
+                if !in_live_box(x, y)
+                    && before.flags(x.into(), y.into()) != w.terrain().flags(x.into(), y.into())
+                {
+                    dug.insert((x, y));
+                }
+            }
+        }
+        dug
+    };
+    let (ours, theirs) = (blast(FACTORY), blast(AFTER_DARK));
+    assert!(!theirs.is_empty(), "the hits dig After Dark's dirt");
+    assert!(ours == theirs, "dug {} pixels, After Dark {}", ours.len(), theirs.len());
+}
+
+/// Issue #97: a 6000-tick match of 4 bots on the factory runs its scripts
+/// without a `ScriptError`, both instances still running at its end (the
+/// crane still crossing and the console still following it in its last
+/// 1000 ticks), and no run or tick uses more than half its operations
+/// (`World::script_peak`, #88). #98 and #99 keep it passing with theirs.
+#[test]
+fn the_factory_scripts_never_fail() {
+    use olr_cli::runner::{Match, Options};
+    use olr_cli::spec::MatchSpec;
+    use olr_sim::EventKind;
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    let spec = MatchSpec { kill_limit: 0, time_limit: 0.0, ..MatchSpec::new(CLASSIC, FACTORY, 4, 2, 6000) };
+    let mut m = Match::new(&content, &spec, &Options::default()).unwrap();
+    let (mut errors, mut late_moves, mut late_alarms) = (0, 0, 0);
+    let mut last = claw_x(m.world());
+    while m.step() {
+        errors += m.events().iter().filter(|e| matches!(e.kind, EventKind::ScriptError { .. })).count();
+        if m.ticks() > 5000 {
+            late_moves += usize::from(claw_x(m.world()) != last);
+            late_alarms += usize::from(live_copy(m.world(), "console").state_name() == "Alarm");
+        }
+        last = claw_x(m.world());
+    }
+    let peak = m.world().script_peak();
+    let run = m.finish();
+    assert!(run.failure().is_none(), "{}", run.summary());
+    assert_eq!(run.ticks, 6000);
+    assert_eq!(errors, 0, "a script failed");
+    assert!(
+        late_moves > 0 && late_alarms > 0,
+        "the scripts still run: {late_moves} moves, {late_alarms} alarms"
+    );
+    assert!(peak.run * 2 <= olr_script::MAX_RUN_OPERATIONS, "a run used {} operations", peak.run);
+    assert!(peak.tick * 2 <= olr_script::MAX_TICK_OPERATIONS, "a tick used {} operations", peak.tick);
+}
+
+/// Issue #97: bots play the live factory with Classic and with Liero v1.0
+/// Reloaded (4 bots, 3000 ticks each), `olr_cli::invariants` holding
+/// every tick (`Match::step` checks them) and no failure.
+#[test]
+fn bots_play_the_live_factory() {
+    use olr_cli::runner::{Match, Options};
+    use olr_cli::spec::MatchSpec;
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    for m in [CLASSIC, RELOADED_MOD] {
+        let spec = MatchSpec { kill_limit: 0, time_limit: 0.0, ..MatchSpec::new(m, FACTORY, 4, 1, 3000) };
+        let mut game = Match::new(&content, &spec, &Options::default()).unwrap();
+        while game.step() {}
+        let run = game.finish();
+        assert!(run.failure().is_none(), "{m}: {}", run.summary());
+        assert_eq!(run.ticks, 3000, "{m}");
+    }
+}
+
+/// Issue #97: the live factory online (`olr_cli::netsim`): Classic, 3
+/// clients, a lossy network, 1500 ticks and a spectator joining late,
+/// ends with an `Ok` verdict, so rollback, the state transfer and the
+/// checksums agree with the scripts running.
+#[test]
+fn the_live_factory_stays_in_sync() {
+    use olr_cli::netsim::{NetSpec, run};
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    let spec = NetSpec {
+        mod_id: CLASSIC.into(),
+        level_id: FACTORY.into(),
+        seed: 97,
+        slots: 8,
+        clients: 3,
+        spectators: 1,
+        join_tick: Some(400),
+        profile: "bad".into(),
+        drift_ppm: 2_000,
+        ticks: 1500,
+        outages: vec![],
+        net_seed: 97,
+        difficulty: None,
+        faults: vec![],
+        exits: vec![],
+        host_freeze: None,
+        profile_changes: vec![],
+        migration: false,
+        strafe: false,
+        weapon_keys: false,
+    };
+    let r = run(&content, &spec).unwrap();
+    if let Err(f) = &r.verdict {
+        panic!("{} failed at tick {}: {}", spec.stem(), f.tick, f.what);
+    }
+    assert!(r.report.stats.values().any(|s| s.rollbacks > 0), "rollbacks re-ran the scripts");
 }

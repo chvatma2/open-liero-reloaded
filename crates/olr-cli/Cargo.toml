@@ -82,6 +82,9 @@ divan.workspace = true
 olr-discovery = { workspace = true, features = ["test-relay"] }
 # olr-net's test hooks: its port mapper refuses real routers in tests.
 olr-net = { workspace = true, features = ["test-hooks"] }
+# Issue #97's factory tests: the scripts' operation limits, an explosion's place.
+olr-script.workspace = true
+olr-math.workspace = true
 
 [[test]]
 name = "integration"
