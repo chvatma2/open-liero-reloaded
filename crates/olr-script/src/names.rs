@@ -73,12 +73,13 @@ impl fmt::Display for LevelIssue {
 enum Kind {
     State,
     Exposed,
+    Sound,
 }
 
 /// The API methods taking a name, by name: what it names and its count of
 /// parameters in its own-copy form (the handle form takes the handle
 /// first, the name second).
-const NAMED: [(&str, Kind, usize); 8] = [
+const NAMED: [(&str, Kind, usize); 9] = [
     ("set_state", Kind::State, 1),
     ("get", Kind::Exposed, 1),
     ("set", Kind::Exposed, 2),
@@ -87,6 +88,7 @@ const NAMED: [(&str, Kind, usize); 8] = [
     ("moving", Kind::Exposed, 1),
     ("min", Kind::Exposed, 1),
     ("max", Kind::Exposed, 1),
+    ("play", Kind::Sound, 1),
 ];
 
 /// A copy handle as the check reads it.
@@ -198,7 +200,8 @@ fn fn_line(text: &str, name: &str) -> (Option<usize>, Option<usize>) {
 /// one), and every string literal passed to the API that names no copy
 /// (`this.copy("crane")`), no state of the copy it acts on
 /// (`set_state`), or no exposed name of it (`get`, `set`, `move_to`,
-/// `stop`, `moving`, `min`, `max`), the copy being this one or a known
+/// `stop`, `moving`, `min`, `max`), or no sound of it (`play`, issue
+/// #92), the copy being this one or a known
 /// handle's. In the level script the own-copy forms are issues too.
 pub fn check_level(names: &ScriptNames, scripts: &[RunScript<'_>]) -> Vec<LevelIssue> {
     let engine = engine();
@@ -272,6 +275,7 @@ pub fn check_level(names: &ScriptNames, scripts: &[RunScript<'_>]) -> Vec<LevelI
             let (list, what) = match kind {
                 Kind::State => (&copy.states, "state"),
                 Kind::Exposed => (&copy.exposed, "exposed value"),
+                Kind::Sound => (&copy.sounds, "sound"),
             };
             if !list.iter().any(|x| x == name) {
                 found.push(issue(

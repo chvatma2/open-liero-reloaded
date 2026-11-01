@@ -80,3 +80,32 @@ fn check_level_finds_unknown_copies_states_names_and_bad_handlers() {
                    this.set_state(c, \"Up\"); this.set_state(v, \"Nothing\"); }";
     assert_eq!(issues(&[RunScript { copy: Some("console"), text: unknown }]), []);
 }
+
+/// Issue #92: `play`'s literal names a sound of the copy it acts on.
+#[test]
+fn check_finds_an_unknown_sound_name() {
+    let mut names = names();
+    names.copies[1].sounds = vec!["hum.wav".into(), "tick.wav".into()];
+    let press = "fn start() {\n\
+                   this.play(\"hum.wav\");\n\
+                   this.play(\"hum.ogg\");\n\
+                   this.play(this.copy(\"console\"), \"tick.wav\");\n\
+                   this.play(this.me(), \"tick.wav\");\n\
+                 }";
+    let level = "fn tick() {\n  this.play(this.copy(\"press\"), \"tock.wav\");\n  this.play(\"hum.wav\");\n}";
+    let got: Vec<(usize, u32, String)> = check_level(
+        &names,
+        &[RunScript { copy: Some("press"), text: press }, RunScript { copy: None, text: level }],
+    )
+    .into_iter()
+    .map(|i| (i.script, i.issue.line, i.issue.message))
+    .collect();
+    let want = [
+        (0, 3, "copy press has no sound \"hum.ogg\""),
+        (0, 4, "copy console has no sound \"tick.wav\""),
+        (1, 2, "copy press has no sound \"tock.wav\""),
+        (1, 3, "the level script has no copy of its own: this.play(…) names none"),
+    ];
+    let want: Vec<(usize, u32, String)> = want.iter().map(|&(s, l, m)| (s, l, m.to_string())).collect();
+    assert_eq!(got, want);
+}

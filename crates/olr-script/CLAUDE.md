@@ -71,8 +71,8 @@ checks (`ScriptNames`, `check_level`), `move_to`, `stop`, `moving`,
   found in the text), and every **string literal** passed where the API
   takes a name: `this.copy("…")` naming no copy, `set_state` naming no
   state of the copy it acts on, `get`, `set`, `move_to`, `stop`,
-  `moving`, `min`, `max` naming no exposed name of it (#92 adds `play`
-  against `sounds`). The copy acted on: this one (the own form, or a
+  `moving`, `min`, `max` naming no exposed name of it, and issue #92's
+  `play` naming no sound of it (`sounds`). The copy acted on: this one (the own form, or a
   handle `this.me()`), a handle `this.copy("…")` itself, or a variable
   every `let` of which in the script binds the same `this.copy("…")`;
   any other handle (a parameter, a computed id) is not checked, nor is a
@@ -158,7 +158,13 @@ checks (`ScriptNames`, `check_level`), `move_to`, `stop`, `moving`,
   stretched crane's whole travel (`this.move_to("claw_x",
   this.max("claw_x"), 40)`). The world steps motions once a tick before
   the first physics sub-step (`olr-sim`'s `LiveWorld::step_motions`); a
-  `set` of the value stops its motion, a state change does not. Timers: `this.after(ticks, "fn")`,
+  `set` of the value stops its motion, a state change does not. **Sounds**
+  (issue #92): `this.play(name)` (this copy) and `this.play(c, name)` (a
+  handle), `name` one of the copy's asset's sounds (`LiveCopy::sounds`,
+  such as `"tick.wav"`; another a script error), queue
+  `LiveCommand::Play`, which only emits `EventKind::LiveSound`:
+  presentation plays it once at the copy's centre, the world unchanged
+  (scripts cannot read whether a sound plays). Timers: `this.after(ticks, "fn")`,
   `this.every(ticks, "fn")` (ticks are 10-ms frames, at least 1; one
   timer a function: a new one replaces it; at most `MAX_TIMERS` 16),
   `this.cancel("fn")`; a timer names a function of no parameter of the
@@ -193,7 +199,8 @@ checks (`ScriptNames`, `check_level`), `move_to`, `stop`, `moving`,
   scripts may allocate, bounded by the limits and freed by the run's end.
   A world without a director allocates nothing (`olr-sim`'s `no_alloc`).
 
-Tests: issue #89's `tests/motion.rs`
+Tests: issue #92's `tests/play.rs` (`play_queues_a_live_sound`) and
+`tests/names.rs`' `check_finds_an_unknown_sound_name`; issue #89's `tests/motion.rs`
 (`move_to_reaches_its_target_at_its_speed_and_calls_arrived`,
 `min_and_max_follow_a_stretched_copy`,
 `a_set_stops_a_motion_and_a_state_change_does_not`, issue #90's

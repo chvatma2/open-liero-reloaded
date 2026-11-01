@@ -152,6 +152,16 @@ impl Live {
         self.setup(c).prop(name).is_some()
     }
 
+    /// Issue #92: copy `c` plays its sound `name` (a name of its asset's
+    /// sounds) once at its centre; an unknown name is a script error.
+    fn play_of(&mut self, c: u16, name: &str) -> Res<()> {
+        let copy = self.setup(c);
+        let Some(sound) = copy.sound(name) else {
+            return err(format!("copy {} has no sound {name:?}", copy.id));
+        };
+        self.queue(LiveCommand::Play { copy: c, sound })
+    }
+
     /// Copy `c`'s position-like value `name`: its index.
     fn position(&self, c: u16, name: &str) -> Res<u16> {
         let p = self.prop(c, name)?;
@@ -344,6 +354,15 @@ pub(crate) fn register(e: &mut Engine) {
     e.register_fn("max", |l: &mut Live, c: INT, name: &str| -> Res<INT> {
         let c = l.handle(c)?;
         Ok(l.limits_of(c, name)?.1)
+    });
+    // Issue #92: a sound of the copy, once.
+    e.register_fn("play", |l: &mut Live, name: &str| -> Res<()> {
+        let c = l.me()?;
+        l.play_of(c, name)
+    });
+    e.register_fn("play", |l: &mut Live, c: INT, name: &str| -> Res<()> {
+        let c = l.handle(c)?;
+        l.play_of(c, name)
     });
     e.register_fn("switch_off_default", |l: &mut Live| -> Res<()> {
         l.me()?;
