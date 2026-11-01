@@ -234,6 +234,11 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   moves yet. `olr-cli level element extract` moves a shape's pixels into a
   layer of their own, `level notes` sets a level's notes and `pack new
   --keep-origin` keeps the copied pack's origin.
+- Liero Factory Reloaded comes alive: every couple of seconds the
+  crane's claw crosses its rail, humming, carrying worms on its shoulders
+  and pushing those in its way aside (it crushes nobody), and the console
+  under the deck goes red, its lamp pulsing, while it moves.
+  `olr-cli render-match --at X,Y` centres the view on a point.
 
 ### Changed
 
