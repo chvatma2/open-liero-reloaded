@@ -99,4 +99,27 @@
             ),
         ),
     ],
+    states: [
+        (
+            name: "Truck",
+        ),
+        (
+            name: "Crane",
+            own: [
+                "ctrl-scr",
+            ],
+        ),
+        (
+            name: "Offices",
+            own: [
+                "ctrl-scr",
+            ],
+        ),
+        (
+            name: "Garden",
+            own: [
+                "ctrl-scr",
+            ],
+        ),
+    ],
 )

@@ -48,4 +48,16 @@ byte for byte, and running one again changes nothing.
   (the unlit grey `OFF`) from After Dark's first strip, makes the Strip
   light again by its block (states `On`, `Dim`, `Off`, `buzz.wav` and
   `tick.wav`, the default script `tube.rhai`), updates `s` and switches
-  `LIVE_STRIPS` (`strip-2`, `strip-4`, `strip-7`) live.
+  `LIVE_STRIPS` (`strip-2`, `strip-4`, `strip-7`) live. Issue #99: it
+  draws the Computer screen's camera pictures (`make_screen_art`: each
+  `SCREEN_PARTS` part of After Dark by `olr-cli look-preview --view
+  full`, box-downsampled to 12 x 11, a box's most saturated colour
+  winning where it covers a quarter of it, saturation x 1.6, mapped to
+  the truck picture's colours; the garden touched up in code,
+  `GARDEN_*`), the Lit sign's, Control desk's and Gauge's state pictures
+  and glow masks (`make_display_art`, from the assets' own first
+  picture), makes the Crane (its warning beacon), the Computer screen,
+  the Lit sign, the Control desk and the Gauge again by their blocks
+  (scripts `screen.rhai`, `sign.rhai`, `desk.rhai`, `gauge.rhai`;
+  `crane.rhai` turns the beacon), updates `c t d g` and switches
+  `LIVE_DISPLAYS` live.

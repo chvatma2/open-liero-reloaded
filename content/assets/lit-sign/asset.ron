@@ -23,6 +23,7 @@
             glow: (
                 strength: 100,
                 group: "displays",
+                mask: true,
             ),
             surface: "glass",
         ),
@@ -89,6 +90,29 @@
                     light: 50,
                 ),
             ),
+        ),
+    ],
+    states: [
+        (
+            name: "Normal",
+        ),
+        (
+            name: "No dash",
+            own: [
+                "rock-disp",
+            ],
+        ),
+        (
+            name: "No LD",
+            own: [
+                "rock-disp",
+            ],
+        ),
+        (
+            name: "Dying 7",
+            own: [
+                "rock-disp",
+            ],
         ),
     ],
 )

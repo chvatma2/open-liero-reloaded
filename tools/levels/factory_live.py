@@ -25,11 +25,20 @@
 #    which read those pictures, `tools/levels/factory/sounds/` (`hum.wav`,
 #    `buzz.wav`, `tick.wav`: `tools/sounds/factory_sounds.py`) and the
 #    default scripts `tools/levels/factory/crane.rhai` and `tube.rhai`.
-# 3. The level takes them (`level library update <pack> k o s`), its
-#    `crane` and `console` copies and the strips `LIVE_STRIPS` are switched
-#    live (`level copy set … --live`; the other strips stay static, baked
-#    steady On), its level script is `tools/levels/factory/level.rhai`
-#    (`level script --set`) and its notes say so.
+#    Issue #99: the Computer screen's camera pictures (`screen-*.png`,
+#    `make_screen_art`: each part of After Dark drawn full bright with
+#    `olr-cli look-preview`, box-downsampled to the screen's 12 x 11 and
+#    mapped to the colours of its truck picture; the garden touched up by
+#    hand in code, `GARDEN_TOUCH`), the Lit sign's (`sign-*.png` and their
+#    glow masks), the Control desk's (`desk-*.png`) and the Gauge's
+#    (`gauge-*.png`) state pictures; the Crane's block now paints its
+#    warning beacon itself.
+# 3. The level takes them (`level library update <pack> k o s c t d g`),
+#    its `crane` and `console` copies, the strips `LIVE_STRIPS` and (issue
+#    #99) `LIVE_DISPLAYS` are switched live (`level copy set … --live`;
+#    the other strips stay static, baked steady On), its level script is
+#    `tools/levels/factory/level.rhai` (`level script --set`) and its
+#    notes say so.
 #
 # Running it again makes the same bytes. Scratch files go to
 # `target/factory-assets/`.
@@ -43,10 +52,44 @@ from reloaded_materials import decode  # noqa: E402
 import struct, zlib  # noqa: E402
 
 ART = "tools/levels/factory/art"
-LIVE_ASSETS = ["crane", "console", "strip-light"]
+LIVE_ASSETS = ["crane", "console", "strip-light", "computer-screen", "lit-sign", "control-desk", "gauge"]
 # Issue #98: the faulty tubes: the hall's top floor's middle strip, the
 # hall's strip left of the gauge and the lowest office floor's middle one.
 LIVE_STRIPS = ["strip-2", "strip-4", "strip-7"]
+# Issue #99: the copies whose displays change.
+LIVE_DISPLAYS = ["screen", "sign", "desk", "gauge"]
+# Issue #99: the security camera's parts of After Dark, each drawn full
+# bright centred on a world point, and the world box shrunk to the
+# screen's 12 x 11 (about its aspect).
+SCREEN = "content/assets/computer-screen/layers/ctrl-scr.png"
+SCREEN_SIZE = (12, 11)
+SCREEN_PARTS = [
+    ("crane", (800, 300), (742, 252, 96, 88)),  # the claw under the conveyor deck
+    ("offices", (500, 230), (470, 178, 110, 101)),  # the lab and the teal office below it
+    ("garden", (500, 160), (440, 95, 130, 119)),  # the roof garden under the moon
+]
+# The garden's touch-up (the plants and the moon are lost at 12 x 11): the
+# sky over rows 0-7, the moon a white pixel, four stalks under gold heads.
+GARDEN_SKY_ROWS = 8
+GARDEN_MOON = (10, 1)
+GARDEN_STALKS = [1, 3, 5, 7]
+# The Lit sign's `rock-disp` box (28 x 16): its unlit face colour, the
+# dash between the digits, the "-LD-" line and the "7".
+SIGN_FACE = (114, 114, 114)
+SIGN_DASH = (13, 3, 3, 2)
+SIGN_LD = (6, 10, 17, 6)
+SIGN_SEVEN = (23, 0, 5, 8)
+# The Control desk's `displays` (21 x 1): its four dots' columns, a dark
+# dot's colour and state C's red.
+DESK_DOTS = [(0, 2), (7, 1), (15, 1), (20, 1)]
+DESK_DARK = (0, 20, 40)
+DESK_RED = (255, 40, 32)
+# The Gauge's `rock-disp` (33 x 16): its needle (cyan, row 4), its dial
+# colour, and its two buttons (rows 14-15).
+NEEDLE = (0, 255, 255)
+DIAL = (255, 255, 0)
+NEEDLE_ROW = 4
+BUTTONS = [(0, 1), (31, 2)]
 NOTES = (
     "Liero Factory After Dark rebuilt from assets (issue #96): the ground is the level's own "
     "asset, the night sky a copy of its own at depth 90, and the strip lights, the ceiling lamp, "
@@ -54,8 +97,10 @@ NOTES = (
     "the gauge are copies of the built-in assets where After Dark has them. Since issue #97 the "
     "crane's claw crosses its rail every couple of seconds, humming and pushing worms in its "
     "way, and the console under the deck goes red while it moves; since issue #98 three of the "
-    "ceiling strips fail like faulty tubes, stuttering, buzzing and ticking; issue #99 brings "
-    "the rest alive."
+    "ceiling strips fail like faulty tubes, stuttering, buzzing and ticking; since issue #99 the "
+    "control room's screen is a security camera, the 13-37 sign, the desk's lamps and the gauge "
+    "change now and then, and an orange warning beacon under the crane's trolley turns while it "
+    "moves."
 )
 
 # The Console's `rock-disp` box in the level (After Dark's place): its LED
@@ -77,6 +122,16 @@ def encode_rgba(path, w, h, rows):
     data = b"".join(b"\x00" + bytes(v for p in row for v in p) for row in rows)
     chunk = lambda t, d: struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d))
     ihdr = struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)
+    png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(data, 9)) + chunk(b"IEND", b"")
+    with open(path, "wb") as f:
+        f.write(png)
+    print(f"wrote {path}")
+
+
+def encode_grey(path, w, h, rows):
+    data = b"".join(b"\x00" + bytes(row) for row in rows)
+    chunk = lambda t, d: struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d))
+    ihdr = struct.pack(">IIBBBBB", w, h, 8, 0, 0, 0, 0)
     png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(data, 9)) + chunk(b"IEND", b"")
     with open(path, "wb") as f:
         f.write(png)
@@ -114,6 +169,104 @@ def make_art():
     make_strip_art(front)
 
 
+def make_screen_art(cli):
+    """Issue #99: the Computer screen's camera pictures."""
+    # A layer's PNG stacks its states' pictures under its own: the first box.
+    truck = decode(SCREEN)[2][:SCREEN_SIZE[1]]
+    palette = sorted(set(p[:3] for row in truck for p in row))
+    near = lambda c: min(palette, key=lambda p: sum((a - b) ** 2 for a, b in zip(p, c)))
+    sat = lambda c: max(c) - min(c)
+    sw, sh = SCREEN_SIZE
+    for name, (cx, cy), (x0, y0, w, h) in SCREEN_PARTS:
+        full = os.path.join(SCRATCH, f"screen-{name}-full.png")
+        run(cli, "look-preview", AFTER_DARK, "--view", "full", "--at", f"{cx},{cy}", "--size", "427x192",
+            "--out", full)
+        _, _, px = decode(full)
+        vx, vy = cx - 427 // 2, cy - 192 // 2
+        rows = []
+        for j in range(sh):
+            row = []
+            for i in range(sw):
+                box = [px[y - vy][x - vx][:3]
+                       for y in range(y0 + h * j // sh, y0 + h * (j + 1) // sh)
+                       for x in range(x0 + w * i // sw, x0 + w * (i + 1) // sw)]
+                c = [sum(p[k] for p in box) / len(box) for k in range(3)]
+                # The box's most saturated colour wins where it covers a quarter of it.
+                top = max(box, key=sat)
+                if sat(top) > 80 and 4 * sum(1 for p in box if sum(abs(a - b) for a, b in zip(p, top)) < 60) >= len(box):
+                    c = list(top)
+                m = sum(c) / 3
+                row.append(near(tuple(min(255, max(0, round(m + (v - m) * 1.6))) for v in c)) + (255,))
+            rows.append(row)
+        if name == "garden":
+            sky, white, green, gold = truck[0][0][:3], (252, 252, 252), (0, 255, 0), (183, 129, 2)
+            for y in range(GARDEN_SKY_ROWS):
+                rows[y] = [sky + (255,)] * sw
+            rows[GARDEN_MOON[1]][GARDEN_MOON[0]] = white + (255,)
+            for x in GARDEN_STALKS:
+                rows[GARDEN_SKY_ROWS - 4][x] = gold + (255,)
+                for y in range(GARDEN_SKY_ROWS - 3, GARDEN_SKY_ROWS):
+                    rows[y][x] = green + (255,)
+        encode_rgba(os.path.join(ART, f"screen-{name}.png"), sw, sh, rows)
+
+
+def first_box(path, h):
+    """A layer's own picture: its PNG's first `h` rows (states stack theirs under it)."""
+    w, _, px = decode(path)
+    return w, h, px[:h]
+
+
+def make_display_art():
+    """Issue #99: the Lit sign's, the Control desk's and the Gauge's state
+    pictures (and the sign's glow masks: its dark pixels 0)."""
+    w, h, sign = first_box(os.path.join(ASSETS, "lit-sign/layers/rock-disp.png"), 16)
+    def dark_sign(name, dark):
+        art = [[p if p[3] and not dark(x, y) else (SIGN_FACE + (255,) if p[3] else p)
+                for x, p in enumerate(row)] for y, row in enumerate(sign)]
+        mask = [[0 if dark(x, y) or not p[3] else 255 for x, p in enumerate(row)] for y, row in enumerate(sign)]
+        encode_rgba(os.path.join(ART, f"sign-{name}.png"), w, h, art)
+        encode_grey(os.path.join(ART, f"sign-{name}-glow.png"), w, h, mask)
+    inside = lambda box, x, y: box[0] <= x < box[0] + box[2] and box[1] <= y < box[1] + box[3]
+    dark_sign("no-dash", lambda x, y: inside(SIGN_DASH, x, y))
+    dark_sign("no-ld", lambda x, y: inside(SIGN_LD, x, y))
+    # Every other lit pixel of the 7, in reading order: a failing LED.
+    seven = [(x, y) for y in range(h) for x in range(w) if sign[y][x][3] and inside(SIGN_SEVEN, x, y)]
+    dying = set(seven[1::2])
+    dark_sign("dying-7", lambda x, y: (x, y) in dying)
+    w, h, desk = first_box(os.path.join(ASSETS, "control-desk/layers/displays.png"), 1)
+    def desk_state(name, lit, red=()):
+        row = list(desk[0])
+        mask = [0] * w
+        for k, (x, n) in enumerate(DESK_DOTS):
+            for i in range(x, x + n):
+                row[i] = (DESK_RED if k in red else desk[0][i][:3]) + (255,) if k in lit else DESK_DARK + (255,)
+                mask[i] = 255 if k in lit else 0
+        encode_rgba(os.path.join(ART, f"desk-{name}.png"), w, h, [row])
+        encode_grey(os.path.join(ART, f"desk-{name}-glow.png"), w, h, [mask])
+    desk_state("b", (0, 2))
+    desk_state("c", (1, 2, 3), red=(2,))
+    w, h, gauge = first_box(os.path.join(ASSETS, "gauge/layers/rock-disp.png"), 16)
+    needle = [x for x in range(w) if gauge[NEEDLE_ROW][x][:3] == NEEDLE]
+    def gauge_state(name, shift, swap):
+        art = [list(row) for row in gauge]
+        for x in needle:
+            art[NEEDLE_ROW][x] = DIAL + (255,)
+        for x in needle:
+            if x + shift < w and gauge[NEEDLE_ROW][x + shift][3]:
+                art[NEEDLE_ROW][x + shift] = NEEDLE + (255,)
+        if swap:
+            (ax, an), (bx, bn) = BUTTONS
+            a, b = gauge[14][ax][:3], gauge[14][bx][:3]
+            for y in (14, 15):
+                for x in range(ax, ax + an):
+                    art[y][x] = b + (255,)
+                for x in range(bx, bx + bn):
+                    art[y][x] = a + (255,)
+        encode_rgba(os.path.join(ART, f"gauge-{name}.png"), w, h, art)
+    gauge_state("b", 2, False)
+    gauge_state("c", 4, True)
+
+
 def make_strip_art(front):
     """Issue #98: the Strip light's Dim and Off pictures of `lamps`."""
     (x0, y0), (w, h) = STRIP_AT, STRIP_SIZE
@@ -141,11 +294,11 @@ def make_assets(cli):
 
 
 def make_level(cli):
-    run(cli, "level", "library", "update", OUT, "k", "o", "s")
+    run(cli, "level", "library", "update", OUT, "k", "o", "s", "c", "t", "d", "g")
     run(cli, "level", "copy", "set", OUT, "crane", "--live")
     run(cli, "level", "copy", "set", OUT, "console", "--live")
-    for strip in LIVE_STRIPS:
-        run(cli, "level", "copy", "set", OUT, strip, "--live")
+    for copy in LIVE_STRIPS + LIVE_DISPLAYS:
+        run(cli, "level", "copy", "set", OUT, copy, "--live")
     run(cli, "level", "script", OUT, "--set", "tools/levels/factory/level.rhai")
     run(cli, "level", "notes", OUT, NOTES)
     run(cli, "level", "bake", OUT)
@@ -159,6 +312,8 @@ def main():
     cli = os.path.abspath(sys.argv[1])
     os.makedirs(SCRATCH, exist_ok=True)
     make_art()
+    make_screen_art(cli)
+    make_display_art()
     make_assets(cli)
     make_level(cli)
 

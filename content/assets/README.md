@@ -10,8 +10,10 @@ README stays behind). `cargo xtask check` reads every one whole
 (`olr-cli asset check`, in `olr-cli`'s `tests/asset.rs`).
 They are in the 0.3 asset format (issue #71) and stateless (one state,
 nothing exposed, no sounds, health or script) but for the Crane and the
-Console (issue #97) and the Strip light (issue #98), which Liero Factory
-Reloaded brings alive. All glow but the Crane.
+Console (issue #97), the Strip light (issue #98) and the Computer
+screen, the Control desk, the Lit sign and the Gauge (issue #99), which
+Liero Factory Reloaded brings alive. All glow; the Crane since issue
+#99 (its warning beacon).
 
 Each was cut from OLR's own Reloaded levels (`content/reloaded/`) with
 `olr-cli asset save`. Its entry below holds one block of `olr-cli` lines
@@ -80,19 +82,64 @@ is gone.
 
 - `computer-screen/`: **Computer screen**, the control room's upper
   screen on its wall, group `control` (blue-white, `Tint("#d0e0ff")`;
-  its own layer `ctrl-scr` since 2026-10-25).
+  its own layer `ctrl-scr` since 2026-10-25). Issue #99: a security
+  camera, states `Truck` (start: the truck's miniature as cut),
+  `Crane`, `Offices` and `Garden`, each a painted miniature of
+  `ctrl-scr` from `tools/levels/factory/art/`
+  (`tools/levels/factory_live.py`); its default script
+  `tools/levels/factory/screen.rhai` shows each 250 ticks in turn.
 
       olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 906,83,14,14 --layers backdrop,ctrl-scr --name "Computer screen" --out content/assets/computer-screen
+      olr-cli asset state set content/assets/computer-screen Normal --name Truck
+      olr-cli asset state add content/assets/computer-screen Crane
+      olr-cli asset state picture content/assets/computer-screen Crane ctrl-scr --art tools/levels/factory/art/screen-crane.png
+      olr-cli asset state add content/assets/computer-screen Offices
+      olr-cli asset state picture content/assets/computer-screen Offices ctrl-scr --art tools/levels/factory/art/screen-offices.png
+      olr-cli asset state add content/assets/computer-screen Garden
+      olr-cli asset state picture content/assets/computer-screen Garden ctrl-scr --art tools/levels/factory/art/screen-garden.png
+      olr-cli asset script content/assets/computer-screen --set tools/levels/factory/screen.rhai
 
 - `control-desk/`: **Control desk**, the control room's console: its
-  three screens (group `screens`) and lamps (group `displays`).
+  three screens (group `screens`) and lamps (group `displays`). Issue
+  #99: states `A` (start: the four lamp dots as cut), `B` (the first
+  and third lit) and `C` (the second, third and fourth lit, the third
+  red), pictures of `displays` with their glow masks (a dark dot 0) from
+  `tools/levels/factory/art/` (the layer given a whole mask before the
+  save, so its states can have masks of their own); its default script
+  `tools/levels/factory/desk.rhai` changes to another state every
+  100-400 ticks.
 
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark displays --locked false
+      olr-cli level element glow content/reloaded/olr-level-liero-factory-after-dark displays --rect 903,119,30,11 --strength 100
       olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 903,119,30,11 --layers backdrop,screens,displays --name "Control desk" --out content/assets/control-desk
+      olr-cli asset state set content/assets/control-desk Normal --name A
+      olr-cli asset state add content/assets/control-desk B
+      olr-cli asset state picture content/assets/control-desk B displays --art tools/levels/factory/art/desk-b.png --glow tools/levels/factory/art/desk-b-glow.png
+      olr-cli asset state add content/assets/control-desk C
+      olr-cli asset state picture content/assets/control-desk C displays --art tools/levels/factory/art/desk-c.png --glow tools/levels/factory/art/desk-c-glow.png
+      olr-cli asset script content/assets/control-desk --set tools/levels/factory/desk.rhai
 
 - `lit-sign/`: **Lit sign**, the "13-37 -LD-" board set in rock, group
-  `displays` (`Flicker`).
+  `displays` (`Flicker`). Issue #99: states `Normal` (start), `No dash`
+  (the dash between the digits dark), `No LD` (the "-LD-" line dark) and
+  `Dying 7` (every other pixel of the 7 dark, a failing LED); a dark
+  pixel stays in `rock-disp`, solid, painted the board's unlit face
+  (`#727272`) with its glow mask 0 (pictures and masks from
+  `tools/levels/factory/art/`; `rock-disp` given a whole mask before the
+  save); its default script
+  `tools/levels/factory/sign.rhai` stays Normal 300-900 ticks, then
+  shows one fault 20-80 ticks.
 
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark rock-disp --locked false
+      olr-cli level element glow content/reloaded/olr-level-liero-factory-after-dark rock-disp --rect 934,299,31,21 --strength 100
       olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 934,299,31,21 --layers rock,rock-disp --name "Lit sign" --out content/assets/lit-sign
+      olr-cli asset state add content/assets/lit-sign "No dash"
+      olr-cli asset state picture content/assets/lit-sign "No dash" rock-disp --art tools/levels/factory/art/sign-no-dash.png --glow tools/levels/factory/art/sign-no-dash-glow.png
+      olr-cli asset state add content/assets/lit-sign "No LD"
+      olr-cli asset state picture content/assets/lit-sign "No LD" rock-disp --art tools/levels/factory/art/sign-no-ld.png --glow tools/levels/factory/art/sign-no-ld-glow.png
+      olr-cli asset state add content/assets/lit-sign "Dying 7"
+      olr-cli asset state picture content/assets/lit-sign "Dying 7" rock-disp --art tools/levels/factory/art/sign-dying-7.png --glow tools/levels/factory/art/sign-dying-7-glow.png
+      olr-cli asset script content/assets/lit-sign --set tools/levels/factory/sign.rhai
 
 - `warning-beacon/`: **Warning beacon**, a roof speaker's red ring on its
   box, group `beacons` (`Pulse`).
@@ -112,7 +159,21 @@ is gone.
   default 0); `Moving` loops `hum.wav`, synthesised for OLR by
   `tools/sounds/factory_sounds.py`, CC0 (the maintainer may replace
   it); its default script `tools/levels/factory/crane.rhai` crosses the
-  rail every couple of seconds (`content/reloaded/README.md`).
+  rail every couple of seconds (`content/reloaded/README.md`). Issue
+  #99, its **warning beacon** (issue #95's pick, the design's "The
+  spotlight's look"): under the trolley, astride the cable, a housing
+  (rows 282-283, x 783-789, on `claw`) and the dome's middle (row 284,
+  x 785-787, on `claw`, the cable's two pixels there given to it,
+  glowing in group `halo`, `#ff6a10`, reach 60, through `claw`'s glow
+  mask, the dome only), and two lenses, Background layers of their own
+  (`lens` at x 788-789, beam 0°; `lens-b` at x 783-784, beam 180°;
+  spread 10, group `beacon`, `#ff6a10`, 400, reach 360); exposed
+  `lens_x`, `lens_b_x` (the lenses' `x`, the claw's limits),
+  `beam_spread`, `beam_spread_b`, `reach`, `light`, `halo_glow` (`claw`'s
+  glow) and `halo_light` (`halo`'s intensity); `Idle` puts it out (both
+  lenses' glow, `beacon`'s and `halo`'s intensity 0, `claw`'s glow 0).
+  The script keeps the lenses at the claw's offset and turns the beacon
+  while `Moving`.
 
       olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 762,272,114,47 --name Claw
       olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 762,269,114,3 --name Rail
@@ -120,10 +181,37 @@ is gone.
       olr-cli level element erase content/reloaded/olr-level-liero-factory-after-dark rail --rect 775,270,23,1
       olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark rail --rect 775,271,23,1 --colour 737373
       olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark claw --rect 776,272,21,1 --colour 2c2c2c
-      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 762,269,114,50 --layers rail,claw --name Crane --out content/assets/crane
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark claw --rect 783,282,7,1 --colour 3e3e3e
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark claw --rect 783,283,7,1 --colour 2c2c2c
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark claw --rect 785,284,3,1 --colour 7a3a14
+      olr-cli level group add content/reloaded/olr-level-liero-factory-after-dark halo --colour ff6a10 --intensity 0 --reach 60
+      olr-cli level group add content/reloaded/olr-level-liero-factory-after-dark beacon --colour ff6a10 --intensity 400 --reach 360
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark claw --glow 100 --glow-group halo
+      olr-cli level element glow content/reloaded/olr-level-liero-factory-after-dark claw --rect 762,272,114,47 --strength 0
+      olr-cli level element glow content/reloaded/olr-level-liero-factory-after-dark claw --rect 785,284,3,1 --strength 100
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name Lens
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark lens --rect 788,284,2,1 --colour ff9a40
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark lens --glow 100 --glow-group beacon --glow-beam 0,10
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name "Lens B"
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark lens-b --rect 783,284,2,1 --colour ff9a40
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark lens-b --glow 100 --glow-group beacon --glow-beam 180,10
+      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 762,269,114,50 --layers rail,claw,lens,lens-b --name Crane --out content/assets/crane
       olr-cli asset state set content/assets/crane Normal --name Idle
       olr-cli asset state add content/assets/crane Moving
       olr-cli asset expose content/assets/crane claw_x claw.x --default 0 --min -10 --max 75
+      olr-cli asset expose content/assets/crane lens_x lens.x --default 0 --min -10 --max 75
+      olr-cli asset expose content/assets/crane lens_b_x lens-b.x --default 0 --min -10 --max 75
+      olr-cli asset expose content/assets/crane beam_spread lens.beam-spread --default 10 --min 1 --max 90
+      olr-cli asset expose content/assets/crane beam_spread_b lens-b.beam-spread --default 10 --min 1 --max 90
+      olr-cli asset expose content/assets/crane reach lens.reach --default 360 --min 1 --max 360
+      olr-cli asset expose content/assets/crane light lens.light --default 400 --min 0 --max 400
+      olr-cli asset expose content/assets/crane halo_glow claw.glow --default 0 --min 0 --max 100
+      olr-cli asset expose content/assets/crane halo_light claw.light --default 0 --min 0 --max 400
+      olr-cli asset state value content/assets/crane Idle lens.glow 0
+      olr-cli asset state value content/assets/crane Idle lens-b.glow 0
+      olr-cli asset state value content/assets/crane Idle lens.light 0
+      olr-cli asset state value content/assets/crane Idle claw.glow 0
+      olr-cli asset state value content/assets/crane Idle claw.light 0
       olr-cli asset sound add content/assets/crane tools/levels/factory/sounds/hum.wav
       olr-cli asset state set content/assets/crane Moving --loop-sound hum.wav
       olr-cli asset script content/assets/crane --set tools/levels/factory/crane.rhai
@@ -159,9 +247,21 @@ is gone.
 - `gauge/`: **Gauge** (issue #96), the teal device of the upper floor:
   its yellow gauge and lit buttons (`rock-disp`, group `displays`) and
   its small screen (`rock-scr`, group `screens`); the grey brackets
-  beside it stay in the level.
+  beside it stay in the level. Issue #99: states `A` (start: the needle
+  as cut), `B` and `C` (its cyan needle, `rock-disp`'s row 4, repainted 2 and 4
+  pixels further right over the dial's own pixels, the dial's yellow
+  where it was; `C` swaps the two buttons' colours), pictures of
+  `rock-disp` from `tools/levels/factory/art/`, no solid pixel changed;
+  its default script `tools/levels/factory/gauge.rhai` changes to
+  another state every 150-500 ticks.
 
       olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 1059,144,48,27 --layers rock,rock-scr,rock-disp --name Gauge --out content/assets/gauge
+      olr-cli asset state set content/assets/gauge Normal --name A
+      olr-cli asset state add content/assets/gauge B
+      olr-cli asset state picture content/assets/gauge B rock-disp --art tools/levels/factory/art/gauge-b.png
+      olr-cli asset state add content/assets/gauge C
+      olr-cli asset state picture content/assets/gauge C rock-disp --art tools/levels/factory/art/gauge-c.png
+      olr-cli asset script content/assets/gauge --set tools/levels/factory/gauge.rhai
 
 ## Editing an asset from the command line
 
