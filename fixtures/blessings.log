@@ -310,3 +310,9 @@
   fixtures/render/factory-crane.png
 2026-11-01 bless-regression: #98: the factory's faulty tubes
   fixtures/matches-live/classic-factory-live-4dm.ron
+2026-11-01 bless-render: the factory's screen, displays and warning beacon (#99)
+  fixtures/render/factory-beacon-side.png
+  fixtures/render/factory-crane.png
+  fixtures/render/factory-screen.png
+2026-11-01 bless-regression: the factory's screen, displays and warning beacon (#99)
+  fixtures/matches-live/classic-factory-live-4dm.ron
