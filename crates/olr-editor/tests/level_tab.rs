@@ -1055,7 +1055,8 @@ fn move_and_resize_a_copy_through_the_canvas() {
 /// the level tab: unchanged, its copies listed by id bottom first, its
 /// bake the pack's. A built-in copy opens in the asset tab as the
 /// library's asset (Edit library asset, and a double click), the ground
-/// through Edit in level.
+/// through Edit in level. Since issue #97 its crane and console are Live:
+/// the bake is the pack's outside their boxes.
 #[test]
 fn liero_factory_reloaded_opens_with_its_copies() {
     let Some(root) = content() else { return };
@@ -1082,8 +1083,24 @@ fn liero_factory_reloaded_opens_with_its_copies() {
     assert_eq!(doc.copy_box("crane"), Some(((762, 269), (114, 50))));
     let pack = olr_edit::pack::load(&level).unwrap();
     let olr_edit::pack::Source::Level(stored) = &pack.source else { panic!() };
+    // Issue #97: the crane and the console are Live, the stored bake the
+    // ground without them (issue #85's played form) while the canvas
+    // draws them in place: the bake is the pack's outside their boxes.
     let l = doc.level();
-    assert!(l.material == stored.material && l.front == stored.front && l.back == stored.back, "the bake");
+    let live: [((i32, i32), (u32, u32)); 2] = [((762, 269), (114, 50)), ((933, 269), (33, 64))];
+    assert_eq!(doc.copy_box("console"), Some(live[1]));
+    let w = l.size.0 as usize;
+    let outside = |i: usize| {
+        let (x, y) = ((i % w) as i32, (i / w) as i32);
+        !live.iter().any(|&((bx, by), (bw, bh))| x >= bx && x < bx + bw as i32 && y >= by && y < by + bh as i32)
+    };
+    let pixel = |img: &olr_data::image::RgbaImage, i: usize| img.as_raw()[i * 4..i * 4 + 4].to_vec();
+    let differs = |i: usize| {
+        l.material[i] != stored.material[i] || pixel(&l.front, i) != pixel(&stored.front, i)
+            || pixel(&l.back, i) != pixel(&stored.back, i)
+    };
+    assert!((0..l.material.len()).filter(|&i| outside(i)).all(|i| !differs(i)), "the bake");
+    assert!((0..l.material.len()).any(differs), "the live copies are left out of the stored bake");
     // A library copy opens as the library's asset.
     run(&mut s, A::EditCopy("crane".into()));
     assert_eq!(s.doc_tab(), DocTab::Asset);
