@@ -128,7 +128,16 @@ mod tests {
             let name = d.trim_start_matches("fixtures/");
             assert!(test.contains(&format!("\"{name}\"")), "golden.rs plays {d}");
         }
-        assert!(test.contains("live/levels") && test.contains("open_layers"), "the live goldens' content");
+        // Issue #97: the live content (the fixture levels and
+        // `content/reloaded` laid over the packs) is `common::live_content`.
+        let common = std::fs::read_to_string(root.join("crates/olr-cli/tests/common/mod.rs")).unwrap();
+        assert!(test.contains("live_content()"), "golden.rs plays the live goldens on the live content");
+        assert!(
+            common.contains("live/levels")
+                && common.contains("bundled_roots")
+                && common.contains("open_layers"),
+            "the live goldens' content"
+        );
     }
 
     #[test]
