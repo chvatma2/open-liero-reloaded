@@ -70,7 +70,10 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   (issues #85-#94)"): `LoadedLevel::live` (`LoadedLive { source, sim }`,
   `None` without any) holds the played form as read (`LiveSource`:
   pictures, masks, scripts, sound bytes, for presentation) and
-  `live_level(&source)`'s `olr_sim::LiveLevel`, made once;
+  `live_level(&source)`'s `olr_sim::LiveLevel`, made once (issue #94:
+  each picture's `LiveSolid::cover`, the pixels an explosion reaches, is
+  its solid ones and those its art shows, alpha above 0, through
+  `art_covers` at the art's scale);
   `live_sim()` is its `Arc`, shared by every world of a match. Filled by
   `load_level` (`olr_pack::LevelPack::live`; a played form that does not
   check refuses the level) and by `from_source` (the `LevelSource`'s,

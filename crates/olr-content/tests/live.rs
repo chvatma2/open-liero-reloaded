@@ -98,6 +98,38 @@ fn a_live_level_loads_its_copies() {
     assert_eq!((health.points, Some(health.at_zero)), (40, crate_.state("Wrecked")));
     let (x, y) = crate_.at;
     assert_eq!(level.material.get(x as u32 + 1, y as u32 + 1), Material::Background);
+    // Issue #94: each picture covers the pixels its art shows (any art
+    // pixel of the block not transparent) and its rock: the crate's
+    // pictures wholly, the press's frame its U, not its rectangle.
+    let source = &level.live.as_ref().unwrap().source;
+    for (i, c) in live.copies.iter().enumerate() {
+        for (k, pic) in c.pictures.iter().enumerate() {
+            let art = &source.pictures[i][k].art;
+            let s = art.width() / pic.size.0;
+            for y in 0..pic.size.1 {
+                for x in 0..pic.size.0 {
+                    let shows = (0..s).any(|d| (0..s).any(|e| art.get(x * s + e, y * s + d).a != 0));
+                    assert_eq!(
+                        pic.covers(x, y),
+                        shows || pic.solid(x, y),
+                        "{} picture {k} at ({x}, {y})",
+                        c.id
+                    );
+                }
+            }
+        }
+    }
+    let covered = |p: &olr_sim::LiveSolid| {
+        (0..p.size.1)
+            .flat_map(|y| (0..p.size.0).map(move |x| (x, y)))
+            .filter(|&(x, y)| p.covers(x, y))
+            .count()
+    };
+    assert!(crate_.pictures.iter().all(|p| covered(p) == (p.size.0 * p.size.1) as usize));
+    let frame =
+        press.states[0].parts.iter().find(|p| p.kind == LivePartKind::Rock && p.layer != Some(1)).unwrap();
+    let frame = &press.pictures[usize::from(frame.picture)];
+    assert_eq!(covered(frame), 14 * 2 + 2 * 4 * 2, "the frame's U");
     // The gate: a mixed layer, a background and a rock part driven together.
     let gate = copy("gate");
     let kinds: Vec<(Option<u16>, LivePartKind)> =
@@ -116,7 +148,6 @@ fn a_live_level_loads_its_copies() {
         live.scripts[usize::from(live.level_script.unwrap())].contains("this.moving(this.copy(\"press\")")
     );
     // Presentation's share: the pictures and the sound's bytes.
-    let source = &level.live.as_ref().unwrap().source;
     assert!(source.sounds[usize::from(click)].starts_with(b"RIFF"));
     assert_eq!(source.pictures.len(), 9);
     // The spot (issue #93): its lens a background part beaming, its

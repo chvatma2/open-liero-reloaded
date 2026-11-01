@@ -12,6 +12,7 @@
 
 use std::sync::Arc;
 
+use olr_data::image::RgbaImage;
 use olr_format::levels::{LIVE_FILE, LiveFile, LiveSource, PartKind, Target};
 use olr_format::look::{LookSource, compile_animation, compile_look_source};
 use olr_look::glow_beams::{BeamLayer, LivePatch, PatchPlace, live_patches};
@@ -346,6 +347,25 @@ fn target(t: Target) -> LiveTarget {
     }
 }
 
+/// Whether world pixel `(x, y)` of a picture of `size` world pixels shows
+/// in its art (issue #94): an art pixel of its block (the art's scale,
+/// `art.width() / size.0`) is not fully transparent. Art smaller than the
+/// picture covers nothing where it is missing.
+fn art_covers(art: &RgbaImage, size: (u32, u32), x: u32, y: u32) -> bool {
+    if size.0 == 0 {
+        return false;
+    }
+    let s = u64::from((art.width() / size.0).max(1));
+    (0..s).any(|dy| {
+        (0..s).any(|dx| {
+            let (ax, ay) = (u64::from(x) * s + dx, u64::from(y) * s + dy);
+            ax < u64::from(art.width())
+                && ay < u64::from(art.height())
+                && art.get(ax as u32, ay as u32).a != 0
+        })
+    })
+}
+
 /// The simulation's data of played form `src`: each copy's values,
 /// states, parts, solid masks (a picture's `-rock.png`, 0 open), start,
 /// health, scripts and sounds. A mask shorter than its picture (the
@@ -364,9 +384,12 @@ pub fn live_level(src: &LiveSource) -> LiveLevel {
                 .map(|(k, p)| {
                     let rock = pictures.get(k).and_then(|x| x.rock.as_deref());
                     let w = p.size.0 as usize;
+                    let art = pictures.get(k).map(|x| &x.art);
                     LiveSolid::new(p.size, rock.is_some(), |x, y| {
                         rock.and_then(|r| r.get(y as usize * w + x as usize)).is_some_and(|&v| v != 0)
                     })
+                    // Issue #94: what an explosion reaches, from the art.
+                    .with_cover(|x, y| art.is_some_and(|a| art_covers(a, p.size, x, y)))
                 })
                 .collect();
             let states = c
