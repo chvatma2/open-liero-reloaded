@@ -308,3 +308,5 @@
   fixtures/matches-live/classic-factory-live-4dm.ron
 2026-11-01 bless-render: #97: the factory's crane mid-rail and its console in Alarm
   fixtures/render/factory-crane.png
+2026-11-01 bless-regression: #98: the factory's faulty tubes
+  fixtures/matches-live/classic-factory-live-4dm.ron
