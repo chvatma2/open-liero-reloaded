@@ -414,6 +414,9 @@
                     ],
                 ),
             ],
+            scripts: [
+                4,
+            ],
             health: (
                 points: 40,
                 at_zero: 1,
@@ -463,7 +466,7 @@
                 (0, -2),
             ],
             scripts: [
-                4,
+                5,
             ],
         ),
         (
@@ -572,7 +575,7 @@
                 ),
             ],
             scripts: [
-                5,
+                6,
             ],
         ),
         (
@@ -608,7 +611,7 @@
                 ),
             ],
             scripts: [
-                6,
+                7,
             ],
         ),
     ],
@@ -621,8 +624,9 @@
         "live/5.rhai",
         "live/6.rhai",
         "live/7.rhai",
+        "live/8.rhai",
     ],
-    level_script: 7,
+    level_script: 8,
     sounds: [
         "live/0.wav",
         "live/1.wav",

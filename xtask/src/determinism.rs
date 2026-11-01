@@ -505,6 +505,11 @@ mod tests {
                  --seed 2 --ticks 3000 --kill-limit 0 --time-limit 6 --bonus-frequency 5",
             ),
             (
+                "classic-live-test-4chaos",
+                "--mod olx-classic --level olr-level-live-test --bots 4 --difficulty mixed --personality chaos \
+                 --seed 1 --ticks 3000 --kill-limit 15 --time-limit 6 --bonus-frequency 5",
+            ),
+            (
                 "classic-live-test-4dm",
                 "--mod olx-classic --level olr-level-live-test --bots 4 --difficulty mixed --personality dm \
                  --seed 1 --ticks 3000 --kill-limit 15 --time-limit 6 --bonus-frequency 5",
@@ -525,7 +530,7 @@ mod tests {
     fn check_replays_the_live_goldens_layered() {
         let found = goldens(false).unwrap();
         let stems: Vec<&str> = found.iter().map(|g| g.stem.as_str()).collect();
-        assert_eq!(stems, [CHECK_GOLDEN, "classic-live-test-4dm"]);
+        assert_eq!(stems, [CHECK_GOLDEN, "classic-live-test-4chaos", "classic-live-test-4dm"]);
         assert!(found.iter().any(|g| g.live));
         assert_eq!(
             contents("/fixtures/live/levels", "/content/packs"),

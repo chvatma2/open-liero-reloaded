@@ -551,7 +551,9 @@ The headless command-line tool. Its commands:
   work units; then plays it again (determinism) and replays its recording
   from the content (round trip). `--coverage` prints weapons fired, actions
   triggered, events (`coverage::EVENT_KINDS`, issue #89's `LiveArrived`
-  and #90's `LiveBlocked` and `Crushed` among them), bonuses, rope attachments and kills by the killer's
+  and #90's `LiveBlocked` and `Crushed` and #94's `LiveDamaged` among them;
+  `Coverage::live_wrecked` counts the copies wrecked, printed as "live
+  copies wrecked"), bonuses, rope attachments and kills by the killer's
   selected weapon. A failure (a panic in a bot or the tick, an invariant, a
   budget, a divergence) writes `<stem>.olrp` and `<stem>.ron` (the spec, so
   the seed, and the tick) to `target/failures/` (spec §7.3) and exits 1.
@@ -1217,7 +1219,8 @@ round trip; failure capture through the binary) and `tests/golden.rs` (the
 golden checksum streams in `fixtures/matches/`; issue #89's
 `live_golden_match_checksums`: those of `fixtures/matches-live/` (Classic,
 4 Deathmatch bots on `fixtures/live/levels`' live-test, 3000 ticks, its
-scripts running) on the fixture levels laid over the content
+scripts running; issue #94's `classic-live-test-4chaos`, chaos bots,
+whose explosions wreck the crate, and some golden must wreck a copy) on the fixture levels laid over the content
 (`Content::open_layers`), each also `verify`d (determinism and the replay
 round trip) and its coverage asserting state changes, arrivals and no
 script error; accept a change with `cargo xtask bless-regression --reason

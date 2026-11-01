@@ -301,3 +301,6 @@
   fixtures/matches-live/classic-live-test-4dm.ron
 2026-11-01 bless-regression: #92: the live fixture's sound states
   fixtures/matches-live/classic-live-test-4dm.ron
+2026-11-01 bless-regression: #94: explosions damage destructible live copies; a chaos live golden wrecks the crate
+  fixtures/matches-live/classic-live-test-4chaos.ron
+  fixtures/matches-live/classic-live-test-4dm.ron

@@ -14,7 +14,8 @@
 #              a worm fits under (issue #90: it pushes and crushes worms);
 #              states Still (its start) and Moving, which loops a hum
 #              (issue #92); shown while press_on;
-#   crate      destructible (40 points, Wrecked at 0), of rock;
+#   crate      destructible (40 points, Wrecked at 0), of rock; wrecked,
+#              it sets console-b to Alarm (issue #94: explosions damage it);
 #   gate       a mixed layer (background with a rock bar) exposed as gate_x,
 #              with its own script;
 #   spot       a rock lamp with a directional background glow (its lens),
@@ -163,6 +164,10 @@ fn tick() {
 fn alarm(c) { if this.state(c) != "Alarm" { this.set_state(c, "Alarm"); } }
 EOF
 printf 'fn tick() {}\n' > "$W/gate.rhai"
+cat > "$W/crate.rhai" <<'EOF'
+// Wrecked (issue #94): console-b sounds the alarm.
+fn wrecked() { this.set_state(this.copy("console-b"), "Alarm"); }
+EOF
 cat > "$W/lift.rhai" <<'EOF'
 // Left and right at 20 px/s, resting a second at each end or where
 // something stops it.
@@ -252,6 +257,7 @@ set_ lift --live
 set_ door --live
 "$OLR" level copy script "$P" gate --set "$W/gate.rhai"
 "$OLR" level copy script "$P" console-b --set "$W/console-b.rhai"
+"$OLR" level copy script "$P" crate --set "$W/crate.rhai"
 "$OLR" level script "$P" --set "$W/level.rhai"
 "$OLR" level bake "$P"
 "$OLR" pack check "$P"

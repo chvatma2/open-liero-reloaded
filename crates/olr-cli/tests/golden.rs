@@ -28,6 +28,7 @@ fn goldens(c: &Content, dir: &str, at_least: usize, check: bool) {
     let goldens = Golden::load_dir(&fixtures().join(dir)).unwrap();
     assert!(goldens.len() >= at_least, "fixtures/{dir} holds the golden matches");
     let mut diffs = Vec::new();
+    let mut wrecked = 0;
     for (path, golden) in goldens {
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
         let run = play(c, &golden.spec, &Options::default()).unwrap();
@@ -48,6 +49,7 @@ fn goldens(c: &Content, dir: &str, at_least: usize, check: bool) {
                 run.coverage.events
             );
             assert_eq!(count("ScriptError"), 0, "{name}: a script failed");
+            wrecked += run.coverage.live_wrecked;
         }
         let fresh = Golden::of(&run);
         if bless {
@@ -56,6 +58,9 @@ fn goldens(c: &Content, dir: &str, at_least: usize, check: bool) {
             diffs.push(format!("fixtures/{dir}/{name}: {d}"));
         }
     }
+    // Issue #94: explosions wreck the fixture's crate in one of them at
+    // least, whose script then sets console-b to Alarm.
+    assert!(!check || wrecked > 0, "fixtures/{dir}: no golden wrecks a live copy");
     assert!(
         diffs.is_empty(),
         "the matches no longer play as recorded:\n{}\nIf the change is intended, run \
@@ -71,7 +76,8 @@ fn golden_match_checksums() {
 }
 
 /// Issue #89: the live goldens, on the fixture level's scripts and
-/// motions, with `verify`'s replay and determinism.
+/// motions, with `verify`'s replay and determinism; issue #94's chaos
+/// bots wreck its crate.
 #[test]
 fn live_golden_match_checksums() {
     let Some(dir) = content_dir() else { return };

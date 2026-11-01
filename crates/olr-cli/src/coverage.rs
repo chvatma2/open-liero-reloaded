@@ -28,6 +28,9 @@ pub struct Coverage {
     pub kills: BTreeMap<i32, u64>,
     pub suicides: u64,
     pub other_deaths: u64,
+    /// Live copies explosions left at 0 health (issue #94: `LiveDamaged`
+    /// with `wrecked`).
+    pub live_wrecked: u64,
     /// Events by kind, in [`EVENT_KINDS`] order.
     pub events: [u64; EVENT_KINDS.len()],
     /// Each worm's rope attached after the last tick seen.
@@ -35,7 +38,7 @@ pub struct Coverage {
 }
 
 /// The kinds of `olr_sim::EventKind`, as the report names them.
-pub const EVENT_KINDS: [&str; 17] = [
+pub const EVENT_KINDS: [&str; 18] = [
     "Sound",
     "TerrainEdit",
     "Explosion",
@@ -53,6 +56,7 @@ pub const EVENT_KINDS: [&str; 17] = [
     "LiveBlocked",
     "Crushed",
     "LiveSound",
+    "LiveDamaged",
 ];
 
 fn event_index(kind: &EventKind) -> usize {
@@ -74,6 +78,7 @@ fn event_index(kind: &EventKind) -> usize {
         EventKind::LiveBlocked { .. } => 14,
         EventKind::Crushed { .. } => 15,
         EventKind::LiveSound { .. } => 16,
+        EventKind::LiveDamaged { .. } => 17,
     }
 }
 
@@ -108,6 +113,7 @@ impl Coverage {
                 }
                 EventKind::Kill { victim, killer } if killer == victim => self.suicides += 1,
                 EventKind::Kill { .. } => self.other_deaths += 1,
+                EventKind::LiveDamaged { wrecked: true, .. } => self.live_wrecked += 1,
                 _ => {}
             }
         }
@@ -147,6 +153,7 @@ impl Coverage {
         self.rope_on_worm += other.rope_on_worm;
         self.suicides += other.suicides;
         self.other_deaths += other.other_deaths;
+        self.live_wrecked += other.live_wrecked;
         for (a, b) in self.events.iter_mut().zip(other.events) {
             *a += b;
         }
@@ -214,6 +221,9 @@ impl Coverage {
         let _ = writeln!(s, "events:");
         for (name, n) in EVENT_KINDS.iter().zip(self.events) {
             let _ = writeln!(s, "  {n:>6}  {name}");
+        }
+        if self.live_wrecked > 0 {
+            let _ = writeln!(s, "live copies wrecked: {}", self.live_wrecked);
         }
         let _ = writeln!(s, "bonuses collected: {}", self.bonuses.values().sum::<u64>());
         for (k, n) in &self.bonuses {

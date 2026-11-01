@@ -87,6 +87,7 @@
             asset: "d",
             at: (230, 160),
             live: true,
+            script: true,
         ),
         (
             id: "gate",
