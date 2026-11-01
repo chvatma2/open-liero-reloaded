@@ -8,8 +8,15 @@ on every run (stdlib only: `wave`, `math` and a fixed-seed generator).
             seamless loop (every component a whole number of cycles a
             second) of 100 Hz with its 2nd to 5th harmonics, wobbling at
             4 Hz, with a breath of noise, at about -18 dBFS (RMS).
+  buzz.wav  issue #98: a faulty fluorescent tube's mains buzz, looped while
+            the Strip light is On or Dim: a 1.0 s seamless loop of 100 Hz
+            and its 2nd to 12th harmonics, softly clipped (rough), with a
+            breath of noise, at about -28 dBFS (RMS), well under the
+            weapons.
+  tick.wav  issue #98: the tube's starter ticking as it comes On: 40 ms, a
+            noise burst decaying in about 4 ms, at about -24 dBFS (RMS).
 
-All are mono, 16-bit, 22 050 Hz. Issue #98 adds the tubes' sounds here.
+All are mono, 16-bit, 22 050 Hz.
 """
 
 import math
@@ -40,9 +47,10 @@ class Rng:
         return (self.next() >> 11) / float(1 << 52) - 1.0
 
 
-def write(name, samples):
+def write(name, samples, level=LEVEL):
+    """`samples` scaled to `level` (RMS, of full scale) into `name`."""
     rms = math.sqrt(sum(s * s for s in samples) / len(samples))
-    gain = LEVEL / rms
+    gain = level / rms
     frames = bytearray()
     for s in samples:
         v = max(-32767, min(32767, round(s * gain * 32767)))
@@ -69,9 +77,35 @@ def hum():
     return out
 
 
+def buzz():
+    """1.0 s: 100 Hz and its 2nd to 12th harmonics (every one a whole
+    number of cycles in the loop), softly clipped, a little noise."""
+    rng = Rng(98)
+    out = []
+    for i in range(RATE):
+        t = i / RATE
+        tone = sum(math.sin(2 * math.pi * 100 * k * t + k * 0.7) / k ** 0.8 for k in range(1, 13))
+        out.append(math.tanh(1.6 * tone) + 0.04 * rng.uniform())
+    return out
+
+
+def tick():
+    """40 ms: a noise burst decaying in about 4 ms, its low end taken off
+    (each sample less half the one before), so it clicks."""
+    rng = Rng(981)
+    out, last = [], 0.0
+    for i in range(round(RATE * 0.040)):
+        n = rng.uniform() * math.exp(-i / (RATE * 0.004))
+        out.append(n - 0.5 * last)
+        last = n
+    return out
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     write("hum.wav", hum())
+    write("buzz.wav", buzz(), 10 ** (-28 / 20))
+    write("tick.wav", tick(), 10 ** (-24 / 20))
 
 
 main()
