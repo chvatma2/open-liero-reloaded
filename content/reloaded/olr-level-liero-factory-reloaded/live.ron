@@ -280,6 +280,161 @@
             ],
         ),
         (
+            id: "screen",
+            asset: "Computer screen",
+            at: (906, 83),
+            size: (14, 14),
+            pictures: [
+                (
+                    size: (14, 14),
+                    glow: true,
+                    groups: true,
+                ),
+                (
+                    size: (14, 14),
+                    glow: true,
+                    groups: true,
+                ),
+                (
+                    size: (14, 14),
+                    glow: true,
+                    groups: true,
+                ),
+                (
+                    size: (14, 14),
+                    glow: true,
+                    groups: true,
+                ),
+            ],
+            states: [
+                (
+                    name: "Truck",
+                    parts: [
+                        (
+                            kind: Background,
+                            picture: 0,
+                            glow_strength: 100,
+                        ),
+                    ],
+                ),
+                (
+                    name: "Crane",
+                    parts: [
+                        (
+                            kind: Background,
+                            picture: 1,
+                            glow_strength: 100,
+                        ),
+                    ],
+                ),
+                (
+                    name: "Offices",
+                    parts: [
+                        (
+                            kind: Background,
+                            picture: 2,
+                            glow_strength: 100,
+                        ),
+                    ],
+                ),
+                (
+                    name: "Garden",
+                    parts: [
+                        (
+                            kind: Background,
+                            picture: 3,
+                            glow_strength: 100,
+                        ),
+                    ],
+                ),
+            ],
+            groups: [
+                (
+                    id: "control",
+                    colour: Tint("#d0e0ff"),
+                    intensity: 450,
+                    reach: Pixels(48),
+                ),
+            ],
+            scripts: [
+                1,
+            ],
+        ),
+        (
+            id: "desk",
+            asset: "Control desk",
+            at: (903, 119),
+            size: (30, 11),
+            pictures: [
+                (
+                    size: (30, 11),
+                    glow: true,
+                    groups: true,
+                ),
+                (
+                    size: (30, 11),
+                    glow: true,
+                    groups: true,
+                ),
+                (
+                    size: (30, 11),
+                    glow: true,
+                    groups: true,
+                ),
+            ],
+            states: [
+                (
+                    name: "A",
+                    parts: [
+                        (
+                            kind: Background,
+                            picture: 0,
+                            glow_strength: 100,
+                        ),
+                    ],
+                ),
+                (
+                    name: "B",
+                    parts: [
+                        (
+                            kind: Background,
+                            picture: 1,
+                            glow_strength: 100,
+                        ),
+                    ],
+                ),
+                (
+                    name: "C",
+                    parts: [
+                        (
+                            kind: Background,
+                            picture: 2,
+                            glow_strength: 100,
+                        ),
+                    ],
+                ),
+            ],
+            groups: [
+                (
+                    id: "screens",
+                    intensity: 450,
+                    reach: Pixels(48),
+                ),
+                (
+                    id: "displays",
+                    intensity: 180,
+                    reach: Pixels(28),
+                    animation: Flicker(
+                        speed: 6,
+                        depth: 25,
+                    ),
+                ),
+            ],
+            scripts: [
+                2,
+            ],
+        ),
+        (
             id: "crane",
             asset: "Crane",
             at: (762, 269),
@@ -292,6 +447,74 @@
                     max: 75,
                     default: 0,
                 ),
+                (
+                    name: "lens_x",
+                    drives: OffsetX(2),
+                    min: -10,
+                    max: 75,
+                    default: 0,
+                ),
+                (
+                    name: "lens_b_x",
+                    drives: OffsetX(3),
+                    min: -10,
+                    max: 75,
+                    default: 0,
+                ),
+                (
+                    name: "beam_spread",
+                    drives: BeamSpread(2),
+                    min: 1,
+                    max: 90,
+                    default: 10,
+                ),
+                (
+                    name: "beam_spread_b",
+                    drives: BeamSpread(3),
+                    min: 1,
+                    max: 90,
+                    default: 10,
+                ),
+                (
+                    name: "reach",
+                    drives: LightReach(2),
+                    min: 1,
+                    max: 360,
+                    default: 360,
+                ),
+                (
+                    name: "light",
+                    drives: LightIntensity(2),
+                    min: 0,
+                    max: 400,
+                    default: 400,
+                ),
+                (
+                    name: "halo_glow",
+                    drives: GlowStrength(1),
+                    min: 0,
+                    max: 100,
+                    default: 0,
+                ),
+                (
+                    name: "halo_light",
+                    drives: LightIntensity(1),
+                    min: 0,
+                    max: 400,
+                    default: 0,
+                ),
+                (
+                    drives: GlowStrength(2),
+                    min: 0,
+                    max: 100,
+                    default: 100,
+                ),
+                (
+                    drives: GlowStrength(3),
+                    min: 0,
+                    max: 100,
+                    default: 100,
+                ),
             ],
             pictures: [
                 (
@@ -301,11 +524,32 @@
                 (
                     size: (29, 47),
                     rock: true,
+                    glow: true,
+                    groups: true,
+                ),
+                (
+                    size: (2, 1),
+                    glow: true,
+                    groups: true,
+                    beam: true,
+                ),
+                (
+                    size: (2, 1),
+                    glow: true,
+                    groups: true,
+                    beam: true,
                 ),
             ],
             states: [
                 (
                     name: "Idle",
+                    values: [
+                        (6, 0),
+                        (7, 0),
+                        (8, 0),
+                        (9, 0),
+                        (10, 0),
+                    ],
                     parts: [
                         (
                             kind: Rock,
@@ -317,11 +561,33 @@
                             kind: Rock,
                             picture: 1,
                             at: (10, 3),
+                            glow_strength: 100,
+                        ),
+                        (
+                            layer: 2,
+                            kind: Background,
+                            picture: 2,
+                            at: (26, 15),
+                            glow_strength: 100,
+                        ),
+                        (
+                            layer: 3,
+                            kind: Background,
+                            picture: 3,
+                            at: (21, 15),
+                            glow_strength: 100,
                         ),
                     ],
                 ),
                 (
                     name: "Moving",
+                    values: [
+                        (6, 400),
+                        (7, 0),
+                        (8, 0),
+                        (9, 100),
+                        (10, 100),
+                    ],
                     parts: [
                         (
                             kind: Rock,
@@ -333,13 +599,42 @@
                             kind: Rock,
                             picture: 1,
                             at: (10, 3),
+                            glow_strength: 100,
+                        ),
+                        (
+                            layer: 2,
+                            kind: Background,
+                            picture: 2,
+                            at: (26, 15),
+                            glow_strength: 100,
+                        ),
+                        (
+                            layer: 3,
+                            kind: Background,
+                            picture: 3,
+                            at: (21, 15),
+                            glow_strength: 100,
                         ),
                     ],
                     loop_sound: 2,
                 ),
             ],
+            groups: [
+                (
+                    id: "halo",
+                    colour: Tint("#ff6a10"),
+                    intensity: 0,
+                    reach: Pixels(60),
+                ),
+                (
+                    id: "beacon",
+                    colour: Tint("#ff6a10"),
+                    intensity: 400,
+                    reach: Pixels(360),
+                ),
+            ],
             scripts: [
-                1,
+                3,
             ],
             sounds: [
                 ("hum.wav", 2),
@@ -447,13 +742,182 @@
                 ),
             ],
         ),
+        (
+            id: "sign",
+            asset: "Lit sign",
+            at: (934, 299),
+            size: (31, 21),
+            pictures: [
+                (
+                    size: (31, 21),
+                    rock: true,
+                    glow: true,
+                    groups: true,
+                ),
+                (
+                    size: (31, 21),
+                    rock: true,
+                    glow: true,
+                    groups: true,
+                ),
+                (
+                    size: (31, 21),
+                    rock: true,
+                    glow: true,
+                    groups: true,
+                ),
+                (
+                    size: (31, 21),
+                    rock: true,
+                    glow: true,
+                    groups: true,
+                ),
+            ],
+            states: [
+                (
+                    name: "Normal",
+                    parts: [
+                        (
+                            kind: Rock,
+                            picture: 0,
+                            glow_strength: 100,
+                        ),
+                    ],
+                ),
+                (
+                    name: "No dash",
+                    parts: [
+                        (
+                            kind: Rock,
+                            picture: 1,
+                            glow_strength: 100,
+                        ),
+                    ],
+                ),
+                (
+                    name: "No LD",
+                    parts: [
+                        (
+                            kind: Rock,
+                            picture: 2,
+                            glow_strength: 100,
+                        ),
+                    ],
+                ),
+                (
+                    name: "Dying 7",
+                    parts: [
+                        (
+                            kind: Rock,
+                            picture: 3,
+                            glow_strength: 100,
+                        ),
+                    ],
+                ),
+            ],
+            groups: [
+                (
+                    id: "displays",
+                    intensity: 180,
+                    reach: Pixels(28),
+                    animation: Flicker(
+                        speed: 6,
+                        depth: 25,
+                    ),
+                ),
+            ],
+            scripts: [
+                4,
+            ],
+        ),
+        (
+            id: "gauge",
+            asset: "Gauge",
+            at: (1059, 144),
+            size: (48, 27),
+            pictures: [
+                (
+                    size: (48, 27),
+                    rock: true,
+                    glow: true,
+                    groups: true,
+                ),
+                (
+                    size: (48, 27),
+                    rock: true,
+                    glow: true,
+                    groups: true,
+                ),
+                (
+                    size: (48, 27),
+                    rock: true,
+                    glow: true,
+                    groups: true,
+                ),
+            ],
+            states: [
+                (
+                    name: "A",
+                    parts: [
+                        (
+                            kind: Rock,
+                            picture: 0,
+                            glow_strength: 100,
+                        ),
+                    ],
+                ),
+                (
+                    name: "B",
+                    parts: [
+                        (
+                            kind: Rock,
+                            picture: 1,
+                            glow_strength: 100,
+                        ),
+                    ],
+                ),
+                (
+                    name: "C",
+                    parts: [
+                        (
+                            kind: Rock,
+                            picture: 2,
+                            glow_strength: 100,
+                        ),
+                    ],
+                ),
+            ],
+            groups: [
+                (
+                    id: "screens",
+                    intensity: 450,
+                    reach: Pixels(48),
+                ),
+                (
+                    id: "displays",
+                    intensity: 180,
+                    reach: Pixels(28),
+                    animation: Flicker(
+                        speed: 6,
+                        depth: 25,
+                    ),
+                ),
+            ],
+            scripts: [
+                5,
+            ],
+        ),
     ],
     scripts: [
         "live/0.rhai",
         "live/1.rhai",
         "live/2.rhai",
+        "live/3.rhai",
+        "live/4.rhai",
+        "live/5.rhai",
+        "live/6.rhai",
     ],
-    level_script: 2,
+    level_script: 6,
     sounds: [
         "live/0.wav",
         "live/1.wav",

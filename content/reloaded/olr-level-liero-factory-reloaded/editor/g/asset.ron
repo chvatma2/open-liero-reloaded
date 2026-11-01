@@ -144,4 +144,21 @@
             ),
         ),
     ],
+    states: [
+        (
+            name: "A",
+        ),
+        (
+            name: "B",
+            own: [
+                "rock-disp",
+            ],
+        ),
+        (
+            name: "C",
+            own: [
+                "rock-disp",
+            ],
+        ),
+    ],
 )

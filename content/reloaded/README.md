@@ -291,7 +291,10 @@ Remade OLX content is named "<Old name> Reloaded".
   Since issue #98 three ceiling strips (`strip-2`, `strip-4`,
   `strip-7`) fail like faulty tubes, stuttering on and off in uneven
   bursts, sometimes dark or dim a while, buzzing and ticking; the other
-  six stay steady. Issue #99 brings the rest alive. Laid out as #73
+  six stay steady. Since issue #99 the control room's screen is a
+  security camera, the 13-37 sign, the control desk's lamps and the
+  gauge change now and then, and an orange warning beacon under the
+  crane's trolley turns while the crane moves. Laid out as #73
   and #74 lay a level out: `editor/placed.ron`, the ground at `editor/`,
   each other asset at `editor/<key>/`, and the baked files beside, so it
   plays without any library.
@@ -345,7 +348,9 @@ Remade OLX content is named "<Old name> Reloaded".
   makes the Crane and the Console again by their blocks in
   `content/assets/README.md` (states, exposed values, sound, script),
   and then `level library update <pack> k o`, `level copy set … crane
-  --live` and `… console --live`, `level script --set
+  --live` and `… console --live` (issue #99: `level library update
+  <pack> k o s c t d g`, and `screen`, `sign`, `desk` and `gauge` Live
+  too), `level script --set
   tools/levels/factory/level.rhai`, `level notes`, `level bake`, `level
   check-scripts` and `pack check`.
   - **The crane** (Live, its asset's default script
@@ -383,6 +388,37 @@ Remade OLX content is named "<Old name> Reloaded".
     nothing). The ground's `backdrop` still holds After Dark's lit strip
     under each live one (the flattened art); every state's picture covers
     it whole.
+  - **The security screen** (issue #99; `screen`, Live, the Computer
+    screen's default script `tools/levels/factory/screen.rhai`): states
+    `Truck` (start), `Crane`, `Offices` and `Garden`, 250 ticks each in
+    that order, again and again, no randomness. The pictures
+    (`tools/levels/factory/art/screen-*.png`, 12 × 11) are After Dark's
+    parts drawn full bright (`olr-cli look-preview --view full`: the claw
+    under the deck at (800, 300), the lab and the teal office at (500,
+    230), the roof garden under the moon at (500, 160)), each box
+    downsampled to 12 × 11 (a box's most saturated colour where it
+    covers a quarter of it, saturation × 1.6), mapped to the truck
+    picture's colours. **Hand touch-up** (in code, `GARDEN_*`): the
+    garden's sky cleared over rows 0-7, the moon a white pixel at (10,
+    1), four green stalks under gold heads at x 1, 3, 5 and 7.
+  - **The displays** (issue #99, each its asset's default script):
+    `sign` (Lit sign, `sign.rhai`) stays `Normal` 300-900 ticks, then
+    shows `No dash`, `No LD` or `Dying 7` (equal odds) 20-80 ticks; `desk`
+    (Control desk, `desk.rhai`) and `gauge` (Gauge, `gauge.rhai`) change
+    to one of their two other states (`A`, `B`, `C`) every 100-400 and
+    150-500 ticks. Every draw is `this.rand`; no state changes a solid
+    pixel. The beacons on the roof stay static (their glow already
+    pulses).
+  - **The warning beacon** (issue #99, #95's pick): two deep orange
+    beams (`#ff6a10`, intensity 400, reach 360, half-angle 10°), level,
+    turning once every 3 s, the lamp flaring as they face the viewer;
+    under the crane's trolley, astride the cable, lit and turning only
+    while the crane is `Moving`. Built into the Crane (its block in
+    `content/assets/README.md`); `crane.rhai`'s `tick()` keeps the two
+    lens layers at the claw's offset and `turn()` sets their spread,
+    reach and light from a table of the half turn (26 entries, every 3
+    ticks, interpolated in integers), the halo's glow `(400 − light) /
+    4` and light `400 − light`.
   - **The buzz and the tick** (`tools/levels/factory/sounds/buzz.wav`,
     looped while a tube is `On` or `Dim`; `tick.wav`, the starter,
     played on each entry to `On`): synthesised for OLR by

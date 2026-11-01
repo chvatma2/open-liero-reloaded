@@ -1,36 +1,16 @@
-// The Crane's default script (issue #97): its claw rests at one end of
-// the rail, then crosses to the other, humming (Moving) while it moves.
-// Its constants (ticks are 10 ms; tuned in issue #100):
-fn REST() { 200 }   // ticks the claw rests at each end (2 s)
-fn SPEED() { 50 }   // world px a second (0.5 a tick)
-fn WAIT() { 50 }    // ticks stopped by something before heading back
+// The Computer screen's default script (issue #99): a security camera
+// showing each part of the factory in turn, Truck, Crane, Offices and
+// Garden, then again, each for SHOW() ticks. No randomness: a camera cycle.
+// Its constant (ticks are 10 ms; tuned in issue #100):
+fn SHOW() { 250 }   // ticks each picture shows (2.5 s)
 
-// The ends are the claw's limits, `max("claw_x")` and `min("claw_x")`,
-// never numbers, so a stretched copy sweeps its stretched rail. The
-// direction of travel is `mem.up` (towards the max), the max first.
 fn start() {
-  this.mem.up = true;
-  this.after(REST(), "cross");
+  this.every(SHOW(), "next");
 }
 
-// Heads for the end `mem.up` names, Moving.
-fn cross() {
-  if this.state() != "Moving" { this.set_state("Moving"); }
-  let to = if this.mem.up { this.max("claw_x") } else { this.min("claw_x") };
-  this.move_to("claw_x", to, SPEED());
-}
-
-// At an end: Idle, a rest, then the other end.
-fn arrived(name) {
-  this.set_state("Idle");
-  this.mem.up = !this.mem.up;
-  this.after(REST(), "cross");
-}
-
-// Stopped by rock, another part or the level's edge (a wedged worm only
-// holds it, #90): still Moving, it waits, then heads back to the end it
-// came from.
-fn blocked(name) {
-  this.mem.up = !this.mem.up;
-  this.after(WAIT(), "cross");
+// The next camera after the one showing.
+fn next() {
+  let s = this.state();
+  let n = if s == "Truck" { "Crane" } else if s == "Crane" { "Offices" } else if s == "Offices" { "Garden" } else { "Truck" };
+  this.set_state(n);
 }

@@ -37,6 +37,7 @@
             glow: (
                 strength: 100,
                 group: "displays",
+                mask: true,
             ),
             surface: "glass",
         ),
@@ -108,6 +109,23 @@
                     light: 50,
                 ),
             ),
+        ),
+    ],
+    states: [
+        (
+            name: "A",
+        ),
+        (
+            name: "B",
+            own: [
+                "displays",
+            ],
+        ),
+        (
+            name: "C",
+            own: [
+                "displays",
+            ],
         ),
     ],
 )

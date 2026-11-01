@@ -113,11 +113,13 @@
             id: "screen",
             asset: "c",
             at: (906, 83),
+            live: true,
         ),
         (
             id: "desk",
             asset: "d",
             at: (903, 119),
+            live: true,
         ),
         (
             id: "beacon",
@@ -140,11 +142,13 @@
             id: "sign",
             asset: "t",
             at: (934, 299),
+            live: true,
         ),
         (
             id: "gauge",
             asset: "g",
             at: (1059, 144),
+            live: true,
         ),
     ],
     script: true,

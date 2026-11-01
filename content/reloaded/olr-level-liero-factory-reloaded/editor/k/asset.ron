@@ -20,8 +20,61 @@
                 at: (10, 3),
                 size: (29, 47),
             ),
+            glow: (
+                strength: 100,
+                group: "halo",
+                mask: true,
+            ),
             surface: "stone",
             surface_map: true,
+        ),
+        (
+            id: "lens",
+            name: "Lens",
+            kind: Drawn(
+                material: Background,
+                at: (26, 15),
+                size: (2, 1),
+            ),
+            glow: (
+                strength: 100,
+                group: "beacon",
+                beam: (
+                    direction: 0,
+                    spread: 10,
+                ),
+            ),
+        ),
+        (
+            id: "lens-b",
+            name: "Lens B",
+            kind: Drawn(
+                material: Background,
+                at: (21, 15),
+                size: (2, 1),
+            ),
+            glow: (
+                strength: 100,
+                group: "beacon",
+                beam: (
+                    direction: 180,
+                    spread: 10,
+                ),
+            ),
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "halo",
+            colour: Tint("#ff6a10"),
+            intensity: 0,
+            reach: Pixels(60),
+        ),
+        (
+            id: "beacon",
+            colour: Tint("#ff6a10"),
+            intensity: 400,
+            reach: Pixels(360),
         ),
     ],
     materials: [
@@ -50,6 +103,28 @@
     states: [
         (
             name: "Idle",
+            values: [
+                (
+                    property: GlowStrength("lens"),
+                    value: Int(0),
+                ),
+                (
+                    property: GlowStrength("lens-b"),
+                    value: Int(0),
+                ),
+                (
+                    property: LightIntensity("lens"),
+                    value: Int(0),
+                ),
+                (
+                    property: GlowStrength("claw"),
+                    value: Int(0),
+                ),
+                (
+                    property: LightIntensity("claw"),
+                    value: Int(0),
+                ),
+            ],
         ),
         (
             name: "Moving",
@@ -63,6 +138,62 @@
             default: Int(0),
             min: -10,
             max: 75,
+        ),
+        (
+            name: "lens_x",
+            property: OffsetX("lens"),
+            default: Int(0),
+            min: -10,
+            max: 75,
+        ),
+        (
+            name: "lens_b_x",
+            property: OffsetX("lens-b"),
+            default: Int(0),
+            min: -10,
+            max: 75,
+        ),
+        (
+            name: "beam_spread",
+            property: BeamSpread("lens"),
+            default: Int(10),
+            min: 1,
+            max: 90,
+        ),
+        (
+            name: "beam_spread_b",
+            property: BeamSpread("lens-b"),
+            default: Int(10),
+            min: 1,
+            max: 90,
+        ),
+        (
+            name: "reach",
+            property: LightReach("lens"),
+            default: Int(360),
+            min: 1,
+            max: 360,
+        ),
+        (
+            name: "light",
+            property: LightIntensity("lens"),
+            default: Int(400),
+            min: 0,
+            max: 400,
+        ),
+        (
+            name: "halo_glow",
+            property: GlowStrength("claw"),
+            default: Int(0),
+            min: 0,
+            max: 100,
+        ),
+        (
+            name: "halo_light",
+            property: LightIntensity("claw"),
+            default: Int(0),
+            min: 0,
+            max: 400,
         ),
     ],
     sounds: [
