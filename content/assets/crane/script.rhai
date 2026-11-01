@@ -27,8 +27,9 @@ fn arrived(name) {
   this.after(REST(), "cross");
 }
 
-// Stopped by rock, another part or a wedged worm: still Moving, it waits,
-// then heads back to the end it came from.
+// Stopped by rock, another part or the level's edge (a wedged worm only
+// holds it, #90): still Moving, it waits, then heads back to the end it
+// came from.
 fn blocked(name) {
   this.mem.up = !this.mem.up;
   this.after(WAIT(), "cross");
