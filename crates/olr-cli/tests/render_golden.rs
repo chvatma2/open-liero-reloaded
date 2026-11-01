@@ -436,6 +436,36 @@ fn live_beam() {
     live_golden("live-beam-turned.png", &turned);
 }
 
+/// Issue #97: Liero Factory Reloaded's crane mid-rail and its console in
+/// Alarm: idle bots, at tick 275 the claw halfway through its first
+/// crossing (resting 200 ticks, then 150 to the end of its rail), the
+/// level script having turned the console red, its lamp lit and pulsing;
+/// the view centred on the crane (`--at`).
+#[test]
+fn factory_crane() {
+    let Some(content) = content_dir() else { return };
+    let args = [
+        "render-match",
+        "--mod",
+        "olx-classic",
+        "--level",
+        "olr-level-liero-factory-reloaded",
+        "--bots",
+        "2",
+        "--personality",
+        "idle",
+        "--seed",
+        "1",
+        "--ticks",
+        "275",
+        "--at",
+        "870,300",
+        "--content",
+        &content,
+    ];
+    compare("factory-crane.png", &args, &[]);
+}
+
 /// Issue #34, byte identity: chaos bots on Castle Strike Reloaded (its
 /// look: the flames' flicker and the sky's glow), its last 30 ticks drawn
 /// lit (`olr-cli frame-hashes`), a hash of each frame's light grid and lit

@@ -306,3 +306,5 @@
   fixtures/matches-live/classic-live-test-4dm.ron
 2026-11-01 bless-regression: #97: the factory's crane and alarm come alive
   fixtures/matches-live/classic-factory-live-4dm.ron
+2026-11-01 bless-render: #97: the factory's crane mid-rail and its console in Alarm
+  fixtures/render/factory-crane.png
