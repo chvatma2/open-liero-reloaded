@@ -1,14 +1,15 @@
 //! Golden match checksums (spec §7.2): fixed-seed bot matches whose
 //! checksum streams are committed in `fixtures/matches/`, and (issue #89)
 //! those on the live fixture level in `fixtures/matches-live/`, played on
-//! `fixtures/live/levels` laid over the content. Any change of behaviour
+//! `fixtures/live/levels` laid over the content (and, since issue #97,
+//! over OLR's own packs: Liero Factory Reloaded's live golden). Any change of behaviour
 //! shows as a difference; accept it with
 //! `cargo xtask bless-regression --reason "<why>"` (which runs this test
 //! with `OLR_BLESS_REGRESSION` set, so it rewrites the streams of both).
 
 mod common;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use common::*;
 use olr_cli::golden::{Golden, first_difference};
@@ -43,8 +44,10 @@ fn goldens(c: &Content, dir: &str, at_least: usize, check: bool) {
                 let i = olr_cli::coverage::EVENT_KINDS.iter().position(|k| *k == kind).unwrap();
                 run.coverage.events[i]
             };
+            // Issue #97: the factory's crane arrives 8 times in 3000
+            // ticks (a rest of 2 s, then a crossing of 1.5 s or 1.7 s).
             assert!(
-                count("LiveState") > 20 && count("LiveArrived") >= 10,
+                count("LiveState") > 20 && count("LiveArrived") >= 8,
                 "{name}: {:?}",
                 run.coverage.events
             );
@@ -77,11 +80,11 @@ fn golden_match_checksums() {
 
 /// Issue #89: the live goldens, on the fixture level's scripts and
 /// motions, with `verify`'s replay and determinism; issue #94's chaos
-/// bots wreck its crate.
+/// bots wreck its crate. Issue #97: OLR's own packs are laid under the
+/// fixture's levels (`live_content`), for Liero Factory Reloaded's live
+/// crane and console.
 #[test]
 fn live_golden_match_checksums() {
-    let Some(dir) = content_dir() else { return };
-    let live = fixtures().join("live/levels");
-    let c = Content::open_layers(&[live.as_path(), Path::new(&dir)]).expect("the layered content");
-    goldens(&c, "matches-live", 1, true);
+    let Some(c) = live_content() else { return };
+    goldens(&c, "matches-live", 3, true);
 }

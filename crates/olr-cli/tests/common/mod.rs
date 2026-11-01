@@ -14,20 +14,24 @@ pub const LEVELS: [&str; 4] =
     ["olx-level-castlestrike", "olx-level-dirt-level", "olx-level-fossilfacility", "olx-level-liero-factory"];
 
 /// Issue #91: the levels with live parts the bot grid plays, from
-/// `fixtures/live/levels` laid over the content ([`live_content`]).
-pub const LIVE_LEVELS: [&str; 1] = ["olr-level-live-test"];
+/// `fixtures/live/levels` laid over the content ([`live_content`]); issue
+/// #97 adds Liero Factory Reloaded (`content/reloaded`).
+pub const LIVE_LEVELS: [&str; 2] = ["olr-level-live-test", "olr-level-liero-factory-reloaded"];
 
 /// The live fixture levels' directory (`fixtures/live/levels`).
 pub fn live_levels_dir() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/live/levels")
 }
 
-/// The imported content with the live fixture levels laid over it, or
-/// `None` (with a notice) without the content.
+/// The imported content with OLR's own packs (`content/reloaded`, as
+/// `olr_content::bundled_roots` lays them; issue #97) and the live fixture
+/// levels laid over it, or `None` (with a notice) without the content.
 pub fn live_content() -> Option<Content> {
     let dir = content_dir()?;
     let live = live_levels_dir();
-    Some(Content::open_layers(&[live.as_path(), Path::new(&dir)]).expect("the layered content"))
+    let bundled = olr_content::bundled_roots(Path::new(&dir));
+    let roots: Vec<&Path> = std::iter::once(live.as_path()).chain(bundled.iter().map(|p| p.as_path())).collect();
+    Some(Content::open_layers(&roots).expect("the layered content"))
 }
 
 /// The content directory, or `None` (with a notice) without it.

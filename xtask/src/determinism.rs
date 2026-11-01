@@ -11,7 +11,9 @@
 //! level's scripts and motions) are recorded with `fixtures/live/levels`
 //! laid over the content and replayed on every leg so (`olr-detcheck
 //! --content` twice), the WASI leg's included: a real cross-platform check
-//! of Rhai.
+//! of Rhai. Issue #97: the live goldens may play OLR's own levels
+//! (Liero Factory Reloaded's live crane), so `content/reloaded` is laid
+//! between the fixture's levels and the content on every leg.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -27,6 +29,9 @@ const MATCHES: &str = "fixtures/matches";
 /// content.
 const LIVE_MATCHES: &str = "fixtures/matches-live";
 const LIVE_LEVELS: &str = "fixtures/live/levels";
+/// Issue #97: OLR's own packs, which `olr-cli match` lays over the content
+/// (`olr_content::bundled_roots`) and `olr-detcheck` is given explicitly.
+const RELOADED: &str = "content/reloaded";
 /// A composed level (plan 14a): every leg also prints its bake's digest
 /// (`olr-detcheck --bake`), so the image pipeline and the bake are
 /// compared across platforms with the simulation.
@@ -268,10 +273,11 @@ fn goldens(all: bool) -> Result<Vec<Recorded>, String> {
     Ok(out)
 }
 
-/// `olr-detcheck`'s `--content` arguments, the content directory (`at`
-/// its path on the leg) under the live fixture's levels (`live`).
-fn contents(live: &str, content: &str) -> [String; 4] {
-    ["--content".into(), live.into(), "--content".into(), content.into()]
+/// `olr-detcheck`'s `--content` arguments, each a path on the leg: the
+/// content directory under OLR's own packs (`reloaded`, issue #97) under
+/// the live fixture's levels (`live`).
+fn contents(live: &str, reloaded: &str, content: &str) -> [String; 6] {
+    ["--content".into(), live.into(), "--content".into(), reloaded.into(), "--content".into(), content.into()]
 }
 
 /// Records each golden's replay natively into `target/determinism/<stem>.olrp`.
@@ -296,7 +302,7 @@ fn record(goldens: &[Recorded]) -> Result<Vec<PathBuf>, String> {
 
 fn native_stream(replays: &[PathBuf]) -> Result<String, String> {
     let mut c = Command::new(root().join("target/release/olr-detcheck"));
-    c.current_dir(root()).args(contents(LIVE_LEVELS, "content/packs")).args(["--bake", BAKE]).args(replays);
+    c.current_dir(root()).args(contents(LIVE_LEVELS, RELOADED, "content/packs")).args(["--bake", BAKE]).args(replays);
     ok_output(c, "olr-detcheck (native)")
 }
 
@@ -339,7 +345,7 @@ fn wasm_leg(native: &str, replays: &[PathBuf]) -> Result<(), String> {
         .arg("tools/wasi-run.mjs")
         .arg(format!("target/{WASM_TARGET}/release/olr-detcheck.wasm"))
         .arg(root())
-        .args(contents(&format!("/{LIVE_LEVELS}"), "/content/packs"))
+        .args(contents(&format!("/{LIVE_LEVELS}"), &format!("/{RELOADED}"), "/content/packs"))
         .args(["--bake".to_string(), format!("/{BAKE}")])
         .args(replays.iter().map(|r| format!("/{}", r.display())));
     let wasm = ok_output(c, "olr-detcheck under Node.js WASI")?;
@@ -365,7 +371,7 @@ fn arm64_leg(native: &str, replays: &[PathBuf]) -> Result<(), String> {
     c.current_dir(root())
         .args(["-L", ARM64_SYSROOT])
         .arg(format!("target/{ARM64_TARGET}/release/olr-detcheck"))
-        .args(contents(LIVE_LEVELS, "content/packs"))
+        .args(contents(LIVE_LEVELS, RELOADED, "content/packs"))
         .args(["--bake", BAKE])
         .args(replays);
     let arm = ok_output(c, "olr-detcheck under qemu-aarch64")?;
@@ -389,7 +395,16 @@ fn windows_leg(native: &str, replays: &[PathBuf]) -> Result<(), String> {
         _ => {}
     }
     winbuild::copy_dir(&root().join(LIVE_LEVELS), &live)?;
-    let mut args: Vec<String> = contents("live-levels", "content").into();
+    // Issue #97: OLR's own packs, staged beside it.
+    let reloaded = stage.dir.join("reloaded");
+    match std::fs::remove_dir_all(&reloaded) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            return Err(format!("{}: {e}", reloaded.display()));
+        }
+        _ => {}
+    }
+    winbuild::copy_dir(&root().join(RELOADED), &reloaded)?;
+    let mut args: Vec<String> = contents("live-levels", "reloaded", "content").into();
     args.extend(["--bake".into(), "bake/composed-level".into()]);
     args.extend(
         files.iter().map(|f| format!("replays/{}", f.file_name().unwrap_or_default().to_string_lossy())),
@@ -505,6 +520,11 @@ mod tests {
                  --seed 2 --ticks 3000 --kill-limit 0 --time-limit 6 --bonus-frequency 5",
             ),
             (
+                "classic-factory-live-4dm",
+                "--mod olx-classic --level olr-level-liero-factory-reloaded --bots 4 --difficulty mixed \
+                 --personality dm --seed 1 --ticks 3000 --kill-limit 15 --time-limit 6 --bonus-frequency 5",
+            ),
+            (
                 "classic-live-test-4chaos",
                 "--mod olx-classic --level olr-level-live-test --bots 4 --difficulty mixed --personality chaos \
                  --seed 1 --ticks 3000 --kill-limit 15 --time-limit 6 --bonus-frequency 5",
@@ -530,11 +550,21 @@ mod tests {
     fn check_replays_the_live_goldens_layered() {
         let found = goldens(false).unwrap();
         let stems: Vec<&str> = found.iter().map(|g| g.stem.as_str()).collect();
-        assert_eq!(stems, [CHECK_GOLDEN, "classic-live-test-4chaos", "classic-live-test-4dm"]);
+        assert_eq!(
+            stems,
+            [CHECK_GOLDEN, "classic-factory-live-4dm", "classic-live-test-4chaos", "classic-live-test-4dm"]
+        );
         assert!(found.iter().any(|g| g.live));
         assert_eq!(
-            contents("/fixtures/live/levels", "/content/packs"),
-            ["--content", "/fixtures/live/levels", "--content", "/content/packs"]
+            contents("/fixtures/live/levels", "/content/reloaded", "/content/packs"),
+            [
+                "--content",
+                "/fixtures/live/levels",
+                "--content",
+                "/content/reloaded",
+                "--content",
+                "/content/packs"
+            ]
         );
     }
 
