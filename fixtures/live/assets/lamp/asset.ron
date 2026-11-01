@@ -35,6 +35,7 @@
     states: [
         (
             name: "On",
+            enter_sound: "tick.wav",
         ),
         (
             name: "Off",
@@ -66,5 +67,6 @@
     ],
     sounds: [
         "click.wav",
+        "tick.wav",
     ],
 )

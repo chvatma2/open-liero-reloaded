@@ -4,13 +4,16 @@
 # `asset save`, then given states, values, health, a sound and a script)
 # and a lit 320 × 200 level placing Live copies of them:
 #   lamp       states On, Off and Dim (its bulb's glow), a background post,
-#              a click on entering Off, a default script, its bulb's light
-#              intensity exposed as lamp_light (issue #93);
+#              a click on entering Off and a tick on entering On (issue
+#              #92), a default script, its bulb's light intensity exposed
+#              as lamp_light (issue #93);
 #   console-a, console-b  one asset, states Normal and Alarm, its screen's
 #              glow colour exposed as screen_colour: they start in
 #              different colours, console-b stretched to twice its width;
 #   press      a rock head whose height is exposed as head_y, on a rock frame
 #              a worm fits under (issue #90: it pushes and crushes worms);
+#              states Still (its start) and Moving, which loops a hum
+#              (issue #92); shown while press_on;
 #   crate      destructible (40 points, Wrecked at 0), of rock;
 #   gate       a mixed layer (background with a rock bar) exposed as gate_x,
 #              with its own script;
@@ -25,10 +28,12 @@
 # Its scripts (issue #89): the lamp's default stutters it; the consoles
 # cycle Normal and Alarm every 300 ticks, console-a by the console's
 # default script, console-b by its own with the default switched off; the
-# press moves its head between its min and max every 2 s; the level script
+# press moves its head between its min and max every 2 s, Moving while
+# it moves and Still at rest (issue #92: it hums while moving); the level script
 # sets the consoles to Alarm while the press moves; the lift goes left and
 # right, resting 1 s at each end or where something stops it; the door
 # shuts and opens every 2.5 s.
+# The hum and the tick are made by make-sounds.py (issue #92).
 # Run from the repository root; OLR picks the binary.
 set -euo pipefail
 OLR=${OLR:-target/debug/olr-cli}
@@ -109,6 +114,7 @@ fmt = struct.pack('<HHIIHH', 1, 1, rate, rate, 1, 8)
 body = b'WAVE' + b'fmt ' + struct.pack('<I', len(fmt)) + fmt + b'data' + struct.pack('<I', n) + data
 open(sys.argv[1], 'wb').write(b'RIFF' + struct.pack('<I', len(body)) + body)
 EOF
+python3 "$F/make-sounds.py" "$W"
 cat > "$W/lamp.rhai" <<'EOF'
 // Stutters: now and then Dim or Off for a few ticks.
 fn start() { this.after(1 + this.rand(50), "stutter"); }
@@ -136,13 +142,15 @@ fn next() {
 }
 EOF
 cat > "$W/press.rhai" <<'EOF'
-// The head goes to its other end every 2 s: 0.6 s moving, then a rest.
-fn start() { this.move_to("head_y", this.max("head_y"), 10); }
-fn arrived(name) { this.after(138, "back"); }
+// The head goes to its other end every 2 s: 0.6 s moving (Moving: it
+// hums), then a rest (Still).
+fn start() { this.head_to(this.max("head_y")); }
+fn arrived(name) { this.set_state("Still"); this.after(138, "back"); }
 fn back() {
   let to = if this.get("head_y") == this.max("head_y") { this.min("head_y") } else { this.max("head_y") };
-  this.move_to("head_y", to, 10);
+  this.head_to(to);
 }
+fn head_to(to) { this.set_state("Moving"); this.move_to("head_y", to, 10); }
 EOF
 cat > "$W/level.rhai" <<'EOF'
 // The consoles in Alarm while the press moves.
@@ -182,14 +190,22 @@ S value "$A/lamp" Dim bulb.glow 30
 "$OLR" asset expose "$A/lamp" lamp_light bulb.light
 "$OLR" asset sound add "$A/lamp" "$W/click.wav"
 S set "$A/lamp" Off --enter-sound click.wav
+"$OLR" asset sound add "$A/lamp" "$W/tick.wav"
+S set "$A/lamp" On --enter-sound tick.wav
 "$OLR" asset script "$A/lamp" --set "$W/lamp.rhai"
 # The console: Normal and Alarm, its screen's colour exposed.
 "$OLR" asset expose "$A/console" screen_colour screen.glow-colour
 S add "$A/console" Alarm
 S value "$A/console" Alarm screen.glow-colour '#ff2020'
 "$OLR" asset script "$A/console" --set "$W/console.rhai"
-# The press: its head's height.
+# The press: its head's height; Still and Moving, humming while it moves;
+# shown while press_on.
 "$OLR" asset expose "$A/press" head_y head.y --default 0 --min 0 --max 6
+"$OLR" asset expose "$A/press" press_on visible --default true
+"$OLR" asset sound add "$A/press" "$W/hum.wav"
+S set "$A/press" Normal --name Still
+S add "$A/press" Moving
+S set "$A/press" Moving --loop-sound hum.wav
 # The lift: its place; the door: its bar shown.
 "$OLR" asset expose "$A/lift" lift_x x --default 0 --min -30 --max 30
 "$OLR" asset script "$A/lift" --set "$W/lift.rhai"

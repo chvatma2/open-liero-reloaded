@@ -20,6 +20,15 @@
             ),
         ),
     ],
+    states: [
+        (
+            name: "Still",
+        ),
+        (
+            name: "Moving",
+            loop_sound: "hum.wav",
+        ),
+    ],
     exposed: [
         (
             name: "head_y",
@@ -28,5 +37,13 @@
             min: 0,
             max: 6,
         ),
+        (
+            name: "press_on",
+            property: Visible,
+            default: Bool(true),
+        ),
+    ],
+    sounds: [
+        "hum.wav",
     ],
 )

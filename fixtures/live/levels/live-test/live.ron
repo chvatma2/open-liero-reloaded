@@ -50,6 +50,7 @@
                             glow_strength: 80,
                         ),
                     ],
+                    enter_sound: 1,
                 ),
                 (
                     name: "Off",
@@ -105,6 +106,7 @@
             ],
             sounds: [
                 ("click.wav", 0),
+                ("tick.wav", 1),
             ],
         ),
         (
@@ -275,6 +277,13 @@
                     max: 6,
                     default: 0,
                 ),
+                (
+                    name: "press_on",
+                    drives: Visible,
+                    min: 0,
+                    max: 1,
+                    default: 1,
+                ),
             ],
             pictures: [
                 (
@@ -288,7 +297,7 @@
             ],
             states: [
                 (
-                    name: "Normal",
+                    name: "Still",
                     parts: [
                         (
                             kind: Rock,
@@ -302,12 +311,31 @@
                         ),
                     ],
                 ),
+                (
+                    name: "Moving",
+                    parts: [
+                        (
+                            kind: Rock,
+                            picture: 0,
+                        ),
+                        (
+                            layer: 1,
+                            kind: Rock,
+                            picture: 1,
+                            at: (2, 2),
+                        ),
+                    ],
+                    loop_sound: 2,
+                ),
             ],
             start_values: [
                 (0, 3),
             ],
             scripts: [
                 3,
+            ],
+            sounds: [
+                ("hum.wav", 2),
             ],
         ),
         (
@@ -597,5 +625,7 @@
     level_script: 7,
     sounds: [
         "live/0.wav",
+        "live/1.wav",
+        "live/2.wav",
     ],
 )
