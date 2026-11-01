@@ -182,4 +182,5 @@ def main():
     make_level(cli)
 
 
-main()
+if __name__ == "__main__":
+    main()
