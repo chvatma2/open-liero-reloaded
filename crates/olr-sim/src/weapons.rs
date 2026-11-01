@@ -234,6 +234,7 @@ mod tests {
             worm_shoot(w, &mut ctx);
             let mut beam = BeamCtx {
                 live: None,
+                hits: None,
                 terrain: &mut terrain,
                 holes: &[],
                 draws: &mut draws,

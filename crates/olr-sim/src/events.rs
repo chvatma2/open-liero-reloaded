@@ -233,6 +233,14 @@ pub enum EventKind {
     /// A cosmetic event: it counts against the sounds' and cosmetics'
     /// quota and changes nothing in the world. No OLX counterpart.
     LiveSound { copy: u16, sound: u16 },
+    /// Live copy `copy` lost `amount` health (negative heals) to an
+    /// explosion (issue #94): the explosion's damage truncated toward
+    /// zero (saturated into `i32`'s range here, so an event keeps its
+    /// 36 bytes; health holds at most `u32` points), with no owner and no
+    /// credit; `wrecked` when it reached 0, a [`EventKind::LiveState`]
+    /// into its `at_zero` state right after. Emitted after the
+    /// explosion's worm damage. No OLX counterpart.
+    LiveDamaged { copy: u16, amount: i32, wrecked: bool },
 }
 
 impl EventKind {

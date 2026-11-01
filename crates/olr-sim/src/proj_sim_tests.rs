@@ -111,6 +111,7 @@ impl Bench {
             physics_dt: TimeDiff(11),
             bonuses: &mut self.bonuses,
             referee: &mut self.referee,
+            hits: None,
         };
         f(&mut self.pool, &mut ctx)
     }

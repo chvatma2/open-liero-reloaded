@@ -157,6 +157,9 @@ pub(crate) struct ShotCtx<'a> {
     pub bonuses: &'a mut [Bonus; MAX_BONUSES],
     /// The game mode, which credits kills.
     pub referee: &'a mut crate::referee::Referee,
+    /// The destructible live copies' health (issue #94): a bonus a beam
+    /// blows up explodes on them.
+    pub hits: Option<crate::live_damage::LiveHits<'a>>,
 }
 
 /// `CClient::ProcessShot` (`CClient_Game.cpp:852-921`). The shot of a worm
@@ -185,6 +188,7 @@ pub(crate) fn process_shot(shot: &mut Shot, spawn: AbsTime, worms: &mut [Worm], 
             holes: ctx.holes,
             draws: ctx.draws,
             parts: ctx.parts,
+            hits: ctx.hits.as_mut().map(crate::live_damage::LiveHits::reborrow),
         };
         process_shot_beam(shot, wpn, worms, &mut beam, ctx.settings, ctx.now, ctx.bonuses, ctx.referee);
         return;

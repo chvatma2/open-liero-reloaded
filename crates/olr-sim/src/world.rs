@@ -597,11 +597,13 @@ impl World {
         let decoded = encode_decode(list, self.sim_mod.weapons().len() as i32 - 1);
         list.clear();
         let current = self.time + TimeDiff(CLOCK_OFFSET_MS);
+        let (live, hits) = self.live.as_mut().map_or((None, None), LiveWorld::physics_parts);
         let mut ctx = ShotCtx {
             sim_mod: &self.sim_mod,
             settings: &self.settings,
             pool: &mut self.projectiles,
-            live: self.live.as_ref().and_then(LiveWorld::solid_parts),
+            live,
+            hits,
             terrain: &mut self.terrain,
             holes: &self.holes,
             draws: &mut self.draws,
@@ -617,6 +619,10 @@ impl World {
             if self.last_shots.len() < MAX_SHOOTINGS {
                 self.last_shots.push(shot);
             }
+        }
+        // Issue #94: a copy a bonus blown up by a beam wrecked.
+        if let Some(l) = &mut self.live {
+            l.refresh_if_stale();
         }
     }
 }

@@ -70,6 +70,9 @@ pub(crate) struct ProjCtx<'a> {
     pub bonuses: &'a mut [Bonus; MAX_BONUSES],
     /// The game mode, which credits kills.
     pub referee: &'a mut Referee,
+    /// The destructible live copies' health (issue #94), which explosions
+    /// damage; none without them.
+    pub hits: Option<crate::live_damage::LiveHits<'a>>,
 }
 
 impl ProjCtx<'_> {

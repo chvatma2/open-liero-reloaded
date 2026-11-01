@@ -33,6 +33,7 @@ use olr_math::AbsTime;
 use crate::buf::Buf;
 use crate::checksum::Fnv;
 use crate::events::{EventKind, TickEvents};
+use crate::live_damage::LiveHits;
 use crate::script::{Director, ScriptWire, ScriptWorld};
 use crate::solid::{SolidIndex, SolidPart, SolidParts};
 use crate::world::MAX_WORMS;
@@ -108,42 +109,72 @@ pub struct LiveState {
 }
 
 /// A picture's solid pixels: a bit per world pixel, row-major, `size.0 ×
-/// size.1` bits in `u64` words (none for a background picture).
+/// size.1` bits in `u64` words (none for a background picture); and
+/// (issue #94) the pixels it covers, rock or background, in the same
+/// layout: where an explosion can reach a destructible copy.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LiveSolid {
     pub size: (u32, u32),
     pub bits: Option<Vec<u64>>,
+    /// The covered pixels (issue #94): [`LiveSolid::new`] makes them the
+    /// rock pixels of a rock picture and the whole rectangle of a
+    /// background one; [`LiveSolid::with_cover`] sets them from the art.
+    pub cover: Vec<u64>,
+}
+
+/// `size`'s pixels where `f(x, y)`, a bit each, row-major.
+fn mask(size: (u32, u32), f: impl Fn(u32, u32) -> bool) -> Vec<u64> {
+    let n = size.0 as usize * size.1 as usize;
+    let mut bits = alloc::vec![0u64; n.div_ceil(64)];
+    for y in 0..size.1 {
+        for x in 0..size.0 {
+            if f(x, y) {
+                let i = y as usize * size.0 as usize + x as usize;
+                bits[i / 64] |= 1 << (i % 64);
+            }
+        }
+    }
+    bits
+}
+
+/// Whether `bits` (a [`mask`] of `size`) holds pixel `(x, y)`.
+fn has(bits: &[u64], size: (u32, u32), x: u32, y: u32) -> bool {
+    if x >= size.0 || y >= size.1 {
+        return false;
+    }
+    let i = y as usize * size.0 as usize + x as usize;
+    bits.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1)
 }
 
 impl LiveSolid {
     /// A picture of `size` solid where `solid(x, y)`; `rock` false gives
-    /// none.
+    /// none. It covers its solid pixels, or (a background picture) its
+    /// whole rectangle, until [`LiveSolid::with_cover`].
     pub fn new(size: (u32, u32), rock: bool, solid: impl Fn(u32, u32) -> bool) -> LiveSolid {
         if !rock {
-            return LiveSolid { size, bits: None };
+            return LiveSolid { size, bits: None, cover: mask(size, |_, _| true) };
         }
-        let n = size.0 as usize * size.1 as usize;
-        let mut bits = alloc::vec![0u64; n.div_ceil(64)];
-        for y in 0..size.1 {
-            for x in 0..size.0 {
-                if solid(x, y) {
-                    let i = y as usize * size.0 as usize + x as usize;
-                    bits[i / 64] |= 1 << (i % 64);
-                }
-            }
-        }
-        LiveSolid { size, bits: Some(bits) }
+        let bits = mask(size, solid);
+        LiveSolid { size, cover: bits.clone(), bits: Some(bits) }
+    }
+
+    /// The picture covering the pixels where `cover(x, y)` and its solid
+    /// ones (issue #94).
+    pub fn with_cover(self, cover: impl Fn(u32, u32) -> bool) -> LiveSolid {
+        let cover = mask(self.size, |x, y| cover(x, y) || self.solid(x, y));
+        LiveSolid { cover, ..self }
     }
 
     /// Whether world pixel `(x, y)` of the picture is solid (outside it,
     /// not).
     pub fn solid(&self, x: u32, y: u32) -> bool {
-        let Some(bits) = &self.bits else { return false };
-        if x >= self.size.0 || y >= self.size.1 {
-            return false;
-        }
-        let i = y as usize * self.size.0 as usize + x as usize;
-        bits.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1)
+        self.bits.as_ref().is_some_and(|bits| has(bits, self.size, x, y))
+    }
+
+    /// Whether the picture covers world pixel `(x, y)` (issue #94;
+    /// outside it, not).
+    pub fn covers(&self, x: u32, y: u32) -> bool {
+        has(&self.cover, self.size, x, y)
     }
 }
 
@@ -259,6 +290,9 @@ impl LiveCopy {
     }
 }
 
+/// A rectangle in world pixels, `(x0, y0, x1, y1)`, ends exclusive.
+pub type LiveBounds = (i32, i32, i32, i32);
+
 /// A level's live copies: setup data, shared by every world of a match.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LiveLevel {
@@ -275,6 +309,9 @@ pub struct LiveLevel {
     ids: Vec<(String, u16)>,
     /// Each part that can move or appear: where it can be (issue #91).
     reach: Vec<LiveReach>,
+    /// Each destructible copy (with health and parts) and where its
+    /// covered pixels can ever be (issue #94), in copy order.
+    destructible: Vec<(u16, LiveBounds)>,
 }
 
 /// Where the live rock parts of one copy's layer (or of its unlayered
@@ -318,6 +355,75 @@ fn rock_of<'a>(
         .map(|p| (p.at, p.picture))
 }
 
+/// Which mirrorings `c`'s `Facing` allows: unmirrored, mirrored.
+fn facings(c: &LiveCopy) -> (bool, bool) {
+    range_of(c, LiveTarget::Facing).map_or((true, false), |(lo, hi)| (lo <= 0 && 0 <= hi, lo != 0 || hi != 0))
+}
+
+/// The rectangle around `a` and `b` (either may be none).
+fn union(a: Option<(i64, i64, i64, i64)>, b: Option<(i64, i64, i64, i64)>) -> Option<(i64, i64, i64, i64)> {
+    match (a, b) {
+        (Some(u), Some(r)) => Some((u.0.min(r.0), u.1.min(r.1), u.2.max(r.2), u.3.max(r.3))),
+        (u, r) => u.or(r),
+    }
+}
+
+/// `r` in `i32`s, saturating.
+fn narrow(r: (i64, i64, i64, i64)) -> (i32, i32, i32, i32) {
+    let n = |v: i64| v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+    (n(r.0), n(r.1), n(r.2), n(r.3))
+}
+
+/// Every place the part of `c` at `at` (in the copy) showing `picture`
+/// on `layer` can take, `(x0, y0, x1, y1)` world pixels (ends exclusive):
+/// the copy's `X`/`Y` limits, the layer's `OffsetX`/`OffsetY` limits and
+/// the mirrorings `facing` allows (`part_place`'s, a pixel wider for its
+/// two roundings down). None for a picture the copy lacks.
+fn part_span(
+    c: &LiveCopy,
+    facing: (bool, bool),
+    at: (i32, i32),
+    picture: u16,
+    layer: Option<u16>,
+) -> Option<(i64, i64, i64, i64)> {
+    let pic = c.pictures.get(usize::from(picture))?;
+    let zero = (0, 0);
+    let (rx, ry) = (range_of(c, LiveTarget::X).unwrap_or(zero), range_of(c, LiveTarget::Y).unwrap_or(zero));
+    let off = |t: fn(u16) -> LiveTarget| layer.and_then(|l| range_of(c, t(l))).unwrap_or(zero);
+    let (ox, oy) = (off(LiveTarget::OffsetX), off(LiveTarget::OffsetY));
+    let (cx, cy, cw) = (i64::from(c.at.0), i64::from(c.at.1), i64::from(c.size.0));
+    let (px, py) = (i64::from(at.0), i64::from(at.1));
+    let (pw, ph) = (i64::from(pic.size.0), i64::from(pic.size.1));
+    let sum = |v: &[i64]| v.iter().fold(0i64, |a, &b| a.saturating_add(b));
+    let y0 = sum(&[cy, ry.0, py, oy.0]);
+    let y1 = sum(&[cy, ry.1, py, oy.1, ph]);
+    let mut r = None;
+    if facing.0 {
+        r = union(r, Some((sum(&[cx, rx.0, px, ox.0]), y0, sum(&[cx, rx.1, px, ox.1, pw]), y1)));
+    }
+    if facing.1 {
+        let x0 = sum(&[cx, rx.0, cw, px.saturating_neg(), ox.1.saturating_neg(), pw.saturating_neg(), -1]);
+        let x1 = sum(&[cx, rx.1, cw, px.saturating_neg(), ox.0.saturating_neg(), 1]);
+        r = union(r, Some((x0, y0, x1, y1)));
+    }
+    r
+}
+
+/// Where a destructible copy's covered pixels can ever be (issue #94):
+/// around every place each part of each state can take ([`part_span`]),
+/// world pixels, ends exclusive. None for a copy without health or parts.
+fn cover_bounds(c: &LiveCopy) -> Option<(i32, i32, i32, i32)> {
+    c.health?;
+    let facing = facings(c);
+    let mut r = None;
+    for s in &c.states {
+        for p in &s.parts {
+            r = union(r, part_span(c, facing, p.at, p.picture, p.layer));
+        }
+    }
+    r.map(narrow)
+}
+
 /// The reaches of `copies` ([`LiveReach`]), in copy order, the unlayered
 /// parts first, then by layer.
 fn reaches(copies: &[LiveCopy]) -> Vec<LiveReach> {
@@ -333,12 +439,7 @@ fn reaches(copies: &[LiveCopy]) -> Vec<LiveReach> {
         layers.sort_unstable();
         layers.dedup();
         let varies = |t| range_of(c, t).is_some_and(|(lo, hi)| lo < hi);
-        let zero = (0, 0);
-        let (rx, ry) =
-            (range_of(c, LiveTarget::X).unwrap_or(zero), range_of(c, LiveTarget::Y).unwrap_or(zero));
-        // Which mirrorings `Facing` allows: unmirrored, mirrored.
-        let facing = range_of(c, LiveTarget::Facing)
-            .map_or((true, false), |(lo, hi)| (lo <= 0 && 0 <= hi, lo != 0 || hi != 0));
+        let facing = facings(c);
         for layer in layers {
             let parts = |s| rock_of(c, s, layer);
             let same = c.states.windows(2).all(|w| parts(&w[0]).eq(parts(&w[1])));
@@ -355,37 +456,14 @@ fn reaches(copies: &[LiveCopy]) -> Vec<LiveReach> {
             if !moves {
                 continue;
             }
-            let off = |t: fn(u16) -> LiveTarget| layer.and_then(|l| range_of(c, t(l))).unwrap_or(zero);
-            let (ox, oy) = (off(LiveTarget::OffsetX), off(LiveTarget::OffsetY));
-            let (cx, cy, cw) = (i64::from(c.at.0), i64::from(c.at.1), i64::from(c.size.0));
             let mut r: Option<(i64, i64, i64, i64)> = None;
             for s in &c.states {
                 for (at, picture) in parts(s) {
-                    let Some(pic) = c.pictures.get(usize::from(picture)) else { continue };
-                    let (px, py) = (i64::from(at.0), i64::from(at.1));
-                    let (pw, ph) = (i64::from(pic.size.0), i64::from(pic.size.1));
-                    let y0 = cy + ry.0 + py + oy.0;
-                    let y1 = cy + ry.1 + py + oy.1 + ph;
-                    let mut xs = [None, None];
-                    if facing.0 {
-                        xs[0] = Some((cx + rx.0 + px + ox.0, cx + rx.1 + px + ox.1 + pw));
-                    }
-                    if facing.1 {
-                        // `part_place`'s mirroring, a pixel wider for its
-                        // two roundings down.
-                        xs[1] = Some((cx + rx.0 + cw - px - ox.1 - pw - 1, cx + rx.1 + cw - px - ox.0 + 1));
-                    }
-                    for (x0, x1) in xs.into_iter().flatten() {
-                        r = Some(match r {
-                            None => (x0, y0, x1, y1),
-                            Some(u) => (u.0.min(x0), u.1.min(y0), u.2.max(x1), u.3.max(y1)),
-                        });
-                    }
+                    r = union(r, part_span(c, facing, at, picture, layer));
                 }
             }
-            let narrow = |v: i64| v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
-            if let Some((x0, y0, x1, y1)) = r {
-                out.push(LiveReach { copy, layer, rect: (narrow(x0), narrow(y0), narrow(x1), narrow(y1)) });
+            if let Some(rect) = r {
+                out.push(LiveReach { copy, layer, rect: narrow(rect) });
             }
         }
     }
@@ -402,7 +480,22 @@ impl LiveLevel {
     ) -> LiveLevel {
         let ids = table(copies.iter().map(|c| Some(c.id.as_str())));
         let reach = reaches(&copies);
-        LiveLevel { copies, scripts, level_script, sounds, ids, reach }
+        let destructible = copies
+            .iter()
+            .enumerate()
+            .map_while(|(i, c)| Some((u16::try_from(i).ok()?, c)))
+            .filter_map(|(i, c)| Some((i, cover_bounds(c)?)))
+            .collect();
+        LiveLevel { copies, scripts, level_script, sounds, ids, reach, destructible }
+    }
+
+    /// Each destructible copy (a [`LiveCopy::health`] and parts) with the
+    /// rectangle, `(x0, y0, x1, y1)` world pixels (ends exclusive), its
+    /// covered pixels can ever be in (issue #94: an explosion farther
+    /// than 5 px from it cannot reach the copy), in copy order. Computed
+    /// once, here.
+    pub fn destructible(&self) -> &[(u16, LiveBounds)] {
+        &self.destructible
     }
 
     /// Where each rock part that can move or appear can be (issue #91),
@@ -557,7 +650,7 @@ fn crossing(v: i64, off: i64, dir: i64) -> Option<i64> {
 /// `OffsetX`/`OffsetY`, rounded down, then (`flip`, the copy's `Facing`)
 /// mirrored within the copy's rectangle, as presentation draws it
 /// (`olr_content::live_frame`).
-fn part_place(
+pub(crate) fn part_place(
     c: &LiveCopy,
     values: &[i64],
     part_at: (i32, i32),
@@ -605,7 +698,7 @@ impl LiveMotion {
 
 /// `v` within `min..=max`, never a panic (`i64::clamp` panics when `min >
 /// max`: a broken setup keeps `max`).
-fn within(v: i64, min: i64, max: i64) -> i64 {
+pub(crate) fn within(v: i64, min: i64, max: i64) -> i64 {
     v.max(min).min(max)
 }
 
@@ -663,6 +756,50 @@ impl fmt::Display for LiveError {
     }
 }
 
+/// Copy `copy`'s values' range among `len` values laid out by `offsets`
+/// (one more than copies; a bad entry gives a short or empty range).
+pub(crate) fn range_in(offsets: &[u32], len: usize, copy: u16) -> core::ops::Range<usize> {
+    let i = usize::from(copy);
+    let start = offsets.get(i).map_or(0, |&o| o as usize);
+    let end = offsets.get(i + 1).map_or(start, |&o| o as usize);
+    start..end.max(start).min(len)
+}
+
+/// [`LiveWorld::put`] on the world's buffers: value `prop` of `copy` set
+/// to `v`, clamped into its limits.
+pub(crate) fn put_in(level: &LiveLevel, offsets: &[u32], values: &mut [i64], copy: u16, prop: u16, v: i64) {
+    let Some(c) = level.copies.get(usize::from(copy)) else { return };
+    let Some(p) = c.props.get(usize::from(prop)) else { return };
+    let v = c.clamped(p, v);
+    let r = range_in(offsets, values.len(), copy);
+    if let Some(slot) = values[r].get_mut(usize::from(prop)) {
+        *slot = v;
+    }
+}
+
+/// [`LiveWorld::look`] on the world's buffers: copy `copy` takes `state`
+/// and every value its complete look names; whether it has that state.
+pub(crate) fn look_in(
+    level: &LiveLevel,
+    offsets: &[u32],
+    states: &mut [u16],
+    values: &mut [i64],
+    copy: u16,
+    state: u16,
+) -> bool {
+    let Some(c) = level.copies.get(usize::from(copy)) else { return false };
+    let Some(s) = c.states.get(usize::from(state)) else { return false };
+    if let Some(slot) = states.get_mut(usize::from(copy)) {
+        *slot = state;
+    }
+    for &(prop, v) in &s.values {
+        if let Some(p) = c.props.get(usize::from(prop)) {
+            put_in(level, offsets, values, copy, prop, p.target.scale(v));
+        }
+    }
+    true
+}
+
 /// The live copies' part of a world (issue #86): per copy its state and
 /// its values, one `i64` per [`LiveCopy::props`] entry, flat in one
 /// buffer, so nothing a tick does allocates, and each value's motion
@@ -694,6 +831,11 @@ pub(crate) struct LiveWorld {
     /// Issue #90: the shown rock parts' index, derived from the rest (in
     /// no checksum or transfer; [`LiveWorld::refresh_solids`]).
     pub(crate) solids: SolidIndex,
+    /// Issue #94: an explosion wrecked a copy while the index was borrowed
+    /// ([`LiveWorld::physics_parts`]): it is rebuilt by
+    /// [`LiveWorld::refresh_if_stale`] right after. Always false between
+    /// ticks; in no checksum or transfer.
+    stale: bool,
 }
 
 impl LiveWorld {
@@ -723,7 +865,29 @@ impl LiveWorld {
         crush.resize(MAX_WORMS, 0);
         let rock = level.copies.iter().flat_map(|c| &c.pictures).any(|p| p.bits.is_some());
         let solids = SolidIndex::new(map, rock);
-        LiveWorld { level, offsets, states, values, motions, start, script, crush, solids }
+        LiveWorld { level, offsets, states, values, motions, start, script, crush, solids, stale: false }
+    }
+
+    /// The shown rock parts to read ([`LiveWorld::solid_parts`]) and, in a
+    /// level with destructible copies, their health to damage (issue #94,
+    /// [`LiveHits`]), borrowed apart for a physics sub-step or the shots'
+    /// delivery. A copy an explosion wrecks changes its parts only in the
+    /// index's next [`LiveWorld::refresh_if_stale`].
+    pub(crate) fn physics_parts(&mut self) -> (Option<SolidParts<'_>>, Option<LiveHits<'_>>) {
+        let LiveWorld { level, offsets, states, values, solids, stale, .. } = self;
+        let level: &LiveLevel = level;
+        let parts = (!solids.is_empty()).then_some(SolidParts { index: solids, level });
+        let hits =
+            (!level.destructible().is_empty()).then_some(LiveHits { level, offsets, states, values, stale });
+        (parts, hits)
+    }
+
+    /// Rebuilds the rock parts' index if an explosion wrecked a copy since
+    /// [`LiveWorld::physics_parts`] (issue #94).
+    pub(crate) fn refresh_if_stale(&mut self) {
+        if core::mem::take(&mut self.stale) {
+            self.refresh_solids();
+        }
     }
 
     /// Every copy's state, every value and its motion, the values'
@@ -807,10 +971,7 @@ impl LiveWorld {
     }
 
     fn range(&self, copy: u16) -> core::ops::Range<usize> {
-        let i = usize::from(copy);
-        let start = self.offsets.get(i).map_or(0, |&o| o as usize);
-        let end = self.offsets.get(i + 1).map_or(start, |&o| o as usize);
-        start..end.max(start).min(self.values.len())
+        range_in(&self.offsets, self.values.len(), copy)
     }
 
     /// Copy `copy`'s values.
@@ -827,13 +988,7 @@ impl LiveWorld {
     /// Sets value `prop` of `copy` to `v` (the world's units), clamped
     /// into its limits. An index outside the setup changes nothing.
     fn put(&mut self, copy: u16, prop: u16, v: i64) {
-        let Some(c) = self.level.copies.get(usize::from(copy)) else { return };
-        let Some(p) = c.props.get(usize::from(prop)) else { return };
-        let v = c.clamped(p, v);
-        let r = self.range(copy);
-        if let Some(slot) = self.values[r].get_mut(usize::from(prop)) {
-            *slot = v;
-        }
+        put_in(&self.level, &self.offsets, &mut self.values, copy, prop, v);
     }
 
     /// Copy `copy` enters `state`: every value the state's complete look
@@ -847,21 +1002,7 @@ impl LiveWorld {
     /// Copy `copy` takes `state` and every value its complete look names;
     /// whether it has that state.
     fn look(&mut self, copy: u16, state: u16) -> bool {
-        let level = self.level.clone();
-        let Some(s) = level.copies.get(usize::from(copy)).and_then(|c| c.states.get(usize::from(state)))
-        else {
-            return false;
-        };
-        if let Some(slot) = self.states.get_mut(usize::from(copy)) {
-            *slot = state;
-        }
-        let c = &level.copies[usize::from(copy)];
-        for &(prop, v) in &s.values {
-            if let Some(p) = c.props.get(usize::from(prop)) {
-                self.put(copy, prop, p.target.scale(v));
-            }
-        }
-        true
+        look_in(&self.level, &self.offsets, &mut self.states, &mut self.values, copy, state)
     }
 
     /// [`crate::World::set_live_state`].
@@ -1078,8 +1219,18 @@ impl LiveWorld {
     /// world nobody was crushed in hashes as before), the crush counts
     /// (issue #90).
     pub(crate) fn hash(&self, h: &mut Fnv) {
-        let LiveWorld { level: _, offsets: _, states, values, motions, start: _, script, crush, solids: _ } =
-            self;
+        let LiveWorld {
+            level: _,
+            offsets: _,
+            states,
+            values,
+            motions,
+            start: _,
+            script,
+            crush,
+            solids: _,
+            stale: _,
+        } = self;
         h.usize(states.len());
         for &s in states.iter() {
             h.bytes(&s.to_le_bytes());
@@ -1105,8 +1256,18 @@ impl LiveWorld {
 
     /// The live part of [`crate::World::state`].
     pub(crate) fn wire(&self) -> LiveWire {
-        let LiveWorld { level: _, offsets: _, states, values, motions, start: _, script, crush, solids: _ } =
-            self;
+        let LiveWorld {
+            level: _,
+            offsets: _,
+            states,
+            values,
+            motions,
+            start: _,
+            script,
+            crush,
+            solids: _,
+            stale: _,
+        } = self;
         LiveWire {
             states: states.to_vec(),
             values: values.to_vec(),
@@ -1296,6 +1457,12 @@ fn whole(v: i64) -> i32 {
 }
 
 impl<'a> LiveCopyView<'a> {
+    /// Copy `index` (`setup`) in `state` with `values` and no motion: what
+    /// an explosion reads (issue #94, [`LiveHits`]).
+    pub(crate) fn still(index: u16, setup: &'a LiveCopy, state: u16, values: &'a [i64]) -> Self {
+        LiveCopyView { index, setup, state, values, motions: &[] }
+    }
+
     /// Its index among the level's copies.
     pub fn index(&self) -> u16 {
         self.index

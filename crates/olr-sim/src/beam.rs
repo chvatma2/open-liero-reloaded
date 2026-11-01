@@ -41,6 +41,9 @@ pub(crate) struct BeamCtx<'a> {
     /// `goodWidthParts`. A beam is never wider than the map's smaller side,
     /// so with that much capacity tracing does not allocate.
     pub parts: &'a mut Vec<bool>,
+    /// The destructible live copies' health (issue #94): a bonus the beam
+    /// blows up explodes on them; the beam's own damage never reaches them.
+    pub hits: Option<crate::live_damage::LiveHits<'a>>,
 }
 
 /// What a beam part does at one point.
@@ -185,7 +188,7 @@ pub(crate) fn process_shot_beam(
     let dir = vec_from_angle(shot.angle as f32);
     let map_min = ctx.terrain.width().min(ctx.terrain.height());
     let mut set = others(worms, shot.worm);
-    let BeamCtx { terrain, live, holes, draws, parts } = ctx;
+    let BeamCtx { terrain, live, holes, draws, parts, hits } = ctx;
     let live = *live;
     // The trace only ever frees bonuses, so without one at the start no part
     // needs the 32-slot scan (a wide, long beam has many parts).
@@ -203,6 +206,7 @@ pub(crate) fn process_shot_beam(
                 wall_clock: now + TimeDiff(CLOCK_OFFSET_MS),
                 physics_dt: settings.lx56_physics_dt(),
                 referee,
+                live: hits.as_mut().map(crate::live_damage::LiveHits::reborrow),
             };
             explosion(&mut blast, shot.spawn, p, 0.0, 5, shot.worm, -1);
             return Part::Stopped;
@@ -251,7 +255,7 @@ pub(crate) fn draw_beam(worms: &mut [Worm], i: usize, m: &SimMod, ctx: &mut Beam
     let (id, pos, dir, weapon) = (w.id, w.pos, vec_from_angle(angle), slot.weapon);
     let map_min = ctx.terrain.width().min(ctx.terrain.height());
     let mut set = others(worms, id);
-    let BeamCtx { terrain, live, holes, draws, parts } = ctx;
+    let BeamCtx { terrain, live, holes, draws, parts, hits: _ } = ctx;
     let live = *live;
     // Issue #69: whether a part stopped on something, and where the first
     // parts stopped on terrain (the beam's heat); the level's edge, which

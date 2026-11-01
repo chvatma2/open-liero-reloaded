@@ -457,6 +457,7 @@ fn an_explosion_at_a_part_carves_only_the_ground() {
         wall_clock: now + TimeDiff(10),
         physics_dt: TimeDiff(11),
         referee: &mut w.referee,
+        live: None,
     };
     explosion(&mut blast, now, Vec2::new(55.0, 55.0), 10.0, 0, -1, -1);
     assert_eq!(w.terrain.material(55, 55), Some(Material::Background), "the dirt under it is carved");

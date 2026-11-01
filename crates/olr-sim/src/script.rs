@@ -312,9 +312,33 @@ pub enum ScriptEvent {
         amount: i64,
         by: i32,
     },
+    /// Copy `copy` lost `amount` health to an explosion (issue #94;
+    /// negative heals).
+    Hit {
+        copy: u16,
+        amount: i64,
+    },
+    /// Copy `copy`'s health reached 0 (issue #94): right after its
+    /// [`ScriptEvent::Hit`], before its `at_zero` state's entry.
+    Wrecked {
+        copy: u16,
+    },
 }
 
 impl ScriptEvent {
+    /// The script events of `e` (none, one, or issue #94's hit and
+    /// wreck), pushed to `out`.
+    fn push_of(e: &EventKind, out: &mut Vec<ScriptEvent>) {
+        if let EventKind::LiveDamaged { copy, amount, wrecked } = *e {
+            out.push(ScriptEvent::Hit { copy, amount: amount.into() });
+            if wrecked {
+                out.push(ScriptEvent::Wrecked { copy });
+            }
+        } else if let Some(s) = ScriptEvent::of(e) {
+            out.push(s);
+        }
+    }
+
     /// The script event of `e`, if handlers see it.
     fn of(e: &EventKind) -> Option<ScriptEvent> {
         let px = |v: f32| v as i64;
@@ -727,7 +751,9 @@ impl<'a> LiveCtx<'a> {
         let p = &mut s.phase.0;
         p.events.clear();
         p.events.extend(s.entered.iter().map(|&(copy, state)| ScriptEvent::Entered { copy, state }));
-        p.events.extend(events.iter().filter_map(|e| ScriptEvent::of(&e.kind)));
+        for e in events.iter() {
+            ScriptEvent::push_of(&e.kind, &mut p.events);
+        }
         p.entered.clear();
         let mut ctx = LiveCtx { live, events, worms, time_ms, frame, game_over, commands: 0, tick_ops: 0 };
         ctx.rebuild_reads();

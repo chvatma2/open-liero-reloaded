@@ -147,6 +147,9 @@ fn class(kind: &EventKind, next: Option<&EventKind>) -> Option<u64> {
         EventKind::Crushed { worm, copy } => h.words(&[15, worm.into(), copy.into()]),
         // Issue #92: by its copy and sound.
         EventKind::LiveSound { copy, sound } => h.words(&[16, copy.into(), sound.into()]),
+        // Issue #94: by its copy (not its amount, which a correction may
+        // change).
+        EventKind::LiveDamaged { copy, .. } => h.words(&[17, copy.into()]),
     }
     Some(h.0)
 }

@@ -124,7 +124,8 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   counts the worm hits from outside the struck worm's current hit
   geometry, for `olr-cli`'s `tests/hits.rs`. What events do is `actions.rs`;
   their map and health effects (explosions, carving, dirt, green dirt, dirt
-  counts) are `effects.rs`.
+  counts) are `effects.rs` (issue #94: an explosion's live step, after
+  its worms, below).
   Projectile `pos`/`vel` assignments that OLX makes through `Attr::operator=`
   use `attr_set` (an equal value, such as `+0` over `-0`, is not written).
 - **Damage and death** (`damage.rs`): `injure_worm` is `CClient::InjureWorm`
@@ -191,7 +192,8 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   at most `MAX_BEAM_HITS`), a beam's carve explosions `proj:
   BEAM_EXPLOSION` (-2),
   `World::physics_time()`. `Message` comes from a mode's command,
-  `GameOver` once when the match ends.
+  `GameOver` once when the match ends. Issue #94: `LiveDamaged { copy,
+  amount, wrecked }` after an explosion's worm damage.
 - **Live copies** (`live.rs`, issue #85; STATUS.md "Live assets (issues
   #85-#94)"): `LiveLevel` (`copies`, `scripts`, `level_script`, the
   sounds' count; `copy(id)`, `copy_by_id(id)`), `LiveCopy` (made by
@@ -314,6 +316,46 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   `reach_covers_every_place_a_part_can_take` (every combination of the
   values' limits and between-pixel values, every state, each copy alone,
   every live rock pixel inside its reach).
+- **Damage to live copies** (`live_damage.rs`, issue #94; STATUS.md
+  "Live assets"): `effects::explosion` runs, **after its worm loop** (the
+  worms' damage, order and draws untouched), `LiveHits::explode` when
+  `Blast::live` is some (none without destructible copies: the oracle's
+  path, one `Option` check). `LiveWorld::physics_parts` borrows the
+  rock parts' index (`SolidParts`) and the copies' states and values
+  (`LiveHits`) apart, for `physics_step` (`ProjCtx::hits`, reborrowed by
+  `ProjCtx::blast`) and `deliver_shots` (`ShotCtx::hits`,
+  `BeamCtx::hits`: a bonus a beam blows up; the beam's own damage never
+  reaches a copy, `player_shoot`'s `BeamCtx` has none); a copy entering
+  its `at_zero` state sets `stale`, and `refresh_if_stale` rebuilds the
+  index right after the projectiles' pass (before the bonuses fall) and
+  after the delivery. Each destructible copy (`LiveLevel::destructible`:
+  copy and the rectangle every place its parts can take covers, from
+  `part_span`, the reach's arithmetic, computed once) in level order:
+  its rectangle grown by `REACH` 5 checked first; then health above 0
+  and a covered pixel (`LiveSolid::cover`: `new` makes it the rock
+  pixels, or a background picture's whole rectangle; `with_cover` adds
+  the art's, `olr-content`) of a visible part at its place (mirrored by
+  `Facing`) within 5 px of the centre (nearest point of the pixel's
+  square, `f64`). It loses `damage_amount(damage)` (`as i64`), the
+  result `within(…, 0, points)` and clamped into the prop's limits;
+  `EventKind::LiveDamaged { copy, amount: i32 (saturated: `Event` stays
+  36 bytes, `an_event_keeps_its_size`), wrecked }` (gameplay); at 0
+  `look_in(at_zero)` (`LiveState`) then health 0 again. No owner, no
+  credit, no mode call. `look_in`/`put_in`/`range_in` are `LiveWorld`'s
+  `look`/`put`/`range` on the split buffers. `ScriptEvent::Hit { copy,
+  amount }` and `Wrecked { copy }` (after the hit) come from
+  `LiveDamaged`. `World::explode_for_test(pos, damage)` (doc-hidden)
+  sets off an ownerless explosion between ticks, its events with the
+  next tick's. Tests: `live_damage_tests.rs`
+  (`an_explosion_near_a_destructible_copy_takes_its_damage`,
+  `an_explosion_beyond_five_pixels_of_its_pixels_does_not`,
+  `a_copy_at_zero_enters_its_at_zero_state_once`,
+  `a_copy_at_zero_takes_no_more_damage_until_repaired`,
+  `the_wrecked_picture_decides_what_is_solid`,
+  `asset_damage_credits_nobody`,
+  `worms_take_explosion_damage_as_before_beside_a_copy`,
+  `beams_and_direct_hits_do_not_damage_copies`,
+  `explosion_damage_truncates_toward_zero_and_saturates`).
 - **Scripts' state** (`script.rs`, issue #88; `olr-script` runs them):
   `Director` (`Debug + Send + Sync`, `box_clone`, `timer_functions(script)`,
   `run(&self, &mut LiveCtx)`) is **stateless**; `MatchSetup::director:

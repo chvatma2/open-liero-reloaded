@@ -279,7 +279,8 @@ wired in the frame loop's order **once**, so each mode that draws a world
   integer identity fields (never positions or amounts, which a correction
   moves) and an ordinal among equal ones; a live copy's `LiveState` by its
   copy and state (issue #86), so a re-simulated entry plays once (#92), a
-  `LiveSound` by its copy and sound (#92). An erased event is not undone.
+  `LiveSound` by its copy and sound (#92), a `LiveDamaged` by its copy
+  (#94). An erased event is not undone.
 - **The simulation never sees presentation:** it only reads the world.
 
 Test: `cargo nextest run -p olr-present` (`tests/views.rs`, issue #27:

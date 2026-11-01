@@ -8,6 +8,7 @@ use crate::SimSettings;
 use crate::bonus::{Bonus, MAX_BONUSES};
 use crate::damage::{Harm, injure_worm};
 use crate::events::{CosmeticKind, EventKind, StampId, TerrainOp, TickEvents};
+use crate::live_damage::LiveHits;
 use crate::proj_sim::ProjCtx;
 use crate::projectile::{c_i64, c_int};
 use crate::referee::Referee;
@@ -122,6 +123,9 @@ pub(crate) struct Blast<'a> {
     pub physics_dt: TimeDiff,
     /// The game mode, which credits kills.
     pub referee: &'a mut Referee,
+    /// The destructible live copies' health (issue #94), none without
+    /// them: the oracle's path.
+    pub live: Option<LiveHits<'a>>,
 }
 
 impl Blast<'_> {
@@ -150,6 +154,7 @@ impl<'a> ProjCtx<'a> {
             wall_clock: self.wall_clock,
             physics_dt: self.physics_dt,
             referee: self.referee,
+            live: self.hits.as_mut().map(LiveHits::reborrow),
         }
     }
 }
@@ -166,6 +171,11 @@ impl<'a> ProjCtx<'a> {
 /// `(int)damage` (8 up to damage 5) and the hole's terrain edit. `proj`
 /// (the projectile's `SimMod` index, -1 for none) only tags the event and
 /// the cosmetic entity; a bonus it blows up explodes with none.
+///
+/// Issue #94 (no OLX counterpart): after the worm loop, the destructible
+/// live copies within 5 px of this explosion take its damage
+/// ([`LiveHits::explode`]: no owner, no credit, no draw); without them
+/// (`ctx.live` none) nothing more runs.
 pub(crate) fn explosion(
     ctx: &mut Blast,
     time: AbsTime,
@@ -224,6 +234,9 @@ pub(crate) fn explosion(
             ctx.draws.hits.explosion(id, current);
             injure_worm(&mut ctx.harm(), id, damage, owner);
         }
+    }
+    if let Some(live) = &mut ctx.live {
+        live.explode(pos, damage, &mut ctx.draws.events);
     }
 }
 

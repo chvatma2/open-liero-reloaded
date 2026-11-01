@@ -15,9 +15,12 @@ impl World {
     /// One LX56 sub-step of `CClient::Simulation` (`src/client/CClient_Game.cpp:97-221`).
     pub(crate) fn physics_step(&mut self, dt: f32) {
         let over = self.referee.over.is_some();
+        let physics_dt = self.physics_dt();
         // Issue #90: the shown live rock parts, which every solidity read
         // sees; they stay put during the sub-step.
-        let live = self.live.as_ref().and_then(LiveWorld::solid_parts);
+        // Issue #94: and the destructible copies' health, which the
+        // projectiles' explosions damage.
+        let (live, hits) = self.live.as_mut().map_or((None, None), LiveWorld::physics_parts);
         for i in 0..self.worms.len() {
             // Taken afresh for each worm: OLX's rope sees the worms already moved this step.
             let others = &mut self.others.others;
@@ -71,6 +74,7 @@ impl World {
                         holes: &self.holes,
                         draws: &mut self.draws,
                         parts: &mut self.others.beam_parts,
+                        hits: None,
                     };
                     player_shoot(&mut self.worms, i, &self.sim_mod, &mut ctx);
                 }
@@ -83,7 +87,6 @@ impl World {
         self.substeps = self.substeps.saturating_add(1);
         self.draws.events.set_substep(self.substeps);
         // `CClient_Game.cpp:213-215`: projectiles after all worms.
-        let physics_dt = self.physics_dt();
         let mut ctx = ProjCtx {
             sim_mod: &self.sim_mod,
             settings: &self.settings,
@@ -98,8 +101,18 @@ impl World {
             physics_dt,
             bonuses: &mut self.bonuses.client,
             referee: &mut self.referee,
+            hits,
         };
         simulate_projectiles(&mut self.projectiles, &mut ctx);
+        // Issue #94: a copy an explosion wrecked shows its `at_zero` state's
+        // parts from here on.
+        let live = match &mut self.live {
+            Some(l) => {
+                l.refresh_if_stale();
+                l.solid_parts()
+            }
+            None => None,
+        };
         // `CClient_Game.cpp:217-218`: bonuses after the projectiles.
         if self.settings.bonuses {
             self.bonuses.simulate_client(Solid::new(&self.terrain, live), dt);
