@@ -288,7 +288,10 @@ Remade OLX content is named "<Old name> Reloaded".
   crane's claw crosses its rail, humming, carrying worms on its shoulders
   and pushing those in its way aside (it crushes nobody), and the
   console under the deck goes red, its lamp pulsing, while it moves.
-  Issues #98 and #99 bring the rest alive. Laid out as #73
+  Since issue #98 three ceiling strips (`strip-2`, `strip-4`,
+  `strip-7`) fail like faulty tubes, stuttering on and off in uneven
+  bursts, sometimes dark or dim a while, buzzing and ticking; the other
+  six stay steady. Issue #99 brings the rest alive. Laid out as #73
   and #74 lay a level out: `editor/placed.ron`, the ground at `editor/`,
   each other asset at `editor/<key>/`, and the baked files beside, so it
   plays without any library.
@@ -361,6 +364,30 @@ Remade OLX content is named "<Old name> Reloaded".
   - **The hum** (`tools/levels/factory/sounds/hum.wav`, the Crane's
     `Moving` loop): synthesised for OLR by
     `tools/sounds/factory_sounds.py`, CC0; the maintainer may replace it.
+  - **The faulty tubes** (issue #98; `factory_live.py` also paints the
+    Strip light's `Dim` and `Off` pictures, makes it again by its block
+    and runs `level library update <pack> s` and `level copy set …
+    strip-2 --live`, `strip-4` and `strip-7`): Live copies of the Strip
+    light, whose default script `tools/levels/factory/tube.rhai` (its
+    constants at the top, all ticks) stays `On` 300-1200 ticks, then a
+    burst of 2-6 flickers (`Off` 3-10 ticks, `On` 2-15); after the burst,
+    of 12 equal draws 3 (1 in 4) stay `Off` 100-400 ticks and then a
+    recovering burst, 2 (1 in 6) glow `Dim` 200-600, and the rest go back
+    to `On`. Its step and counts are in `mem`; every draw is `this.rand`,
+    the scripts' one generator drawn in run order, so the three never
+    flicker together and the same match seed flickers alike. `On` sets
+    nothing (entering it restores `lamps.glow` to 100 and the picture,
+    ruling R2), `Dim` the tube at 60 % and `lamps.glow` 35, `Off` the tube
+    unlit and `lamps.glow` 0. The six static strips bake in `On` and never
+    flicker or sound (a static copy's states, scripts and sounds do
+    nothing). The ground's `backdrop` still holds After Dark's lit strip
+    under each live one (the flattened art); every state's picture covers
+    it whole.
+  - **The buzz and the tick** (`tools/levels/factory/sounds/buzz.wav`,
+    looped while a tube is `On` or `Dim`; `tick.wav`, the starter,
+    played on each entry to `On`): synthesised for OLR by
+    `tools/sounds/factory_sounds.py`, CC0; the maintainer may replace
+    them.
 
   ```sh
   cargo build -p olr-cli

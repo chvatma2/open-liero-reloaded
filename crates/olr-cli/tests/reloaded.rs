@@ -466,10 +466,19 @@ fn baked(level: &str) -> olr_format::levels::LevelSource {
 }
 
 /// Issue #97: Liero Factory Reloaded's live copies' boxes (x, y, width,
-/// height): the crane's and the console's (issues #98 and #99 add theirs).
-/// The ground leaves live copies out (#85), so its bake differs from After
-/// Dark's only inside them.
-const LIVE_BOXES: [(u32, u32, u32, u32); 2] = [(762, 269, 114, 50), (933, 269, 33, 64)];
+/// height): the crane's and the console's, and (issue #98) the faulty
+/// tubes' (#99 adds its own). The ground leaves live copies out (#85), so
+/// its bake differs from After Dark's only inside them.
+const LIVE_BOXES: [(u32, u32, u32, u32); 5] =
+    [(762, 269, 114, 50), (933, 269, 33, 64), (1004, 80, 29, 2), (984, 177, 29, 2), (427, 286, 29, 2)];
+
+/// Issue #98: the ceiling strips that fail like faulty tubes (live copies
+/// of the Strip light), in copy order; the other six stay static.
+const TUBES: [&str; 3] = ["strip-2", "strip-4", "strip-7"];
+
+/// Liero Factory Reloaded's live copies in copy order (issue #98's tubes
+/// come first: they are placed before the crane).
+const LIVE_COPIES: [&str; 5] = ["strip-2", "strip-4", "strip-7", "crane", "console"];
 
 /// Whether world pixel `(x, y)` lies in one of [`LIVE_BOXES`].
 fn in_live_box(x: u32, y: u32) -> bool {
@@ -595,8 +604,9 @@ type CopyRow<'a> = (String, &'a str, Option<&'a str>, (i32, i32), (u32, u32));
 
 /// Issue #96: Liero Factory Reloaded is made of assets: its copies by id,
 /// each with its key, asset, origin, place and size, every one static
-/// but the crane and the console (issue #97, in their starting states
-/// with their defaults and their asset's default script);
+/// but the crane and the console (issue #97) and the three faulty tubes
+/// (issue #98), in their starting states with their defaults and their
+/// asset's default script;
 /// the ground and the sky the level's own (the sky distant at 90), the
 /// rest built-in and as the library has them (`level library` says
 /// `same`: a built-in asset changed without the level fails here).
@@ -652,7 +662,7 @@ fn the_new_factory_is_made_of_assets() {
         .collect();
     assert_eq!(got, want);
     for c in &file.copies {
-        assert_eq!(c.live, ["crane", "console"].contains(&c.id.as_str()), "{}: live", c.id);
+        assert_eq!(c.live, LIVE_COPIES.contains(&c.id.as_str()), "{}: live", c.id);
         assert!(c.state.is_none() && c.values.is_empty(), "{}: its start and defaults", c.id);
         assert!(!c.script && c.default_script, "{}: no script of its own", c.id);
         assert!(!c.free_aspect, "{}: its aspect kept", c.id);
@@ -726,22 +736,29 @@ fn factory_world(content: &Content, at: (i32, i32)) -> olr_sim::World {
 }
 
 /// Issue #97: Liero Factory Reloaded's live copies are exactly the crane
-/// and the console (#98 and #99 add theirs), each a copy of its built-in
-/// asset in its starting state with its asset's default script (the
-/// Crane's `tools/levels/factory/crane.rhai`; the Console has none), the
-/// level script (`tools/levels/factory/level.rhai`) names both, and no
-/// live asset holds a dirt layer (call 2). A match loads them so.
+/// and the console and (issue #98) the tubes `strip-2`, `strip-4` and
+/// `strip-7`, the other strips static (#99 adds its own), each a copy of
+/// its built-in asset in its starting state with its asset's default
+/// script (the Crane's `tools/levels/factory/crane.rhai`, the Strip
+/// light's `tube.rhai`; the Console has none), the level script
+/// (`tools/levels/factory/level.rhai`) names the crane and the console,
+/// and no live asset holds a dirt layer (call 2). A match loads them so.
 #[test]
 fn the_live_factory_has_its_live_copies() {
     use olr_format::levels::{ElementKind, ElementMaterial, read_placed_files};
     let dir = reloaded_dir().join(FACTORY);
     let placed = read_placed_files(&DirFs::new(&dir)).unwrap().expect("editor/placed.ron");
     let live: Vec<&str> = placed.file.copies.iter().filter(|c| c.live).map(|c| c.id.as_str()).collect();
-    assert_eq!(live, ["crane", "console"]);
+    assert_eq!(live, LIVE_COPIES);
+    for c in placed.file.copies.iter().filter(|c| c.id.starts_with("strip-")) {
+        assert_eq!(c.live, TUBES.contains(&c.id.as_str()), "{}: live only if a tube", c.id);
+    }
     let crane_script = std::fs::read_to_string(repo().join("tools/levels/factory/crane.rhai")).unwrap();
-    for (id, name, start, script) in
-        [("crane", "Crane", "Idle", Some(&crane_script)), ("console", "Console", "Normal", None)]
-    {
+    let tube_script = std::fs::read_to_string(repo().join("tools/levels/factory/tube.rhai")).unwrap();
+    let mut want =
+        vec![("crane", "Crane", "Idle", Some(&crane_script)), ("console", "Console", "Normal", None)];
+    want.extend(TUBES.map(|t| (t, "Strip light", "On", Some(&tube_script))));
+    for (id, name, start, script) in want {
         let c = placed.file.copies.iter().find(|c| c.id == id).unwrap();
         let a = &placed.assets[&c.asset];
         assert_eq!(a.file.name, name, "{id}");
@@ -770,7 +787,10 @@ fn the_live_factory_has_its_live_copies() {
             .unwrap();
     let w = m.world();
     let ids: Vec<&str> = w.live().unwrap().copies().map(|c| c.id()).collect();
-    assert_eq!(ids, ["crane", "console"]);
+    assert_eq!(ids, LIVE_COPIES);
+    for t in TUBES {
+        assert_eq!(live_copy(w, t).state_name(), "On", "{t}");
+    }
     assert_eq!(
         (live_copy(w, "crane").state_name(), live_copy(w, "console").state_name()),
         ("Idle", "Normal")
@@ -901,18 +921,19 @@ fn rock_by_state(folder: &str) -> Vec<(String, BTreeSet<(u32, u32)>)> {
 }
 
 /// Issue #97: no state switch adds or removes a solid pixel: for the
-/// Crane and the Console, every state's rock pixels (the stacked pictures
-/// included) are the starting state's, and so are the solid pixels of
-/// each state of the copies as a match loads them.
+/// Crane, the Console and (issue #98) the Strip light, every state's rock
+/// pixels (the stacked pictures included) are the starting state's (the
+/// Strip light's none: its layer is Background), and so are the solid
+/// pixels of each state of the copies as a match loads them.
 #[test]
 fn live_states_keep_their_solid_pixels() {
-    for folder in ["crane", "console"] {
+    for folder in ["crane", "console", "strip-light"] {
         let states = rock_by_state(folder);
         assert!(states.len() >= 2, "{folder}: its states");
         for (name, rock) in &states[1..] {
             assert!(*rock == states[0].1, "{folder}: state {name}'s rock differs from {}'s", states[0].0);
         }
-        assert!(!states[0].1.is_empty());
+        assert_eq!(states[0].1.is_empty(), folder == "strip-light", "{folder}: its rock");
     }
     // As played: each state's rock parts at their places (no value moving them).
     use olr_cli::runner::{Match, Options};
@@ -937,7 +958,7 @@ fn live_states_keep_their_solid_pixels() {
             px
         };
         let start = solid(&setup.states[usize::from(setup.start_state)]);
-        assert!(!start.is_empty(), "{}", c.id());
+        assert_eq!(start.is_empty(), TUBES.contains(&c.id()), "{}: its solid pixels", c.id());
         for s in &setup.states {
             assert!(solid(s) == start, "{}: state {}'s solid pixels", c.id(), s.name);
         }
@@ -996,7 +1017,8 @@ fn the_crane_carries_and_pushes_a_worm() {
 }
 
 /// The world's solid pixels over the live copies' boxes, and each copy's
-/// state and values.
+/// state and values but the tubes' (issue #98: their scripts switch them
+/// at any tick, explosion or none).
 fn live_snapshot(w: &olr_sim::World) -> (Vec<bool>, Vec<(u16, Vec<i64>)>) {
     let solid = w.solid();
     let mut px = Vec::new();
@@ -1007,7 +1029,13 @@ fn live_snapshot(w: &olr_sim::World) -> (Vec<bool>, Vec<(u16, Vec<i64>)>) {
             }
         }
     }
-    let copies = w.live().unwrap().copies().map(|c| (c.state(), c.values().to_vec())).collect();
+    let copies = w
+        .live()
+        .unwrap()
+        .copies()
+        .filter(|c| !TUBES.contains(&c.id()))
+        .map(|c| (c.state(), c.values().to_vec()))
+        .collect();
     (px, copies)
 }
 
@@ -1065,8 +1093,9 @@ fn explosions_leave_the_factorys_live_copies_alone() {
 /// Issue #97: a 6000-tick match of 4 bots on the factory runs its scripts
 /// without a `ScriptError`, both instances still running at its end (the
 /// crane still crossing and the console still following it in its last
-/// 1000 ticks), and no run or tick uses more than half its operations
-/// (`World::script_peak`, #88). #98 and #99 keep it passing with theirs.
+/// 1000 ticks; issue #98: each tube still switching in the last 1500),
+/// and no run or tick uses more than half its operations
+/// (`World::script_peak`, #88). #99 keeps it passing with its own.
 #[test]
 fn the_factory_scripts_never_fail() {
     use olr_cli::runner::{Match, Options};
@@ -1077,6 +1106,8 @@ fn the_factory_scripts_never_fail() {
     let mut m = Match::new(&content, &spec, &Options::default()).unwrap();
     let (mut errors, mut late_moves, mut late_alarms) = (0, 0, 0);
     let mut last = claw_x(m.world());
+    let tube_states = |w: &olr_sim::World| TUBES.map(|t| live_copy(w, t).state());
+    let (mut tubes, mut late_switches) = (tube_states(m.world()), [0; 3]);
     while m.step() {
         errors += m.events().iter().filter(|e| matches!(e.kind, EventKind::ScriptError { .. })).count();
         if m.ticks() > 5000 {
@@ -1084,6 +1115,11 @@ fn the_factory_scripts_never_fail() {
             late_alarms += usize::from(live_copy(m.world(), "console").state_name() == "Alarm");
         }
         last = claw_x(m.world());
+        let now = tube_states(m.world());
+        for i in 0..3 {
+            late_switches[i] += usize::from(m.ticks() > 4500 && now[i] != tubes[i]);
+        }
+        tubes = now;
     }
     let peak = m.world().script_peak();
     let run = m.finish();
@@ -1094,8 +1130,247 @@ fn the_factory_scripts_never_fail() {
         late_moves > 0 && late_alarms > 0,
         "the scripts still run: {late_moves} moves, {late_alarms} alarms"
     );
+    assert!(late_switches.iter().all(|&n| n > 0), "the tubes still switch: {late_switches:?}");
     assert!(peak.run * 2 <= olr_script::MAX_RUN_OPERATIONS, "a run used {} operations", peak.run);
     assert!(peak.tick * 2 <= olr_script::MAX_TICK_OPERATIONS, "a tick used {} operations", peak.tick);
+}
+
+/// A tube's state as [`tube_run`] records it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Tube {
+    On,
+    Dim,
+    Off,
+}
+
+/// Issue #98: a `ticks`-tick match of two idle bots on the live factory,
+/// seed `seed`, recorded per tick (the start, then after each tick): each
+/// of [`TUBES`]' state and `lamps.glow` value, the tick's `LiveState`
+/// entries into `On` per tube, and its live sounds as the presentation
+/// reads them (issue #92's `LiveSounds`: the starts from the tick's
+/// events, then the world's loops).
+struct TubeRun {
+    states: Vec<[(Tube, i64); 3]>,
+    entries_on: Vec<[usize; 3]>,
+    sounds: Vec<olr_content::LiveSounds>,
+    /// The tubes' live copy indices, and the level's sound indices of
+    /// `buzz.wav` and `tick.wav`.
+    copies: [u16; 3],
+    buzz: u16,
+    tick: u16,
+}
+
+fn tube_run(seed: u32, ticks: u32) -> TubeRun {
+    use olr_cli::runner::{Match, Options};
+    use olr_cli::spec::{MatchSpec, Personality};
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    let spec = MatchSpec {
+        personality: Personality::Idle,
+        kill_limit: 0,
+        time_limit: 0.0,
+        ..MatchSpec::new(CLASSIC, FACTORY, 2, seed, ticks)
+    };
+    let mut m = Match::new(&content, &spec, &Options::default()).unwrap();
+    let copies = TUBES.map(|t| live_copy(m.world(), t).index());
+    let setup = live_copy(m.world(), TUBES[0]).setup();
+    let glow = setup
+        .props
+        .iter()
+        .position(|p| matches!(p.target, olr_sim::LiveTarget::GlowStrength(_)))
+        .expect("a value driving lamps.glow");
+    let on = setup.state("On").unwrap();
+    let (buzz, tick) = (setup.sound("buzz.wav").unwrap(), setup.sound("tick.wav").unwrap());
+    let read = |w: &olr_sim::World| {
+        TUBES.map(|t| {
+            let c = live_copy(w, t);
+            let state = match c.state_name() {
+                "On" => Tube::On,
+                "Dim" => Tube::Dim,
+                "Off" => Tube::Off,
+                s => panic!("{t}: state {s}"),
+            };
+            (state, c.values()[glow])
+        })
+    };
+    let mut run = TubeRun {
+        states: vec![read(m.world())],
+        entries_on: vec![[0; 3]],
+        sounds: vec![olr_content::LiveSounds::default()],
+        copies,
+        buzz,
+        tick,
+    };
+    loop {
+        let (before, go) = (m.ticks(), m.step());
+        if m.ticks() == before {
+            break;
+        }
+        let live = m.world().live().unwrap();
+        let mut sounds = olr_content::LiveSounds::default();
+        let mut entries = [0; 3];
+        for e in m.events().iter() {
+            sounds.push_start(live, &e.kind);
+            if let olr_sim::EventKind::LiveState { copy, state } = e.kind
+                && let Some(i) = copies.iter().position(|&c| c == copy)
+                && state == on
+            {
+                entries[i] += 1;
+            }
+        }
+        sounds.set_loops(Some(live));
+        run.states.push(read(m.world()));
+        run.entries_on.push(entries);
+        run.sounds.push(sounds);
+        if !go {
+            break;
+        }
+    }
+    assert!(m.finish().failure().is_none());
+    assert_eq!(run.states.len(), ticks as usize + 1);
+    run
+}
+
+/// The flickers of each burst of a tube's states: a flicker is an `Off`
+/// run of at most 10 ticks (the script's `OFF_MAX`), a burst flickers
+/// whose `On` gaps are at most 15 ticks (`BACK_MAX`).
+fn bursts(states: &[Tube]) -> Vec<usize> {
+    let mut runs: Vec<(Tube, usize)> = Vec::new();
+    for &s in states {
+        match runs.last_mut() {
+            Some((t, n)) if *t == s => *n += 1,
+            _ => runs.push((s, 1)),
+        }
+    }
+    let mut out = Vec::new();
+    let mut current = 0;
+    for (i, &(s, n)) in runs.iter().enumerate() {
+        let flicker = s == Tube::Off && n <= 10 && i > 0;
+        let gap = s == Tube::On && n <= 15 && current > 0;
+        if flicker {
+            current += 1;
+        } else if !gap {
+            if current > 0 {
+                out.push(current);
+            }
+            current = 0;
+        }
+    }
+    if current > 0 {
+        out.push(current);
+    }
+    out
+}
+
+/// Issue #98: the faulty tubes fail unevenly. In a 12 000-tick match each
+/// live tube is `On` at least 70 % of the ticks and has a burst of 2
+/// flickers or more; the three tubes' state sequences differ (the
+/// scripts' one generator, drawn in run order); the same seed gives the
+/// same sequences, another seed others; `lamps.glow` is 100 whenever a
+/// tube is `On` (ruling R2: entering `On` restores it, whatever came
+/// before), 35 `Dim` and 0 `Off`; and every static strip stays as baked,
+/// steady `On` (After Dark's pixels and glow, no live copy of its own).
+#[test]
+fn the_tubes_fail_unevenly() {
+    let a = tube_run(1, 12_000);
+    let seq = |r: &TubeRun, i: usize| r.states.iter().map(|s| s[i].0).collect::<Vec<_>>();
+    for (i, tube) in TUBES.iter().enumerate() {
+        let states = seq(&a, i);
+        let on = states.iter().filter(|&&s| s == Tube::On).count();
+        assert!(on * 10 >= states.len() * 7, "{tube}: On {on} of {} ticks", states.len());
+        let b = bursts(&states);
+        assert!(b.iter().any(|&n| n >= 2), "{tube}: bursts {b:?}");
+        assert!(states.contains(&Tube::Off), "{tube}: never Off");
+        for (t, s) in a.states.iter().enumerate() {
+            let want = match s[i].0 {
+                Tube::On => 100,
+                Tube::Dim => 35,
+                Tube::Off => 0,
+            };
+            assert_eq!(s[i].1, want, "{tube}: lamps.glow at tick {t}, {:?}", s[i].0);
+        }
+    }
+    for (i, ti) in TUBES.iter().enumerate() {
+        for (j, tj) in TUBES.iter().enumerate().skip(i + 1) {
+            assert!(seq(&a, i) != seq(&a, j), "{ti} and {tj} flicker together");
+        }
+    }
+    let again = tube_run(1, 12_000);
+    let other = tube_run(2, 12_000);
+    for (i, tube) in TUBES.iter().enumerate() {
+        assert!(seq(&a, i) == seq(&again, i), "{tube}: seed 1 again flickers otherwise");
+        assert!(seq(&a, i) != seq(&other, i), "{tube}: seed 2 flickers as seed 1");
+    }
+    // The static strips: no live copy, baked as After Dark's lit strips.
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    let m = olr_cli::runner::Match::new(
+        &content,
+        &olr_cli::spec::MatchSpec::new(CLASSIC, FACTORY, 2, 1, 10),
+        &olr_cli::runner::Options::default(),
+    )
+    .unwrap();
+    let (ours, theirs) = (baked(FACTORY), baked(AFTER_DARK));
+    let (go, gt) = (ours.glow.as_ref().unwrap(), theirs.glow.as_ref().unwrap());
+    let front = |l: &str| {
+        olr_pack::image_io::decode_rgba(&std::fs::read(reloaded_dir().join(l).join("front.png")).unwrap())
+            .unwrap()
+    };
+    let (fo, ft) = (front(FACTORY), front(AFTER_DARK));
+    for (id, (x, y)) in [
+        ("strip-1", (778, 80)),
+        ("strip-3", (1119, 80)),
+        ("strip-5", (1067, 177)),
+        ("strip-6", (314, 286)),
+        ("strip-8", (524, 286)),
+        ("strip-9", (187, 342)),
+    ] {
+        assert!(m.world().live().unwrap().copy_by_id(id).is_none(), "{id}: static");
+        for py in y..y + 2u32 {
+            for px in x..x + 29u32 {
+                let i = (py * ours.size.0 + px) as usize;
+                assert!(fo.get(px, py) == ft.get(px, py), "{id}: its pixel ({px}, {py})");
+                assert!(go.back[i] == gt.back[i] && go.back[i] > 0, "{id}: its glow at ({px}, {py})");
+            }
+        }
+    }
+}
+
+/// Issue #98: the tubes buzz and tick in time, as the presentation reads
+/// the live sounds (issue #92's `LiveSounds`, headless): in a 4000-tick
+/// match a live tube's `buzz.wav` loops on every tick it is `On` or `Dim`
+/// and on no other, `tick.wav` starts once on each tick it enters `On`
+/// and on no other; no sound plays at a static strip.
+#[test]
+fn the_tubes_buzz_and_tick() {
+    let r = tube_run(1, 4000);
+    let mut ticks = [0; 3];
+    for t in 1..r.states.len() {
+        let s = &r.sounds[t];
+        for (i, tube) in TUBES.iter().enumerate() {
+            let c = r.copies[i];
+            let loops = s.loops.iter().filter(|l| l.copy == c && l.sound == r.buzz).count();
+            let lit = r.states[t][i].0 != Tube::Off;
+            assert_eq!(loops, usize::from(lit), "{tube}: buzzing at tick {t}, {:?}", r.states[t][i].0);
+            assert!(s.loops.iter().filter(|l| l.copy == c).all(|l| l.sound == r.buzz), "{tube}: its loops");
+            let starts = s.starts.iter().filter(|x| x.copy == c && x.sound == r.tick).count();
+            assert_eq!(starts, r.entries_on[t][i], "{tube}: ticks at tick {t}");
+            let entered = r.states[t][i].0 == Tube::On && r.states[t - 1][i].0 != Tube::On;
+            if entered {
+                assert_eq!(starts, 1, "{tube}: entered On at tick {t} without a tick");
+            }
+            ticks[i] += starts;
+        }
+    }
+    assert!(ticks.iter().all(|&n| n >= 2), "the tubes' ticks: {ticks:?}");
+    let statics = [(778, 80), (1119, 80), (1067, 177), (314, 286), (524, 286), (187, 342)];
+    for s in &r.sounds {
+        let at = s.starts.iter().map(|x| x.pos).chain(s.loops.iter().map(|l| l.pos));
+        for p in at {
+            let by_static = statics
+                .iter()
+                .any(|&(x, y)| (p.x - (x as f32 + 14.5)).abs() < 1.0 && (p.y - (y as f32 + 1.0)).abs() < 1.0);
+            assert!(!by_static, "a sound at a static strip: {p:?}");
+        }
+    }
 }
 
 /// Issue #97: bots play the live factory with Classic and with Liero v1.0

@@ -1,6 +1,6 @@
 (
     name: "Liero Factory Reloaded",
-    notes: "Liero Factory After Dark rebuilt from assets (issue #96): the ground is the level\'s own asset, the night sky a copy of its own at depth 90, and the strip lights, the ceiling lamp, the control room\'s screen and desk, the lit sign, a roof beacon, the crane, the console and the gauge are copies of the built-in assets where After Dark has them. Since issue #97 the crane\'s claw crosses its rail every couple of seconds, humming and pushing worms in its way, and the console under the deck goes red while it moves; issues #98 and #99 bring the rest alive.",
+    notes: "Liero Factory After Dark rebuilt from assets (issue #96): the ground is the level\'s own asset, the night sky a copy of its own at depth 90, and the strip lights, the ceiling lamp, the control room\'s screen and desk, the lit sign, a roof beacon, the crane, the console and the gauge are copies of the built-in assets where After Dark has them. Since issue #97 the crane\'s claw crosses its rail every couple of seconds, humming and pushing worms in its way, and the console under the deck goes red while it moves; since issue #98 three of the ceiling strips fail like faulty tubes, stuttering, buzzing and ticking; issue #99 brings the rest alive.",
     size: (1200, 480),
     theme: "olx-theme-dirt",
     look: (

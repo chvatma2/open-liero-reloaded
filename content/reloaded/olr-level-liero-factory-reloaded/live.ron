@@ -1,6 +1,285 @@
 (
     copies: [
         (
+            id: "strip-2",
+            asset: "Strip light",
+            at: (1004, 80),
+            size: (29, 2),
+            props: [
+                (
+                    drives: GlowStrength(0),
+                    min: 0,
+                    max: 100,
+                    default: 100,
+                ),
+            ],
+            pictures: [
+                (
+                    size: (29, 2),
+                    glow: true,
+                    groups: true,
+                ),
+                (
+                    size: (29, 2),
+                    glow: true,
+                    groups: true,
+                ),
+                (
+                    size: (29, 2),
+                    glow: true,
+                    groups: true,
+                ),
+            ],
+            states: [
+                (
+                    name: "On",
+                    values: [
+                        (0, 100),
+                    ],
+                    parts: [
+                        (
+                            layer: 0,
+                            kind: Background,
+                            picture: 0,
+                            glow_strength: 100,
+                        ),
+                    ],
+                    enter_sound: 1,
+                    loop_sound: 0,
+                ),
+                (
+                    name: "Dim",
+                    values: [
+                        (0, 35),
+                    ],
+                    parts: [
+                        (
+                            layer: 0,
+                            kind: Background,
+                            picture: 1,
+                            glow_strength: 100,
+                        ),
+                    ],
+                    loop_sound: 0,
+                ),
+                (
+                    name: "Off",
+                    values: [
+                        (0, 0),
+                    ],
+                    parts: [
+                        (
+                            layer: 0,
+                            kind: Background,
+                            picture: 2,
+                            glow_strength: 100,
+                        ),
+                    ],
+                ),
+            ],
+            groups: [
+                (
+                    id: "lamps",
+                    colour: Tint("#ffe6c0"),
+                    intensity: 500,
+                    reach: Pixels(90),
+                ),
+            ],
+            scripts: [
+                0,
+            ],
+            sounds: [
+                ("buzz.wav", 0),
+                ("tick.wav", 1),
+            ],
+        ),
+        (
+            id: "strip-4",
+            asset: "Strip light",
+            at: (984, 177),
+            size: (29, 2),
+            props: [
+                (
+                    drives: GlowStrength(0),
+                    min: 0,
+                    max: 100,
+                    default: 100,
+                ),
+            ],
+            pictures: [
+                (
+                    size: (29, 2),
+                    glow: true,
+                    groups: true,
+                ),
+                (
+                    size: (29, 2),
+                    glow: true,
+                    groups: true,
+                ),
+                (
+                    size: (29, 2),
+                    glow: true,
+                    groups: true,
+                ),
+            ],
+            states: [
+                (
+                    name: "On",
+                    values: [
+                        (0, 100),
+                    ],
+                    parts: [
+                        (
+                            layer: 0,
+                            kind: Background,
+                            picture: 0,
+                            glow_strength: 100,
+                        ),
+                    ],
+                    enter_sound: 1,
+                    loop_sound: 0,
+                ),
+                (
+                    name: "Dim",
+                    values: [
+                        (0, 35),
+                    ],
+                    parts: [
+                        (
+                            layer: 0,
+                            kind: Background,
+                            picture: 1,
+                            glow_strength: 100,
+                        ),
+                    ],
+                    loop_sound: 0,
+                ),
+                (
+                    name: "Off",
+                    values: [
+                        (0, 0),
+                    ],
+                    parts: [
+                        (
+                            layer: 0,
+                            kind: Background,
+                            picture: 2,
+                            glow_strength: 100,
+                        ),
+                    ],
+                ),
+            ],
+            groups: [
+                (
+                    id: "lamps",
+                    colour: Tint("#ffe6c0"),
+                    intensity: 500,
+                    reach: Pixels(90),
+                ),
+            ],
+            scripts: [
+                0,
+            ],
+            sounds: [
+                ("buzz.wav", 0),
+                ("tick.wav", 1),
+            ],
+        ),
+        (
+            id: "strip-7",
+            asset: "Strip light",
+            at: (427, 286),
+            size: (29, 2),
+            props: [
+                (
+                    drives: GlowStrength(0),
+                    min: 0,
+                    max: 100,
+                    default: 100,
+                ),
+            ],
+            pictures: [
+                (
+                    size: (29, 2),
+                    glow: true,
+                    groups: true,
+                ),
+                (
+                    size: (29, 2),
+                    glow: true,
+                    groups: true,
+                ),
+                (
+                    size: (29, 2),
+                    glow: true,
+                    groups: true,
+                ),
+            ],
+            states: [
+                (
+                    name: "On",
+                    values: [
+                        (0, 100),
+                    ],
+                    parts: [
+                        (
+                            layer: 0,
+                            kind: Background,
+                            picture: 0,
+                            glow_strength: 100,
+                        ),
+                    ],
+                    enter_sound: 1,
+                    loop_sound: 0,
+                ),
+                (
+                    name: "Dim",
+                    values: [
+                        (0, 35),
+                    ],
+                    parts: [
+                        (
+                            layer: 0,
+                            kind: Background,
+                            picture: 1,
+                            glow_strength: 100,
+                        ),
+                    ],
+                    loop_sound: 0,
+                ),
+                (
+                    name: "Off",
+                    values: [
+                        (0, 0),
+                    ],
+                    parts: [
+                        (
+                            layer: 0,
+                            kind: Background,
+                            picture: 2,
+                            glow_strength: 100,
+                        ),
+                    ],
+                ),
+            ],
+            groups: [
+                (
+                    id: "lamps",
+                    colour: Tint("#ffe6c0"),
+                    intensity: 500,
+                    reach: Pixels(90),
+                ),
+            ],
+            scripts: [
+                0,
+            ],
+            sounds: [
+                ("buzz.wav", 0),
+                ("tick.wav", 1),
+            ],
+        ),
+        (
             id: "crane",
             asset: "Crane",
             at: (762, 269),
@@ -56,14 +335,14 @@
                             at: (10, 3),
                         ),
                     ],
-                    loop_sound: 0,
+                    loop_sound: 2,
                 ),
             ],
             scripts: [
-                0,
+                1,
             ],
             sounds: [
-                ("hum.wav", 0),
+                ("hum.wav", 2),
             ],
         ),
         (
@@ -172,9 +451,12 @@
     scripts: [
         "live/0.rhai",
         "live/1.rhai",
+        "live/2.rhai",
     ],
-    level_script: 1,
+    level_script: 2,
     sounds: [
         "live/0.wav",
+        "live/1.wav",
+        "live/2.wav",
     ],
 )

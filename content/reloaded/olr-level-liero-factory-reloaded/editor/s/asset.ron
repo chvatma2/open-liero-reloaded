@@ -56,4 +56,40 @@
             ),
         ),
     ],
+    states: [
+        (
+            name: "On",
+            loop_sound: "buzz.wav",
+            enter_sound: "tick.wav",
+        ),
+        (
+            name: "Dim",
+            own: [
+                "lamps",
+            ],
+            values: [
+                (
+                    property: GlowStrength("lamps"),
+                    value: Int(35),
+                ),
+            ],
+            loop_sound: "buzz.wav",
+        ),
+        (
+            name: "Off",
+            own: [
+                "lamps",
+            ],
+            values: [
+                (
+                    property: GlowStrength("lamps"),
+                    value: Int(0),
+                ),
+            ],
+        ),
+    ],
+    sounds: [
+        "buzz.wav",
+        "tick.wav",
+    ],
 )

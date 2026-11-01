@@ -65,6 +65,7 @@
             id: "strip-2",
             asset: "s",
             at: (1004, 80),
+            live: true,
         ),
         (
             id: "strip-3",
@@ -75,6 +76,7 @@
             id: "strip-4",
             asset: "s",
             at: (984, 177),
+            live: true,
         ),
         (
             id: "strip-5",
@@ -90,6 +92,7 @@
             id: "strip-7",
             asset: "s",
             at: (427, 286),
+            live: true,
         ),
         (
             id: "strip-8",
