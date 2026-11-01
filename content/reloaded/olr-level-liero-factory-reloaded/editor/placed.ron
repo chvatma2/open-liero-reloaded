@@ -125,11 +125,13 @@
             id: "crane",
             asset: "k",
             at: (762, 269),
+            live: true,
         ),
         (
             id: "console",
             asset: "o",
             at: (933, 269),
+            live: true,
         ),
         (
             id: "sign",
@@ -142,4 +144,5 @@
             at: (1059, 144),
         ),
     ],
+    script: true,
 )

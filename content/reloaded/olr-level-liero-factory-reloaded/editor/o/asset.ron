@@ -17,8 +17,8 @@
             name: "Displays in rock",
             kind: Drawn(
                 material: Rock,
-                at: (9, 10),
-                size: (1, 19),
+                at: (8, 10),
+                size: (17, 51),
             ),
             glow: (
                 strength: 100,
@@ -89,6 +89,31 @@
                     light: 50,
                 ),
             ),
+        ),
+    ],
+    states: [
+        (
+            name: "Normal",
+        ),
+        (
+            name: "Alarm",
+            own: [
+                "rock-disp",
+            ],
+            values: [
+                (
+                    property: LightIntensity("rock-disp"),
+                    value: Int(400),
+                ),
+                (
+                    property: GlowAnimation("rock-disp"),
+                    value: Animation(Pulse(
+                        period_ms: 600,
+                        low: 40,
+                        high: 100,
+                    )),
+                ),
+            ],
         ),
     ],
 )
