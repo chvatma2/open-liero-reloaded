@@ -8,10 +8,10 @@ use olr_audio::kira::backend::Backend;
 use olr_audio::kira::backend::Renderer;
 use olr_audio::kira::backend::mock::{MockBackend, MockBackendSettings};
 use olr_audio::{
-    Admit, Audio, DEFAULT_VOLUME, GLOBAL_GAIN, GLOBAL_VOICES, Mix, SOURCE_GAIN, Voice, Voices, attenuation,
+    ASSET_MAX_PLAYS, Admit, Audio, MAX_LOOPS, DEFAULT_VOLUME, GLOBAL_GAIN, GLOBAL_VOICES, Mix, SOURCE_GAIN, Voice, Voices, attenuation,
     decibels, is_global, max_plays, mix, mix_nearest, nearest,
 };
-use olr_content::Content;
+use olr_content::{Content, LiveLoop, LiveSounds, LiveStart};
 use olr_data::manifest::PackKind;
 use olr_math::Vec2;
 use olr_sim::{Event, EventKind, GAME_SOUNDS, SoundId, WeaponType};
@@ -442,4 +442,218 @@ fn a_preview_plays_a_sound_file_alone() {
     assert!(a.has_sound(SoundId::THROW), "the game's sounds stay loaded");
     let mut silent = Audio::<MockBackend>::silent();
     assert!(silent.preview(&good).is_ok() && !silent.previewing());
+}
+
+// Issue #92: the live copies' sounds.
+
+fn mock() -> Audio<MockBackend> {
+    Audio::<MockBackend>::with_backend(MockBackendSettings { sample_rate: 8000 })
+}
+
+/// Runs the mock device `frames` times (about 1/63 s each).
+fn run(a: &mut Audio<MockBackend>, frames: u32) {
+    let manager = a.manager_mut().expect("mock device");
+    for _ in 0..frames {
+        manager.backend_mut().on_start_processing();
+        manager.backend_mut().process();
+    }
+}
+
+/// `n` level sounds of `samples` samples each.
+fn level_sounds(a: &mut Audio<MockBackend>, n: usize, samples: u32) {
+    let good = wav(samples);
+    let names: Vec<String> = (0..n).map(|k| format!("live/{k}.wav")).collect();
+    a.load_level_sound_files(names.iter().map(|n| (n.as_str(), &good[..])));
+    assert!(a.take_warnings().is_empty());
+}
+
+fn one_shot(copy: u16, sound: u16, x: f32) -> LiveStart {
+    LiveStart { copy, sound, pos: Vec2::new(x, 50.0) }
+}
+
+fn looping(copy: u16, sound: u16, x: f32) -> LiveLoop {
+    LiveLoop { copy, sound, pos: Vec2::new(x, 50.0) }
+}
+
+fn starts(s: &[LiveStart]) -> LiveSounds {
+    LiveSounds { starts: s.to_vec(), loops: Vec::new() }
+}
+
+fn loops(l: &[LiveLoop]) -> LiveSounds {
+    LiveSounds { starts: Vec::new(), loops: l.to_vec() }
+}
+
+/// `(copy, sound, x)` of the loops playing.
+fn playing_loops(a: &Audio<MockBackend>) -> Vec<(u16, u16, f32)> {
+    a.loops().map(|l| (l.copy, l.sound, l.source.x)).collect()
+}
+
+#[test]
+fn an_entry_sound_plays_once_at_its_copy() {
+    let mut a = mock();
+    level_sounds(&mut a, 2, 800);
+    let here = Vec2::new(100.0, 50.0);
+    a.play_live(&starts(&[one_shot(3, 1, 100.0)]), &[Vec2::ZERO]);
+    assert_eq!(a.asset_one_shots().collect::<Vec<_>>(), [(1, here)]);
+    assert_eq!(a.playing(), 1);
+    // The next tick starts nothing again.
+    a.play_live(&LiveSounds::default(), &[Vec2::ZERO]);
+    assert_eq!(a.playing(), 1);
+    // Positional: mixed as a game sound there.
+    let m = mix(Vec2::ZERO, here, SOURCE_GAIN, DEFAULT_VOLUME);
+    assert!(m.amplitude < SOURCE_GAIN * DEFAULT_VOLUME && m.pan > 0.0, "{m:?}");
+    // It ends; a sound the level lacks plays nothing.
+    run(&mut a, 200);
+    a.play_live(&starts(&[one_shot(3, 7, 0.0)]), &[]);
+    assert_eq!(a.playing(), 0);
+    // Silent audio plays none.
+    let mut s = Audio::<MockBackend>::silent();
+    s.load_level_sound_files([("live/0.wav", &wav(800)[..])]);
+    s.play_live(&LiveSounds { starts: vec![one_shot(0, 0, 0.0)], loops: vec![looping(0, 0, 0.0)] }, &[Vec2::ZERO]);
+    assert_eq!((s.playing(), s.loops().count()), (0, 0));
+}
+
+#[test]
+fn a_loop_runs_while_its_state_lasts_and_stops_on_a_change() {
+    let mut a = mock();
+    level_sounds(&mut a, 2, 800);
+    let l = [Vec2::ZERO];
+    a.play_live(&loops(&[looping(0, 0, 10.0)]), &l);
+    assert_eq!(playing_loops(&a), [(0, 0, 10.0)]);
+    // Long past the sound's end, it still plays.
+    for _ in 0..5 {
+        run(&mut a, 100);
+        a.play_live(&loops(&[looping(0, 0, 10.0)]), &l);
+    }
+    assert_eq!(playing_loops(&a), [(0, 0, 10.0)]);
+    assert_eq!(a.manager_mut().unwrap().main_track().num_sounds(), 1, "one voice, never restarted");
+    // The next state loops another sound: the old one fades out, the new
+    // one starts.
+    a.play_live(&loops(&[looping(0, 1, 10.0)]), &l);
+    assert_eq!(playing_loops(&a), [(0, 1, 10.0)]);
+    run(&mut a, 5);
+    assert_eq!(a.manager_mut().unwrap().main_track().num_sounds(), 1, "the old loop faded out and is gone");
+    // A state without a loop: silence.
+    a.play_live(&LiveSounds::default(), &l);
+    assert!(playing_loops(&a).is_empty());
+    run(&mut a, 5);
+    assert_eq!(a.manager_mut().unwrap().main_track().num_sounds(), 0);
+    // A restart stops the loops; the world's come back at the next tick.
+    a.play_live(&loops(&[looping(0, 0, 10.0)]), &l);
+    a.stop_all();
+    assert_eq!(a.playing(), 0);
+    a.play_live(&loops(&[looping(0, 0, 10.0)]), &l);
+    assert_eq!(playing_loops(&a), [(0, 0, 10.0)]);
+    // A new level stops and drops them.
+    a.load_level_sound_files([]);
+    assert_eq!(a.playing(), 0);
+    assert!(!a.has_level_sound(0));
+    a.play_live(&loops(&[looping(0, 0, 10.0)]), &l);
+    assert_eq!(a.playing(), 0);
+}
+
+#[test]
+fn a_loop_follows_its_moving_copy() {
+    let mut a = mock();
+    level_sounds(&mut a, 1, 800);
+    let l = [Vec2::ZERO];
+    a.play_live(&loops(&[looping(2, 0, 0.0)]), &l);
+    let near = a.loops().next().unwrap().mix;
+    assert_eq!(near, mix(Vec2::ZERO, Vec2::new(0.0, 50.0), SOURCE_GAIN, DEFAULT_VOLUME));
+    // The copy moves off to the right: the same loop, re-mixed from there.
+    a.play_live(&loops(&[looping(2, 0, 300.0)]), &l);
+    let far = *a.loops().next().unwrap();
+    assert_eq!((far.copy, far.source), (2, Vec2::new(300.0, 50.0)));
+    assert_eq!(far.mix, mix(Vec2::ZERO, far.source, SOURCE_GAIN, DEFAULT_VOLUME));
+    assert!(far.mix.amplitude < near.amplitude && far.mix.pan > 0.9, "{far:?}");
+    assert_eq!(a.manager_mut().unwrap().main_track().num_sounds(), 1, "not restarted");
+    // The master volume re-mixes it too.
+    a.set_volume(0.2);
+    assert_eq!(a.loops().next().unwrap().mix, mix(Vec2::ZERO, far.source, SOURCE_GAIN, 0.2));
+}
+
+#[test]
+fn a_loop_is_heard_from_the_nearest_listener() {
+    let mut a = mock();
+    level_sounds(&mut a, 1, 800);
+    let (p, q) = (Vec2::new(0.0, 50.0), Vec2::new(1000.0, 50.0));
+    a.play_live(&loops(&[looping(0, 0, 900.0)]), &[p, q]);
+    let m = a.loops().next().unwrap().mix;
+    assert_eq!(m, mix(q, Vec2::new(900.0, 50.0), SOURCE_GAIN, DEFAULT_VOLUME));
+    assert!(m.pan < 0.0, "left of the second view: {m:?}");
+    // The second player moves away: heard from the first.
+    let gone = Vec2::new(5000.0, 3000.0);
+    a.play_live(&loops(&[looping(0, 0, 900.0)]), &[p, gone]);
+    assert_eq!(a.loops().next().unwrap().mix, mix(p, Vec2::new(900.0, 50.0), SOURCE_GAIN, DEFAULT_VOLUME));
+    // No listeners keep the last ones.
+    a.play_live(&loops(&[looping(0, 0, 900.0)]), &[]);
+    assert_eq!(a.loops().next().unwrap().mix, mix(p, Vec2::new(900.0, 50.0), SOURCE_GAIN, DEFAULT_VOLUME));
+}
+
+#[test]
+fn asset_sounds_respect_their_limits() {
+    assert_eq!((ASSET_MAX_PLAYS, MAX_LOOPS), (4, 16));
+    let mut a = mock();
+    level_sounds(&mut a, 2, 8000);
+    let l = [Vec2::ZERO];
+    // Six starts of one sound: four play; another sound has its own four.
+    let six: Vec<LiveStart> = (0..6).map(|c| one_shot(c, 0, 0.0)).collect();
+    a.play_live(&starts(&six), &l);
+    assert_eq!(a.playing(), 4);
+    a.play_live(&starts(&six), &l);
+    assert_eq!(a.playing(), 4, "beyond the limit a start is skipped");
+    a.play_live(&starts(&[one_shot(0, 1, 0.0)]), &l);
+    assert_eq!(a.playing(), 5);
+    a.stop_all();
+
+    // Twenty loops: the sixteen nearest play.
+    let row: Vec<LiveLoop> = (0..20).map(|c| looping(c, 1, f32::from(c) * 100.0)).collect();
+    a.play_live(&loops(&row), &l);
+    let copies = |a: &Audio<MockBackend>| {
+        let mut c: Vec<u16> = a.loops().map(|l| l.copy).collect();
+        c.sort();
+        c
+    };
+    assert_eq!(copies(&a), (0..16).collect::<Vec<_>>());
+    // The listener goes to the far end: the near ones there play instead.
+    a.play_live(&loops(&row), &[Vec2::new(1900.0, 50.0)]);
+    assert_eq!(copies(&a), (4..20).collect::<Vec<_>>());
+    // And back: the ones dropped come back.
+    a.play_live(&loops(&row), &l);
+    assert_eq!(copies(&a), (0..16).collect::<Vec<_>>());
+
+    // Everything counts against GLOBAL_VOICES: the game's sounds fill it
+    // up to the loops; then no start plays and no further loop starts.
+    let names: Vec<String> = (0..40).map(|i| format!("sfx/{i}.wav")).collect();
+    let good = wav(8000);
+    a.load_sounds(&names, |_| Some(&good[..]));
+    level_sounds(&mut a, 2, 8000);
+    a.play_live(&loops(&row[..10]), &l);
+    let ev: Vec<Event> = (0..400).map(|i| sound(SoundId(6 + (i % 34) as u16), 0.0)).collect();
+    a.play_heard(&ev, &l);
+    assert_eq!(a.playing(), GLOBAL_VOICES);
+    a.play_live(&LiveSounds { starts: six.clone(), loops: row.clone() }, &l);
+    assert_eq!(a.playing(), GLOBAL_VOICES);
+    assert_eq!(a.loops().count(), 10, "no room for more loops");
+    assert_eq!(a.asset_one_shots().count(), 0);
+}
+
+#[test]
+fn an_undecodable_level_sound_is_a_warning() {
+    let mut a = mock();
+    let (good, broken) = (wav(800), b"OggS lies about its length".to_vec());
+    a.load_level_sound_files([("live/0.wav", &good[..]), ("live/1.ogg", &broken[..])]);
+    let w = a.take_warnings();
+    assert_eq!(w.len(), 1, "{w:?}");
+    assert!(w[0].contains("live/1.ogg") && w[0].contains("plays nothing"), "{w:?}");
+    assert!(a.has_level_sound(0) && !a.has_level_sound(1) && !a.has_level_sound(2));
+    // It plays nothing, the good one plays.
+    a.play_live(
+        &LiveSounds { starts: vec![one_shot(0, 1, 0.0)], loops: vec![looping(0, 1, 0.0), looping(1, 0, 0.0)] },
+        &[Vec2::ZERO],
+    );
+    assert_eq!(playing_loops(&a), [(1, 0, 0.0)]);
+    assert_eq!(a.asset_one_shots().count(), 0);
+    // The mod's sounds are apart.
+    assert!(!a.has_sound(SoundId::THROW));
 }

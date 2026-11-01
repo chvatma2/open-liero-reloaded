@@ -1,7 +1,8 @@
 # olr-audio
 
 Plays the simulation's `Sound` events through kira 0.12.5 the way OLX's
-OpenAL driver does (spec §8.4, §19 E1/E12; presentation note §8).
+OpenAL driver does (spec §8.4, §19 E1/E12; presentation note §8), and a
+level's live copies' sounds (issue #92).
 
 - **Layer 5, uses `std`.** Depends on `olr-sim`, `olr-content`, `olr-math`,
   `kira` (cpal backend; OGG/Vorbis and WAV decoding, no realtime-priority
@@ -49,6 +50,33 @@ OpenAL driver does (spec §8.4, §19 E1/E12; presentation note §8).
   one sound file at the listener (global gain, the master volume), apart
   from the voices and the loaded sounds, stopping a preview still playing
   (`previewing`); one that does not decode is an `Err`.
+- **Live copies' sounds** (issue #92, STATUS.md "Live assets"; no OLX
+  counterpart): `load_level_sounds(&LoadedLevel)` decodes the level's
+  live sounds (`LoadedLive::source.sounds`, by their index in the level's
+  sounds; `load_level_sound_files(names and bytes)` underneath, what the
+  tests use) once per level load, apart from the mod's `SoundId`s: one
+  that does not decode plays nothing and is a warning, as a mod sound;
+  every voice and loop stops and the last level's sounds go. The bytes
+  were checked at load (`olr_pack::sounds`' `MAX_SOUND_BYTES`,
+  `MAX_SOUND_SECONDS`) and the decoder's panic is caught. `play_live(&
+  olr_content::LiveSounds, listeners)` once a presented tick, after
+  `play_heard`: its `starts` play once each at their copy's centre
+  (`SOURCE_GAIN`, `mix_nearest`, the master volume), at most
+  `ASSET_MAX_PLAYS` (4) one-shots of one sound (a start beyond it is
+  skipped, never a steal: `Voices::admit_asset`); its `loops` are what
+  the presented world plays: the `MAX_LOOPS` (16) nearest to a listener
+  (squared distance, ties in copy order) loop (kira's `loop_region(0..)`,
+  a 5-ms fade in), keyed by copy and sound (a next state looping the same
+  sound plays on), re-mixed every call from their copy's place now and
+  the nearest listener; one no longer wanted (a state change, a hidden
+  copy, others nearer) stops with `STEAL_FADE`'s 5 ms (no click) and
+  starts again when it is wanted again. Loops are counted against
+  `GLOBAL_VOICES` with every voice (`Voices::set_reserved`): a start or
+  a loop past it waits. `stop_all` stops the loops too (the world's start
+  again at the next `play_live`); silent audio plays none. `loops()`
+  (`PlayingLoop { copy, sound, source, mix }`) and `asset_one_shots()`
+  are what plays, for tests. The game's sounds, their limits and their
+  mixing are as before.
 - Beams fire silently: the data model gives beam weapons no sound and the
   simulation emits none for their shots.
 - **WSL:** sound needs `libasound2-plugins` and `~/.asoundrc` with
@@ -56,6 +84,10 @@ OpenAL driver does (spec §8.4, §19 E1/E12; presentation note §8).
 
 Test: `cargo nextest run -p olr-audio` (pure maths and limits, a mock
 device, silence without one, `a_preview_plays_a_sound_file_alone`,
-issue #27's `each_sound_is_heard_from_the_nearest_listener`; `decodes_every_mod_sound` needs
+issue #27's `each_sound_is_heard_from_the_nearest_listener`; issue
+#92's `an_entry_sound_plays_once_at_its_copy`,
+`a_loop_runs_while_its_state_lasts_and_stops_on_a_change`,
+`a_loop_follows_its_moving_copy`, `a_loop_is_heard_from_the_nearest_listener`,
+`asset_sounds_respect_their_limits`, `an_undecodable_level_sound_is_a_warning`; `decodes_every_mod_sound` needs
 `OLR_CONTENT_DIR`). The real device: `cargo run -p olr-audio --example
 device_check` (exit 3 means no device opened); `cargo xtask full` runs it.

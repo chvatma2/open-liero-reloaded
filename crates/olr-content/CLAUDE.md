@@ -100,6 +100,14 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   only by them). Tests: `glow_strength_is_mask_times_value` (every copy of the fixture
   drawn live shows the glow and the colours of the same copies baked
   static), `a_level_lit_only_by_live_copies_draws_lit`.
+  Issue #92 (`live_sounds.rs`): `LiveSounds { starts: Vec<LiveStart>,
+  loops: Vec<LiveLoop> }`, a presented tick's live sounds, plain data
+  between `olr-present` (fills it) and `olr-audio` (`play_live` plays
+  it), both of layer 5: `push_start(view, &EventKind)` takes a
+  `LiveState` whose state has an `enter_sound` or a `LiveSound`,
+  `set_loops(world.live())` every shown copy whose state has a
+  `loop_sound`, each at `copy_centre` (its rectangle's, moved by `X`/`Y`);
+  a hidden copy (`Visible` 0) is silent; no allocation once warm.
   Issue #88: `LoadedLive::new` also compiles the scripts
   (`olr_script::director`; `LoadedLive::director`, `None` when no copy and
   no level script runs one): a script that does not compile refuses the

@@ -12,15 +12,19 @@
 //!   sources that stay put. Pure policy.
 //! - **Device** ([`Audio`]): kira's default backend; when no output device
 //!   opens the game runs silently and says so once (E12).
+//! - **Live copies' sounds** (issue #92, [`Audio::play_live`]): a level's
+//!   asset sounds, decoded once per level, started once (entries and
+//!   scripts' `play`) or looped while a copy's state lasts, positional as
+//!   game sounds are.
 
 #![forbid(unsafe_code)]
 
-pub use audio::{Audio, is_global};
+pub use audio::{Audio, PlayingLoop, is_global};
 pub use mix::{
     DEFAULT_VOLUME, GLOBAL_GAIN, LISTENER_DISTANCE, Mix, REFERENCE_DISTANCE, ROLLOFF, SILENCE_DB,
     SOURCE_GAIN, attenuation, decibels, mix, mix_nearest, nearest,
 };
-pub use voices::{Admit, GLOBAL_VOICES, Victim, Voice, Voices, max_plays};
+pub use voices::{ASSET_MAX_PLAYS, Admit, GLOBAL_VOICES, MAX_LOOPS, Victim, Voice, Voices, max_plays};
 
 /// kira, for callers that pick a backend ([`Audio::with_backend`]).
 pub use kira;

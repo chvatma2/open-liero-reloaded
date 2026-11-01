@@ -32,6 +32,15 @@ pub fn max_plays(id: SoundId) -> usize {
 /// ([`Voices::admit`]).
 pub const GLOBAL_VOICES: usize = 256;
 
+/// How many copies of one asset sound (a level's live copies' sound, by
+/// its index in the level's sounds; issue #92) may play at once as
+/// one-shots: a start beyond it is skipped, as OLX skips its sounds'.
+pub const ASSET_MAX_PLAYS: usize = 4;
+
+/// How many asset sounds loop at once at most (issue #92): the ones
+/// nearest to a listener, re-chosen each tick (`Audio::play_live`).
+pub const MAX_LOOPS: usize = 16;
+
 /// What a new sound may do ([`Voices::admit`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Admit {
@@ -49,8 +58,15 @@ pub enum Admit {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Victim(usize);
 
+/// Whose sound a voice plays: a game or mod sound, or an asset's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Key {
+    Game(SoundId),
+    Asset(u16),
+}
+
 struct Live<V> {
-    sound: SoundId,
+    sound: Key,
     /// Where the source is, in world px (a global sound's is the listener's
     /// position when it started, like OLX's).
     source: Vec2,
@@ -62,12 +78,15 @@ struct Live<V> {
 pub struct Voices<V> {
     live: Vec<Live<V>>,
     limit: usize,
+    /// Voices playing elsewhere that count against `limit` (the asset
+    /// loops, [`Voices::set_reserved`]).
+    reserved: usize,
 }
 
 impl<V: Voice> Voices<V> {
     /// At most `limit` voices at once ([`GLOBAL_VOICES`]).
     pub fn new(limit: usize) -> Voices<V> {
-        Voices { live: Vec::with_capacity(limit), limit }
+        Voices { live: Vec::with_capacity(limit), limit, reserved: 0 }
     }
 
     /// How many voices play.
@@ -81,7 +100,43 @@ impl<V: Voice> Voices<V> {
 
     /// How many copies of `sound` play.
     pub fn playing(&self, sound: SoundId) -> usize {
-        self.live.iter().filter(|l| l.sound == sound).count()
+        self.live.iter().filter(|l| l.sound == Key::Game(sound)).count()
+    }
+
+    /// How many one-shots of asset sound `sound` play (issue #92).
+    pub fn playing_asset(&self, sound: u16) -> usize {
+        self.live.iter().filter(|l| l.sound == Key::Asset(sound)).count()
+    }
+
+    /// `n` voices playing elsewhere count against the limit from now on
+    /// (the asset loops, issue #92).
+    pub fn set_reserved(&mut self, n: usize) {
+        self.reserved = n;
+    }
+
+    /// Whether the limit leaves room for one more voice.
+    pub fn has_room(&self) -> bool {
+        self.live.len() + self.reserved < self.limit
+    }
+
+    /// Whether asset sound `sound` may start now as a one-shot: below
+    /// [`ASSET_MAX_PLAYS`] of it and the limit in all; else it is skipped
+    /// (never a steal).
+    pub fn admit_asset(&self, sound: u16) -> Admit {
+        if self.playing_asset(sound) < ASSET_MAX_PLAYS && self.has_room() { Admit::Start } else { Admit::Skip }
+    }
+
+    /// Adds a started one-shot of asset sound `sound`.
+    pub fn push_asset(&mut self, sound: u16, source: Vec2, gain: f32, voice: V) {
+        self.live.push(Live { sound: Key::Asset(sound), source, gain, voice });
+    }
+
+    /// Each asset one-shot playing: its sound and source, oldest first.
+    pub fn asset_sources(&self) -> impl Iterator<Item = (u16, Vec2)> + '_ {
+        self.live.iter().filter_map(|l| match l.sound {
+            Key::Asset(s) => Some((s, l.source)),
+            Key::Game(_) => None,
+        })
     }
 
     /// Forgets the voices that stopped.
@@ -101,18 +156,15 @@ impl<V: Voice> Voices<V> {
     /// voice playing. Oldest is push order, so it is deterministic.
     pub fn admit(&self, sound: SoundId) -> Admit {
         let own = self.playing(sound) >= max_plays(sound);
-        if !own && self.live.len() < self.limit {
+        if !own && self.has_room() {
             return Admit::Start;
         }
         if !SoundId::DEATH.contains(&sound) {
             return Admit::Skip;
         }
-        let same = self.live.iter().position(|l| l.sound == sound);
-        let victim = if own {
-            same
-        } else {
-            same.or_else(|| self.live.iter().position(|l| !SoundId::DEATH.contains(&l.sound)))
-        };
+        let same = self.live.iter().position(|l| l.sound == Key::Game(sound));
+        let death = |k: Key| matches!(k, Key::Game(s) if SoundId::DEATH.contains(&s));
+        let victim = if own { same } else { same.or_else(|| self.live.iter().position(|l| !death(l.sound))) };
         match victim {
             Some(i) => Admit::Steal(Victim(i)),
             None => Admit::Skip,
@@ -135,7 +187,7 @@ impl<V: Voice> Voices<V> {
 
     /// Adds a started voice.
     pub fn push(&mut self, sound: SoundId, source: Vec2, gain: f32, voice: V) {
-        self.live.push(Live { sound, source, gain, voice });
+        self.live.push(Live { sound: Key::Game(sound), source, gain, voice });
     }
 
     /// Re-mixes every voice for a listener now at `listener`: OpenAL

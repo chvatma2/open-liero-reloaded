@@ -1,5 +1,5 @@
 //! The output device (kira), the decoded sounds, and playing a tick's
-//! `Sound` events.
+//! `Sound` events and its live copies' sounds (issue #92).
 
 use std::fmt::Debug;
 use std::io::Cursor;
@@ -11,15 +11,41 @@ use kira::sound::PlaybackState;
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
 use kira::track::MainTrackBuilder;
 use kira::{AudioManager, AudioManagerSettings, Decibels, DefaultBackend, Panning, Tween};
-use olr_content::{CorePack, LoadedMod};
+use olr_content::{CorePack, LiveSounds, LoadedLevel, LoadedMod};
 use olr_math::Vec2;
 use olr_sim::{Event, EventKind, GAME_SOUND_PREFIX, SoundId, TickEvents};
 
-use crate::mix::{DEFAULT_VOLUME, GLOBAL_GAIN, Mix, SOURCE_GAIN, decibels, mix, mix_nearest};
-use crate::voices::{Admit, GLOBAL_VOICES, Voice, Voices};
+use crate::mix::{DEFAULT_VOLUME, GLOBAL_GAIN, Mix, SOURCE_GAIN, decibels, mix, mix_nearest, nearest};
+use crate::voices::{Admit, GLOBAL_VOICES, MAX_LOOPS, Voice, Voices};
 
-/// How long a voice a death sound takes the place of fades out.
+/// How long a voice a death sound takes the place of fades out; so too a
+/// loop that stops and one that starts (issue #92: no click).
 const STEAL_FADE: Duration = Duration::from_millis(5);
+
+/// The short fade of [`STEAL_FADE`].
+fn fade() -> Tween {
+    Tween { duration: STEAL_FADE, ..Tween::default() }
+}
+
+/// An asset sound looping for a live copy (issue #92), as
+/// [`Audio::loops`] reports it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlayingLoop {
+    /// The copy, an index into the level's live copies.
+    pub copy: u16,
+    /// The sound, an index into the level's sounds.
+    pub sound: u16,
+    /// Where it is heard from (world px): its copy's centre at the last
+    /// [`Audio::play_live`].
+    pub source: Vec2,
+    /// What it plays at now.
+    pub mix: Mix,
+}
+
+struct LoopVoice {
+    info: PlayingLoop,
+    handle: StaticSoundHandle,
+}
 
 /// kira's room for sounds on the main track: the voice limit plus the
 /// stopped and stopping sounds kira has not removed yet.
@@ -50,6 +76,17 @@ fn decode(bytes: &[u8]) -> Result<StaticSoundData, String> {
     }
 }
 
+/// Re-mixes every loop from its source for `listeners` and `volume`.
+fn follow_loops(loops: &mut [LoopVoice], listeners: &[Vec2], volume: f32) {
+    for v in loops {
+        let m = mix_nearest(listeners, v.info.source, SOURCE_GAIN, volume);
+        if m != v.info.mix {
+            v.info.mix = m;
+            v.handle.set_mix(m);
+        }
+    }
+}
+
 /// Whether sound `id` plays at the listener, not at its position: OLX plays
 /// the rope throw and the bonus pickup with `PlaySoundSample`, every other
 /// sound with `StartSound` (spec §19 E1).
@@ -69,6 +106,13 @@ pub struct Audio<B: Backend = DefaultBackend> {
     /// Decoded sounds by [`SoundId`]; `None` plays nothing.
     sounds: Vec<Option<StaticSoundData>>,
     voices: Voices<StaticSoundHandle>,
+    /// The level's live copies' sounds (issue #92), by their index in the
+    /// level's sounds; `None` plays nothing.
+    level_sounds: Vec<Option<StaticSoundData>>,
+    /// The asset loops playing (at most [`MAX_LOOPS`]).
+    loops: Vec<LoopVoice>,
+    /// The loops chosen this tick: distance and index (reused).
+    chosen: Vec<(f32, usize)>,
     volume: f32,
     /// Where the listeners were last (each view's centre at the last tick;
     /// never empty, the first the global sounds' and the preview's).
@@ -120,6 +164,9 @@ impl<B: Backend> Audio<B> {
             manager: None,
             sounds: Vec::new(),
             voices: Voices::new(GLOBAL_VOICES),
+            level_sounds: Vec::new(),
+            loops: Vec::with_capacity(MAX_LOOPS),
+            chosen: Vec::new(),
             volume: DEFAULT_VOLUME,
             listeners: vec![Vec2::ZERO],
             preview: None,
@@ -150,11 +197,13 @@ impl<B: Backend> Audio<B> {
     pub fn set_volume(&mut self, volume: f32) {
         self.volume = if volume.is_finite() { volume.clamp(0.0, 1.0) } else { DEFAULT_VOLUME };
         self.voices.follow_nearest(&self.listeners, self.volume);
+        follow_loops(&mut self.loops, &self.listeners, self.volume);
     }
 
-    /// How many voices play (for the debug overlay).
+    /// How many voices play (for the debug overlay), the asset loops
+    /// included.
     pub fn playing(&self) -> usize {
-        self.voices.len()
+        self.voices.len() + self.loops.len()
     }
 
     /// Decodes mod `m`'s sounds (OGG, or WAV), indexed like its
@@ -189,6 +238,157 @@ impl<B: Backend> Audio<B> {
                 _ => None,
             };
             self.sounds.push(data);
+        }
+    }
+
+    /// Decodes `level`'s live copies' sounds (issue #92, `live/<k>.ogg`
+    /// or `.wav`, checked against `olr_pack::sounds`' limits when the
+    /// level loaded), indexed like the level's sounds, apart from the
+    /// mod's: [`Audio::load_level_sound_files`] of them.
+    pub fn load_level_sounds(&mut self, level: &LoadedLevel) {
+        let Some(live) = &level.live else {
+            self.load_level_sound_files(std::iter::empty());
+            return;
+        };
+        let names = &live.source.file.sounds;
+        self.load_level_sound_files(
+            live.source.sounds.iter().enumerate().map(|(k, b)| (names.get(k).map_or("", String::as_str), &b[..])),
+        );
+    }
+
+    /// The level sounds `files` (name for the warning, bytes), by index:
+    /// stops every voice and loop and drops the last level's sounds. One
+    /// that does not decode plays nothing and is a warning, as a mod
+    /// sound. Silent audio decodes nothing. Decoding happens here, once
+    /// per level load, never per tick.
+    pub fn load_level_sound_files<'a>(&mut self, files: impl IntoIterator<Item = (&'a str, &'a [u8])>) {
+        self.stop_all();
+        self.level_sounds.clear();
+        for (name, bytes) in files {
+            let data = match &self.manager {
+                Some(_) => match decode(bytes) {
+                    Ok(d) => Some(d),
+                    Err(e) => {
+                        self.warnings.push(format!("level sound {name} does not decode, it plays nothing: {e}"));
+                        None
+                    }
+                },
+                None => None,
+            };
+            self.level_sounds.push(data);
+        }
+    }
+
+    /// Whether level sound `k` was loaded and decoded.
+    pub fn has_level_sound(&self, k: u16) -> bool {
+        matches!(self.level_sounds.get(usize::from(k)), Some(Some(_)))
+    }
+
+    /// The asset loops playing (issue #92), in the order they started.
+    pub fn loops(&self) -> impl Iterator<Item = &PlayingLoop> {
+        self.loops.iter().map(|l| &l.info)
+    }
+
+    /// Each asset one-shot playing: its level sound and where it plays.
+    pub fn asset_one_shots(&self) -> impl Iterator<Item = (u16, Vec2)> + '_ {
+        self.voices.asset_sources()
+    }
+
+    /// Plays a presented tick's live copies' sounds (issue #92) for the
+    /// listeners `listeners` (each local view's centre; none keep the last
+    /// ones): call it once a tick, after [`Audio::play_heard`].
+    ///
+    /// - The loops follow `live.loops`: the [`MAX_LOOPS`] nearest to a
+    ///   listener play (ties in their order), each re-mixed from its
+    ///   copy's place now and heard from the nearest listener
+    ///   ([`mix_nearest`], [`SOURCE_GAIN`], the master volume); one no
+    ///   longer wanted (its state changed, its copy hidden, farther than
+    ///   the others) stops with a 5-ms fade, a new one starts with one.
+    ///   A loop keyed by copy and sound plays on while its copy's next
+    ///   state loops the same sound.
+    /// - The starts play once each where they are, like a game sound: at
+    ///   most [`crate::ASSET_MAX_PLAYS`] of one sound at once, a start
+    ///   beyond it skipped.
+    /// - Loops and one-shots count against [`GLOBAL_VOICES`] with the
+    ///   game's voices; a start or a loop past it waits (a loop starts at
+    ///   a later tick when there is room).
+    ///
+    /// Silent audio plays nothing.
+    pub fn play_live(&mut self, live: &LiveSounds, listeners: &[Vec2]) {
+        if self.manager.is_none() {
+            return;
+        }
+        if !listeners.is_empty() {
+            self.listeners.clear();
+            self.listeners.extend_from_slice(listeners);
+        }
+        self.voices.prune();
+        // The loops wanted: the nearest to a listener.
+        self.chosen.clear();
+        for (i, l) in live.loops.iter().enumerate() {
+            if self.has_level_sound(l.sound) {
+                let near = nearest(&self.listeners, l.pos);
+                let (dx, dy) = (l.pos.x - near.x, l.pos.y - near.y);
+                self.chosen.push((dx * dx + dy * dy, i));
+            }
+        }
+        self.chosen.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        self.chosen.truncate(MAX_LOOPS);
+        // Those playing that are not wanted fade out; the others move.
+        let (chosen, wanted) = (&self.chosen, &live.loops);
+        self.loops.retain_mut(|v| {
+            let found = chosen
+                .iter()
+                .map(|&(_, i)| &wanted[i])
+                .find(|l| l.copy == v.info.copy && l.sound == v.info.sound && v.handle.playing());
+            match found {
+                Some(l) => {
+                    v.info.source = l.pos;
+                    true
+                }
+                None => {
+                    v.handle.stop(fade());
+                    false
+                }
+            }
+        });
+        self.voices.set_reserved(self.loops.len());
+        // The wanted ones not playing start, while there is room.
+        let Some(manager) = &mut self.manager else { return };
+        for &(_, i) in &self.chosen {
+            let l = wanted[i];
+            if self.loops.iter().any(|v| v.info.copy == l.copy && v.info.sound == l.sound) {
+                continue;
+            }
+            if !self.voices.has_room() {
+                break;
+            }
+            let Some(Some(data)) = self.level_sounds.get(usize::from(l.sound)) else { continue };
+            let m = mix_nearest(&self.listeners, l.pos, SOURCE_GAIN, self.volume);
+            let data = data
+                .loop_region(0.0..)
+                .fade_in_tween(fade())
+                .volume(Decibels(decibels(m.amplitude)))
+                .panning(Panning(m.pan));
+            let Ok(handle) = manager.play(data) else { continue };
+            self.loops.push(LoopVoice {
+                info: PlayingLoop { copy: l.copy, sound: l.sound, source: l.pos, mix: m },
+                handle,
+            });
+            self.voices.set_reserved(self.loops.len());
+        }
+        self.voices.follow_nearest(&self.listeners, self.volume);
+        follow_loops(&mut self.loops, &self.listeners, self.volume);
+        // The one-shots.
+        for s in &live.starts {
+            let Some(Some(data)) = self.level_sounds.get(usize::from(s.sound)) else { continue };
+            if self.voices.admit_asset(s.sound) != Admit::Start {
+                continue;
+            }
+            let m = mix_nearest(&self.listeners, s.pos, SOURCE_GAIN, self.volume);
+            let data = data.volume(Decibels(decibels(m.amplitude))).panning(Panning(m.pan));
+            let Ok(handle) = manager.play(data) else { continue };
+            self.voices.push_asset(s.sound, s.pos, SOURCE_GAIN, handle);
         }
     }
 
@@ -286,12 +486,17 @@ impl<B: Backend> Audio<B> {
         self.preview.as_ref().is_some_and(Voice::playing)
     }
 
-    /// Stops every voice (a restart).
+    /// Stops every voice, the asset loops too (a restart; the loops a
+    /// world plays start again at the next [`Audio::play_live`]).
     pub fn stop_all(&mut self) {
         for v in self.voices.voices_mut() {
             v.stop(Tween::default());
         }
         self.voices.clear();
+        for mut l in self.loops.drain(..) {
+            l.handle.stop(fade());
+        }
+        self.voices.set_reserved(0);
     }
 
     /// kira's manager, if a device is open (tests drive a mock backend
