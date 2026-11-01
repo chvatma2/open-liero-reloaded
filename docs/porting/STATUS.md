@@ -7634,6 +7634,104 @@ explosions damage the destructible ones.
   `fixtures/matches/` is unchanged. `World::explode_for_test` (doc-hidden)
   sets off an explosion between ticks for tests.
 
+## Liero Factory Reloaded from assets (issue #96)
+
+No OLX counterpart (the level's origin is OLX's `Liero Factory.lxl` at
+`d1ad953f`, as After Dark's). The design
+`docs/superpowers/specs/2026-10-26-asset-based-levels-design.md`
+("Liero Factory", "Order of work" step 3, first part); the pack is
+`content/reloaded/olr-level-liero-factory-reloaded/`, its README entry
+in `content/reloaded/README.md`. After Dark rebuilt from assets, playing
+and looking as After Dark: its bake is After Dark's byte for byte
+(`material.png`, `front.png`, `back.png`, the distant sky and, as built,
+every `look/` file too), every copy static. Issues #97, #98 and #99 make
+it live.
+
+- **The pieces and their keys** (one mnemonic letter each, settled
+  while writing the issue up; copy ids at most 10 characters):
+  `ground` (the level's own Ground: After Dark's `backdrop`, `dirt`,
+  `rock` and the glowing, glass and beam layers no piece takes), `y`
+  (the level's own Night sky, copy `sky`, distant at 90: After Dark's
+  distant sky element, moved out of the ground), `s` (built-in Strip
+  light, `strip-1` … `strip-9`), `l` (Ceiling lamp, `ceil-lamp`), `c`
+  (Computer screen, `screen`), `d` (Control desk, `desk`), `w` (Warning
+  beacon, `beacon`, the first roof speaker), `k` (the new Crane,
+  `crane`), `o` (the new Console, `console`), `t` (Lit sign, `sign`,
+  above the console) and `g` (the new Gauge, `gauge`). Each is placed
+  1:1 at its old place, its aspect kept, and the ground loses exactly
+  its pixels: the layers it was cut from erased over its rectangle. That
+  keeps the bake: no ground layer above a piece's layer (in After Dark's
+  order) covers any of its pixels (checked for each piece while building
+  it), and a copy lies above the whole ground. The ground's `screens`,
+  `ctrl-scr`, `rock-scr`, `displays` and `rock-disp` were left empty and
+  removed; its glow groups and materials stay as After Dark's (the
+  pieces bring identical ones, shared by #73's gathering rule, so even
+  the group and material numbers are After Dark's).
+- **The new built-in assets.** Crane (`rail`, rows 269-271, and `claw`,
+  rows 272-318, two rock layers that never overlap, in a 114 × 50 box
+  covering the claw's whole travel: x 762-875); Console (rock x 933-965,
+  y 269-332 with its LED column `rock-disp`, the Lit sign's rectangle
+  erased first); Gauge (the teal device, 1059-1106 × 144-170: `rock`,
+  `rock-scr` its screen, `rock-disp` the gauge and buttons; the grey
+  brackets beside it stay in the ground). The Crane is the only built-in
+  asset that does not glow.
+- **Exceptions, staying in the ground in After Dark's layers.** The five
+  one-row strips (x 318, 444 and 537 at y 183; x 373 and 498 at y 237)
+  show one row of the 29 × 2 Strip light, their second lying under rock:
+  the Strip light there would add pixels. The second roof speaker (about
+  x 987) is drawn broken, a dark hole in its ring: not the Warning
+  beacon's picture. No other piece needed to stay.
+- **The built-in assets' README blocks.** Each built-in asset's entry in
+  `content/assets/README.md` holds one block of `olr-cli` lines (the
+  review's first option): its `asset save … --out
+  content/assets/<folder>`; lines before it may prepare the source level
+  (`level element …` on After Dark's path: the Crane's two `extract`s,
+  the Console's erasing of the sign's rectangle), lines after it edit
+  the folder (#72's `asset state|expose|sound|script`, for #97-#99).
+  Blocks read only committed inputs (the Reloaded packs, files under
+  `tools/levels/factory/`). `olr-cli`'s
+  `built_in_assets_are_what_their_commands_make` runs each on fresh
+  copies of the `content/reloaded/` packs it names (a deviation from the
+  issue's one temporary copy of After Dark: a fresh one per block, so a
+  block's preparation never reaches another's), its folder replaced by
+  a temporary one, and compares by #76's comparison (`asset.ron`, the
+  element files, sounds and script; never `thumb.png`), one block per
+  asset; a block that makes another asset fails naming its folder. The
+  issue says a block's first line is its `asset save` and also that
+  lines may first prepare the source level; the blocks follow the second
+  (preparation, then the save, then edits).
+- **Commands added** (`olr-cli`, through `olr-edit`): `level element
+  extract <pack> <id> <shape> --name N` (`element::extract`,
+  `drawn::take`: a shape's pixels of a drawn layer moved whole into a
+  new layer directly above it with its settings, nothing dug: the
+  crane's rail and claw); `pack new … --from <pack> --keep-origin`
+  (`new::Template::Remake`: a copy keeping its origin, the level being a
+  remake of OLX's Liero Factory as After Dark is); `level notes <pack>
+  <text>` (the level's notes). The ground's erasing needed none:
+  `level element erase --rect` on each layer (unlocked first and locked
+  again), while the ground is alone, before any copy is placed.
+- **The build** is `tools/levels/factory_assets.py` (stdlib only,
+  `python3 -I`): the three new assets from their blocks, then `pack new
+  --keep-origin`, `level notes`, the ground's erases, the sky (cut from a
+  copy of After Dark with `asset save --elements sky`, made near first,
+  then placed and set distant at 90) and `level copy add … --key <k>
+  --id <id> --at X,Y` for each built-in copy (`--key` on the first copy
+  of an asset only: a second reuses it). Running it again makes the
+  same bytes.
+- **Tests** (`olr-cli`'s `tests/reloaded.rs`): `the_new_factory_bakes_as_after_dark`
+  (per pixel, glow groups and surface materials compared by their
+  settings, not their ids or numbers, since groups are internal to
+  assets), `the_new_factory_is_made_of_assets` (`level library` prints
+  `same` for every built-in key: a built-in asset changed without the
+  level fails there), `the_new_factory_plays_as_after_dark` (the world
+  checksum every tick: it covers the terrain, not the level's hash) and
+  `the_new_factory_draws_as_after_dark` (GPU tier, `look-preview` at the
+  offices, the crane, the control room and the truck); `olr-editor`'s
+  `liero_factory_reloaded_opens_with_its_copies`. The editor's
+  `every_shipped_level_saves_byte_identical` now gives its test host the
+  built-in library (the game's host has it), else the new level opens on
+  the library notice of missing assets.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`

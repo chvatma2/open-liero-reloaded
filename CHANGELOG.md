@@ -226,6 +226,14 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   broken script still does); a library update that would break a script
   is reported as a break. `olr-cli level check-scripts <pack>` lists the
   problems. `olr-cli match --packs DIR` plays on extra pack directories.
+- A new Liero Factory Reloaded (`olr-level-liero-factory-reloaded`),
+  After Dark rebuilt from assets: its ground, its night sky and copies of
+  the built-in assets (strip lights, the ceiling lamp, the control room's
+  screen and desk, the lit sign, a roof beacon, and the new Crane, Console
+  and Gauge) at their old places. It plays and looks as After Dark; nothing
+  moves yet. `olr-cli level element extract` moves a shape's pixels into a
+  layer of their own, `level notes` sets a level's notes and `pack new
+  --keep-origin` keeps the copied pack's origin.
 
 ### Changed
 
