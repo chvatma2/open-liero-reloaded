@@ -48,9 +48,11 @@ pub(crate) enum Handler {
     Damaged,
     Arrived,
     Blocked,
+    Hit,
+    Wrecked,
 }
 
-pub(crate) const HANDLERS: [(Handler, &str, usize); 9] = [
+pub(crate) const HANDLERS: [(Handler, &str, usize); 11] = [
     (Handler::Start, "start", 0),
     (Handler::Tick, "tick", 0),
     (Handler::Entered, "entered", 1),
@@ -60,6 +62,8 @@ pub(crate) const HANDLERS: [(Handler, &str, usize); 9] = [
     (Handler::Damaged, "damaged", 3),
     (Handler::Arrived, "arrived", 1),
     (Handler::Blocked, "blocked", 1),
+    (Handler::Hit, "hit", 1),
+    (Handler::Wrecked, "wrecked", 0),
 ];
 
 /// One compiled script.
@@ -290,6 +294,14 @@ fn tick(inner: &Inner, ctx: &mut LiveCtx<'_>) {
                         .and_then(|p| p.name.as_deref())
                         .unwrap_or("");
                     ("blocked", alloc::vec![Dynamic::from(ImmutableString::from(name))])
+                }
+                // Issue #94: an explosion took this copy's health, and
+                // (right after) left it at 0.
+                ScriptEvent::Hit { copy, amount } if inst.copy == Some(copy) && c.has(Handler::Hit) => {
+                    ("hit", alloc::vec![int(amount)])
+                }
+                ScriptEvent::Wrecked { copy } if inst.copy == Some(copy) && c.has(Handler::Wrecked) => {
+                    ("wrecked", Vec::new())
                 }
                 ScriptEvent::Spawned { worm } if c.has(Handler::Spawned) => {
                     ("spawned", alloc::vec![int(worm.into())])

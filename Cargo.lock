@@ -4170,6 +4170,7 @@ name = "olr-script"
 version = "0.3.0"
 dependencies = [
  "olr-data",
+ "olr-math",
  "olr-sim",
  "olr-terrain",
  "rhai",

@@ -15,7 +15,7 @@ checks (`ScriptNames`, `check_level`), `move_to`, `stop`, `moving`,
   "olr-sim")`; `("olr-edit", "olr-script")` is #89's save refusal,
   `olr_edit::scripts`). Its callers: `olr-content` (compiles a level's
   scripts at load), `olr-edit` (`check_level`) and `olr-editor`
-  (`check`). Tests also use `olr-data` and `olr-terrain`.
+  (`check`). Tests also use `olr-data`, `olr-math` and `olr-terrain`.
 - **Rhai's pin:** `rhai = "=1.27.0"`, default features off, with
   `no_std`, `sync`, `no_float`, `only_i64`, `no_module`,
   `no_custom_syntax`, `no_time`, `no_closure` and `internals` (the
@@ -118,7 +118,11 @@ checks (`ScriptNames`, `check_level`), `move_to`, `stop`, `moving`,
   same tick) and issue #90's `blocked(name)` (this copy's value `name`
   was stopped by rock, another part or the level's edge, at the last
   place reached: `EventKind::LiveBlocked`, in the same step, so the same
-  tick).
+  tick), and issue #94's `hit(amount)` (an explosion took this copy's
+  health: `amount` the integer it lost, truncated toward zero, negative
+  for a heal) and `wrecked()` (it reached 0), both from
+  `EventKind::LiveDamaged`, emitted in the physics, so the same tick:
+  `hit`, then `wrecked`, then `entered` of its `at_zero` state.
 - **The API object** (`api.rs`, `Live`): each run (one handler or timer
   call) gets a fresh one bound as `this` (`CallFnOptions::bind_this_ptr`),
   holding the run's reads (copies' states and values, worms, the clocks:
@@ -199,7 +203,9 @@ checks (`ScriptNames`, `check_level`), `move_to`, `stop`, `moving`,
   scripts may allocate, bounded by the limits and freed by the run's end.
   A world without a director allocates nothing (`olr-sim`'s `no_alloc`).
 
-Tests: issue #92's `tests/play.rs` (`play_queues_a_live_sound`) and
+Tests: issue #94's `tests/damage.rs` (`hit_and_wrecked_handlers_run`:
+`olr_sim::World::explode_for_test` beside a destructible copy, its
+handlers alone; tests use `olr-math` for `Vec2`); issue #92's `tests/play.rs` (`play_queues_a_live_sound`) and
 `tests/names.rs`' `check_finds_an_unknown_sound_name`; issue #89's `tests/motion.rs`
 (`move_to_reaches_its_target_at_its_speed_and_calls_arrived`,
 `min_and_max_follow_a_stretched_copy`,
