@@ -7124,7 +7124,7 @@ The design is `docs/superpowers/specs/2026-10-26-asset-based-levels-design.md`
 (calls 8, 11, 13, 14 and 19). Issue #85 gives Live copies their played
 form; #86 puts them in the world, #87 draws them, #88 runs their scripts
 (#89 adds motion and the scripts' name checks), #90 makes their rock
-solid, #93 lights them by their values.
+solid, #93 lights them by their values, #92 plays their sounds.
 
 - **The played form is play files (#85).** `live.ron` and `live/` sit
   beside `level.ron`, outside `editor/`, so `olr_pack::content_hash`
@@ -7534,6 +7534,50 @@ solid, #93 lights them by their values.
   live match golden was re-blessed. The bot grid (`cargo xtask full`)
   plays the live fixture too (`LIVE_LEVELS`), unrun by the session
   (`docs/deferred-verification.md`).
+- **Sounds (#92, call 19; no OLX counterpart).** Presentation only: the
+  simulation never plays or reads one. **What plays:** a state's
+  `enter_sound` once when a copy enters it (`EventKind::LiveState`), a
+  script's `this.play(name)`/`this.play(c, name)` once
+  (`LiveCommand::Play` → `EventKind::LiveSound { copy, sound }`, a
+  cosmetic event for the quota: it counts against the cosmetics, never
+  crowding out gameplay events; the world, its checksum and its
+  transfer are unchanged, `a_live_sound_event_changes_no_state`), and a
+  state's `loop_sound` looped while the copy is in it, following it as
+  it moves; a state change stops the loop with a 5-ms fade (no click)
+  and starts the next state's (the same sound plays on). A hidden copy
+  (`Visible` 0) makes no sound. Each is at its copy's centre (its
+  rectangle's, moved by `X`/`Y`), heard as game sounds are: from the
+  nearest listener (`mix_nearest`), `SOURCE_GAIN` 0.7, OpenAL's inverse
+  distance clamped, the master volume; loops re-mixed each tick from
+  their copy's place now. **Limits** (`olr-audio`): 4 one-shots of one
+  asset sound at once (`ASSET_MAX_PLAYS`; beyond it a start is skipped,
+  as OLX skips its sounds'), at most 16 loops (`MAX_LOOPS`), the ones
+  nearest to a listener, re-chosen each tick (a loop dropped fades out
+  and comes back when it is among the nearest again), and all of them
+  count against `GLOBAL_VOICES` (256) with the game's voices. The game's
+  other sounds, their limits and their mixing are unchanged. **Why loops
+  follow the world and starts the events:** a one-shot is an event of a
+  tick, so online it plays once per `EventKey` (`LiveState` by its copy
+  and state, `LiveSound` by its copy and sound): a re-simulated tick
+  starts nothing twice, and an erased one is not undone (spec §3.4, as
+  other sounds). A loop is a state, not an event: it is read from the
+  presented (newest) world each tick, so a rollback that undid a state
+  change switches it to the corrected state at once, a loaded state and
+  a restart rebuild it from their world, and no loop outlives the state
+  it was for. Spectators and replays hear what players hear: the same
+  events and states. **Untrusted files:** the sounds are the asset's own
+  WAV or Ogg within `olr_pack::sounds`' limits, checked when the level
+  loads; `olr-audio` decodes them once per level load (a decoder panic
+  caught; an undecodable one plays nothing, with a warning), never per
+  tick; silent audio plays none, and a held game (the pause, the weapon
+  selection) stops the loops. **The fixture:** `fixtures/live/make-sounds.py`
+  synthesises a hum and a tick (WAV); the lamp ticks entering `On`, the
+  press has `Still` (its start) and `Moving` (looping the hum), its
+  script entering `Moving` as it starts a move and `Still` on `arrived`,
+  and it is shown while `press_on` (a `Visible` value, for
+  `a_hidden_copy_is_silent`). The live match golden was re-blessed;
+  `fixtures/matches/` is unchanged. Unheard by the session: a listening
+  test on a real device (`docs/deferred-verification.md`).
 
 ## Kept OLX quirks
 

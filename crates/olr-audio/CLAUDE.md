@@ -72,8 +72,9 @@ level's live copies' sounds (issue #92).
   copy, others nearer) stops with `STEAL_FADE`'s 5 ms (no click) and
   starts again when it is wanted again. Loops are counted against
   `GLOBAL_VOICES` with every voice (`Voices::set_reserved`): a start or
-  a loop past it waits. `stop_all` stops the loops too (the world's start
-  again at the next `play_live`); silent audio plays none. `loops()`
+  a loop past it waits. `stop_all` stops the loops too and `stop_loops`
+  only them (a held game: the pause); the world's start again at the
+  next `play_live`. Silent audio plays none. `loops()`
   (`PlayingLoop { copy, sound, source, mix }`) and `asset_one_shots()`
   are what plays, for tests. The game's sounds, their limits and their
   mixing are as before.
