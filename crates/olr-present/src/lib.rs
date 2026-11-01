@@ -123,8 +123,9 @@ pub struct Presentation {
     /// Each live copy's light (issue #93: its groups, the values driving
     /// them, its beams), pushed after the level's.
     live_light: Option<Arc<LiveLight>>,
-    /// The live copies' sounds (issue #92): the starts presented since
-    /// they were last played, the loops of the world presented last.
+    /// The live copies' sounds (issue #92): the starts of the tick or
+    /// advance presented last until they are played, the loops of the
+    /// world presented last.
     pub(crate) live_sounds: LiveSounds,
 }
 
