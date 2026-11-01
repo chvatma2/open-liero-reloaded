@@ -23,7 +23,12 @@ The headless command-line tool. Its commands:
   <mod|level|skin|theme|core> <id> [--out DIR] [--name N] [--size WxH]
   [--theme ID] [--from PACK]` (`olr_edit::new`): `--out` defaults to
   `./<id>`, `--size` (640x480) and `--theme` (`olx-theme-dirt`) are a
-  level's, and skin, theme and core packs need `--from`.
+  level's, and skin, theme and core packs need `--from`. `--keep-origin` (issue #96, needs `--from`) keeps the
+  copied pack's origin (`Template::Remake`: a remake of the same
+  original), which a copy otherwise loses. `level notes <pack> <text>`
+  (issue #96) sets a level's notes (`set the notes: N characters`; an
+  empty text `cleared the notes`). Test: `tests/cli.rs`'
+  `pack_new_keeps_the_origin_and_level_notes_set`.
 - `olr-cli level carve|fill|paint|stamp|resize <pack> …`, `level object
   list|add|move|remove <pack> …` and `level preview <pack> --out F.png
   [--scale 1..8] [--material]` (`level_cmd.rs`, plan 13d): the
@@ -59,10 +64,14 @@ The headless command-line tool. Its commands:
   `level haze clear` edit `look/haze.png` through
   `olr_edit::look::set_haze_map` (`look_cmd.rs`). Tests: `tests/element.rs`'s
   `cli_sets_a_glow_beam`, `cli_paints_haze`, `a_new_haze_map_starts_full`.
-- `olr-cli level element list|add-image|add-layer|set|remove|raise|lower|draw|erase|merge-down|split|mask
+- `olr-cli level element list|add-image|add-layer|set|remove|raise|lower|draw|erase|merge-down|split|extract|mask
   <pack> …` and `level bake <pack>` (`element_cmd.rs`, plan 14a; plan
   14d: `draw --material`, `merge-down <id>`, `split <id>` printing `added
-  element <id>` per part, `mask <id> (--rect|--circle|--colour-at X,Y
+  element <id>` per part, issue #96's `extract <id> (--rect|--circle|--mask) --name
+  N` (`element::extract`: the shape's pixels of a drawn layer moved into
+  a new layer directly above it with its settings, printing `added
+  element <id>`; a shape holding none refused; test
+  `cli_extracts_a_shape_into_a_layer_of_its_own`), `mask <id> (--rect|--circle|--colour-at X,Y
   [--tolerance N]) [--restore]`, a restore taking a shape only; plan 14e:
   `fill <id> --at X,Y [--tolerance N] (--colour|--tile|--texture)
   [--material M]` (a seed outside the layer refused), `duplicate <id>`
@@ -234,9 +243,18 @@ The headless command-line tool. Its commands:
   elements[, N states][, materials …]` (`N states` only past one, issue
   #71) or `<dir>: error: …`, and exits 1
   if any fails. The built-in assets (`content/assets/`) are made with
-  `save` from `content/reloaded/` (their commands in its README). Tests:
+  `save` from `content/reloaded/` (issue #96: each by one block of
+  `olr-cli` lines in its README entry: its `asset save … --out
+  content/assets/<folder>`, lines before preparing the source level,
+  lines after editing the folder). Tests:
   `tests/asset.rs` (every built-in asset checks and is what its README
-  command makes, the torch carries `flames` and not `sky`, bad folders
+  block makes: `built_in_assets_are_what_their_commands_make` runs each
+  block on fresh copies of the `content/reloaded/` packs it names, its
+  folder replaced by a temporary one, and compares by #76's comparison,
+  `thumb.png` left out, one block per asset;
+  `a_block_making_another_asset_fails_naming_its_folder`;
+  `the_factorys_new_assets_check`, the Crane's, Console's and Gauge's
+  layers; the torch carries `flames` and not `sky`, bad folders
   and arguments refused; issue #71's `asset_check_counts_states`; its
   place tests are `copy.rs`' now).
   Issue #72 (`olr_edit::asset`'s operations): `asset state add <dir>
@@ -1142,7 +1160,8 @@ tests are `cargo nextest run -p olr-cli --test integration corpus::`.
 `tests/corpus.rs` checks every imported
 pack when `OLR_CONTENT_DIR` is set. `tests/reloaded.rs` (issue #7, offline too: the
 committed `content/packs`) checks OLR's own shipped packs
-(`content/reloaded/`: Liero Factory After Dark, Castle Strike Reloaded,
+(`content/reloaded/`: Liero Factory After Dark, issue #96's Liero
+Factory Reloaded, Castle Strike Reloaded,
 issue #21's Liero v1.0 Reloaded, issue #13's Firefly skin) with
 `pack check --content content/packs`, that they share no pack id with
 `content/packs`, that `Content::open_bundled` lists both levels by name,
@@ -1154,7 +1173,19 @@ its name and look (`ModDef` but the name, assets, `SimMod`, presets,
 physics, origin; the same bot matches' checksums, OLX's bots on Dirt
 Level and chaos bots on Castle Strike Reloaded; `olx_bot_weapons` alike
 under every preset), plays a 300-tick bot match on
-each level and with the mod, and on the GPU tier (`OLR_GPU_TESTS`) draws them lit (`render-match`). `tests/digest.rs` pins a SHA-256 of what
+each level and with the mod, and on the GPU tier (`OLR_GPU_TESTS`) draws them lit (`render-match`).
+Issue #96 (`FACTORY` is Liero Factory Reloaded, `AFTER_DARK` After
+Dark): `the_new_factory_bakes_as_after_dark` (material, front, back and
+the distant sky byte for byte; glow strength, beams and glass per
+pixel; each pixel's glow group and surface material by their settings,
+not their numbers; the look but for its groups and materials),
+`the_new_factory_is_made_of_assets` (the copies by id with key, origin,
+place and size, all static, `level library` printing `same` for every
+built-in key), `the_new_factory_plays_as_after_dark` (Classic, 4 bots,
+seed 1, 1000 ticks: the world checksum every tick, which covers the
+terrain, not the level's hash) and, on the GPU tier,
+`the_new_factory_draws_as_after_dark` (`look-preview` at four cameras,
+the same PNG bytes). `tests/digest.rs` pins a SHA-256 of what
 the game receives from every bundled pack (each skin's drawn frames, the
 images the runtime uses, level and theme data; plan 13c): a pack format or
 importer change that alters a drawn pixel changes the snapshot. To accept a reviewed snapshot change, run

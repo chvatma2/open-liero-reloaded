@@ -51,7 +51,9 @@ operations.
   is written, and a failed save removes the directories it made (parents
   included). Issue #13: `Skin { double }` is a blank skin
   (`skin::blank`); `new_pack_with(…, edit)` changes the renamed source
-  before the save (an error there, `NewError::Edit`, writes nothing).
+  before the save (an error there, `NewError::Edit`, writes nothing). Issue #96: `Remake(dir)` is `From(dir)` keeping
+  the origin (a remake of the same original work; `olr-cli pack new
+  --keep-origin`).
 - **`skin`** (issue #13; `olr-cli skin`, and issue #14's skin editor):
   `blank(name, double)` (every pixel transparent, OLX's layout or double
   resolution's), `double(src)` (a classic skin to double resolution by
@@ -211,6 +213,18 @@ operations.
     unchanged: `paint_layer`'s closure is fallible), `duplicate` (directly
     above; an image shares its original, its own files copied under the
     new id), `copy_name` ("Crate" → "Crate 2", "Crate 2" → "Crate 3").
+- **Issue #96, `element::extract(pack, id, shape, name)`**: the pixels of
+  drawn layer `id` that `shape` covers move into a new drawn layer
+  directly above it (its id from `name`, as `add_layer` makes one), with
+  every setting of `id` but its name and lock (material, box, glow and
+  its mask, glass, surfaces and their painted maps, copied whole,
+  folder); `drawn::take` moves whole blocks, art, back art and cells,
+  nothing dug, so the bake is unchanged where nothing lies between them.
+  A locked, distant or non-drawn element, and a shape covering none of
+  its pixels ("nothing to extract"), are refused. The crane's rail and
+  claw were cut so from Liero Factory After Dark's rock (`content/
+  assets/README.md`). Tested through `olr-cli`'s
+  `cli_extracts_a_shape_into_a_layer_of_its_own`.
 - **Plan 15a, the look system** (spec
   `docs/superpowers/specs/2026-10-18-look-system-design.md`; the format's
   side is `olr-format`'s `look` and level looks):

@@ -786,7 +786,13 @@ whose column tab is `LAYERS`);
     (Play), the bake and `to_pack` use (the ground asset's groups and
     materials are the own look's). An unchanged open and save is byte
     identical (`a_placed_level_opens_whole`,
-    `every_shipped_level_saves_byte_identical`).
+    `every_shipped_level_saves_byte_identical`, its host holding the
+    built-in assets as the game's does: issue #96's Liero Factory
+    Reloaded links them). Issue #96's
+    `liero_factory_reloaded_opens_with_its_copies`: the shipped level
+    built from assets opens unchanged, its copies listed by id, its bake
+    the pack's; Edit library asset and a double click open a built-in
+    copy as the library's asset, Edit in level the ground.
   - **Operations** run `olr_edit::placed`'s on a light pack
     (`placement_op`: the ground's asset a one-pixel stand-in with the
     own look's groups and materials, a `LevelSource` of sizes and look
