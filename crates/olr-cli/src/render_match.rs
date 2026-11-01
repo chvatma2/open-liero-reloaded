@@ -5,7 +5,8 @@
 //! a match on any packs, such as the look test level and mod (plan 15a
 //! Task 16), which no OLX trace can replay. `--live COPY=STATE` sets a
 //! live copy's state before the first tick (issue #87), `--live-value
-//! COPY.NAME=VALUE` one of its values after the states (issue #93).
+//! COPY.NAME=VALUE` one of its values after the states (issue #93), `--at
+//! X,Y` a fixed camera on a world point (issue #97).
 
 use std::path::PathBuf;
 
@@ -51,6 +52,21 @@ pub struct Args {
     /// repeatable, in order.
     #[arg(long, value_name = "COPY.NAME=VALUE", value_parser = live_value)]
     live_value: Vec<(String, String, i64)>,
+    /// A fixed camera on world point `X,Y` (the view's centre, clamped to
+    /// the level) instead of following worm 0 (issue #97); not with two or
+    /// more `--locals`.
+    #[arg(long, value_name = "X,Y", value_parser = point)]
+    at: Option<(f32, f32)>,
+}
+
+/// `--at`'s `X,Y`: two finite numbers.
+fn point(s: &str) -> Result<(f32, f32), String> {
+    let (x, y) = s.split_once(',').ok_or_else(|| format!("{s:?}: X,Y"))?;
+    let num = |v: &str| v.trim().parse::<f32>().ok().filter(|v| v.is_finite());
+    match (num(x), num(y)) {
+        (Some(x), Some(y)) => Ok((x, y)),
+        _ => Err(format!("{s:?}: X,Y, two numbers")),
+    }
 }
 
 /// `--live-value`'s `COPY.NAME=VALUE`.
@@ -140,8 +156,12 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
     }
     // Split screen (issue #30): a view on each local player's worm.
     if locals >= 2 {
+        ensure!(args.at.is_none(), "--at shows one view: not with two or more --locals");
         let ids: Vec<i32> = game.world().worms().iter().take(locals).map(|w| w.id).collect();
         present.set_views(&ids);
+    }
+    if let Some((x, y)) = args.at {
+        present.look_at(x, y);
     }
     // `Match::ticks` counts settled ticks; this plays without settling.
     for _ in 0..args.spec.ticks {
@@ -191,6 +211,14 @@ mod tests {
         assert!(
             v("lamp=3").is_err() && v(".x=3").is_err() && v("lamp.x=").is_err() && v("lamp.x=red").is_err()
         );
+    }
+
+    /// Issue #97: `--at`'s point.
+    #[test]
+    fn a_camera_point_parses() {
+        assert_eq!(super::point("870,300"), Ok((870.0, 300.0)));
+        assert_eq!(super::point("-4.5, 12"), Ok((-4.5, 12.0)));
+        assert!(super::point("870").is_err() && super::point("a,1").is_err() && super::point("inf,1").is_err());
     }
 
     #[test]

@@ -470,6 +470,13 @@ impl Presentation {
         self.scene.camera_mut().set_target(worm);
     }
 
+    /// The first view's camera shows world point `(x, y)` at its centre
+    /// and follows no worm (`olr_scene::Camera::look_at`; issue #97: `olr-cli
+    /// render-match --at`).
+    pub fn look_at(&mut self, x: f32, y: f32) {
+        self.scene.camera_mut().look_at(x, y);
+    }
+
     /// The worm the first view's camera follows.
     pub fn followed(&self) -> i32 {
         self.scene.camera().target()

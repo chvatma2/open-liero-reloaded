@@ -99,6 +99,16 @@ impl Camera {
         self.target = worm;
     }
 
+    /// Shows world point `(x, y)` at the view's centre and follows no worm
+    /// (target -1, no worm's id), so [`Camera::process`] keeps it there,
+    /// clamped to the map: a fixed camera for tools (issue #97: `olr-cli
+    /// render-match --at`). No OLX counterpart.
+    pub fn look_at(&mut self, x: f32, y: f32) {
+        self.target = -1;
+        self.x = x - (self.viewport.width / 2) as f32;
+        self.y = y - (self.viewport.height / 2) as f32;
+    }
+
     /// What the camera shows after the last [`Camera::process`].
     pub fn view(&self) -> View {
         View { x: self.x, y: self.y, w: self.viewport.width as f32, h: self.viewport.height as f32 }
