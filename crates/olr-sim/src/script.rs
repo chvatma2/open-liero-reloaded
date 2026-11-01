@@ -268,6 +268,11 @@ pub enum LiveCommand {
     Move { copy: u16, prop: u16, target: i64, speed: i64 },
     /// Copy `copy`'s value `prop` stops moving.
     Stop { copy: u16, prop: u16 },
+    /// Copy `copy` plays its sound `sound` (an index into the level's
+    /// sounds) once at its centre (issue #92): only
+    /// [`EventKind::LiveSound`] is emitted, a cosmetic event; the world
+    /// is unchanged.
+    Play { copy: u16, sound: u16 },
 }
 
 /// An event a script's handlers see ([`LiveCtx::events`]): positions in
@@ -896,6 +901,14 @@ impl<'a> LiveCtx<'a> {
                 self.live.move_value(copy, prop, target, speed).is_ok()
             }
             LiveCommand::Stop { copy, prop } => self.live.stop_value(copy, prop).is_ok(),
+            LiveCommand::Play { copy, sound } => {
+                let level = &self.live.level;
+                let ok = usize::from(copy) < level.copies.len() && sound < level.sounds;
+                if ok {
+                    self.events.push(EventKind::LiveSound { copy, sound });
+                }
+                ok
+            }
         };
         if ok {
             self.commands += 1;

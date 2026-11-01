@@ -341,7 +341,10 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   and setters), `apply(LiveCommand)` (`SetState`, `SetValue`,
   `SwitchOff`; refused past `MAX_LIVE_COMMANDS` a tick; a state change
   emits `LiveState`; issue #89's `Move` and `Stop` motions, `LiveReads`
-  carrying them; `ScriptEvent::Arrived` from `LiveArrived`), `fail(i)` (`EventKind::ScriptError { instance }`,
+  carrying them; `ScriptEvent::Arrived` from `LiveArrived`; issue #92's
+  `Play { copy, sound }`, a level sound index, which only emits
+  `EventKind::LiveSound { copy, sound }`, a cosmetic event for the quota
+  that changes no state: presentation plays it), `fail(i)` (`EventKind::ScriptError { instance }`,
   switched off at the bound) and `charge(ops)`. `World::script_peak()`
   (`ScriptPeak { run, tick }`, the most operations one run and one tick
   used since the world was made) is not state (`NotState`, like
@@ -358,6 +361,7 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   Rhai): `script_state_is_in_the_checksum`,
   `a_restore_replays_scripts_the_same`,
   `script_state_round_trips_through_a_state_transfer`,
+  `a_live_sound_event_changes_no_state` (issue #92),
   `a_bad_script_part_is_refused`, `script_peak_is_not_state`,
   `hostile_script_parts_never_panic` (proptest).
 - **Checksum** (`checksum.rs`): FNV-1a 64 over all mutable state, through an

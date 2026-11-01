@@ -146,6 +146,58 @@ fn script_peak_is_not_state() {
     assert_eq!(dst.checksum(), src.checksum());
 }
 
+/// [`TestDirector`], and with `play` its level script plays a sound of
+/// copy 0 every tick (issue #92's `this.play`).
+#[derive(Clone, Debug)]
+struct Player {
+    play: bool,
+}
+
+impl olr_sim::Director for Player {
+    fn box_clone(&self) -> Box<dyn olr_sim::Director> {
+        Box::new(self.clone())
+    }
+
+    fn timer_functions(&self, script: u16) -> u16 {
+        TestDirector.timer_functions(script)
+    }
+
+    fn run(&self, ctx: &mut olr_sim::LiveCtx<'_>) {
+        if self.play {
+            assert!(ctx.apply(olr_sim::LiveCommand::Play { copy: 0, sound: 1 }));
+            assert!(!ctx.apply(olr_sim::LiveCommand::Play { copy: 0, sound: 2 }), "the level has 2 sounds");
+            assert!(!ctx.apply(olr_sim::LiveCommand::Play { copy: 99, sound: 0 }), "no copy 99");
+        }
+        TestDirector.run(ctx);
+    }
+}
+
+/// Issue #92: a script's `this.play` emits `LiveSound`, a cosmetic event,
+/// and changes nothing else: the checksum and the state are a world's
+/// whose script plays nothing.
+#[test]
+fn a_live_sound_event_changes_no_state() {
+    let base = crate::live_level::live_level();
+    let base = olr_sim::LiveLevel::new(base.copies.clone(), base.scripts.clone(), base.level_script, 2);
+    let world = |play: bool| {
+        crate::world::world_directed(8, 400, 300, scripted(&base), Box::new(Player { play }))
+    };
+    let (mut quiet, mut loud) = (world(false), world(true));
+    let (mut ev, mut sounds) = (TickEvents::new(), 0);
+    for t in 0..200 {
+        quiet.tick(&keys(t), &mut ev);
+        assert!(!ev.iter().any(|e| matches!(e.kind, olr_sim::EventKind::LiveSound { .. })));
+        loud.tick(&keys(t), &mut ev);
+        sounds += ev
+            .iter()
+            .filter(|e| e.kind == olr_sim::EventKind::LiveSound { copy: 0, sound: 1 })
+            .count();
+        assert_eq!(loud.checksum(), quiet.checksum(), "tick {t}");
+    }
+    assert!(sounds >= 199, "{sounds} sounds");
+    assert_eq!(loud.state().encode(), quiet.state().encode());
+}
+
 use proptest::prelude::*;
 
 proptest! {

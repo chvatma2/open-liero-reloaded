@@ -228,6 +228,11 @@ pub enum EventKind {
     /// before the chunk's [`EventKind::Damage`] (`by` -1, nobody): bots and
     /// the HUD read it, never `by`. No OLX counterpart.
     Crushed { worm: i32, copy: u16 },
+    /// Live copy `copy` plays sound `sound` (an index into the level's
+    /// sounds) once at its centre: a script's `this.play` (issue #92).
+    /// A cosmetic event: it counts against the sounds' and cosmetics'
+    /// quota and changes nothing in the world. No OLX counterpart.
+    LiveSound { copy: u16, sound: u16 },
 }
 
 impl EventKind {
@@ -235,7 +240,9 @@ impl EventKind {
     /// are classified where they are emitted ([`TickEvents::death`]).
     fn class(&self) -> Class {
         match self {
-            EventKind::SpawnCosmetic { .. } | EventKind::Sound { .. } => Class::Cosmetic,
+            EventKind::SpawnCosmetic { .. } | EventKind::Sound { .. } | EventKind::LiveSound { .. } => {
+                Class::Cosmetic
+            }
             EventKind::TerrainEdit { .. } => Class::Edit,
             _ => Class::Gameplay,
         }
