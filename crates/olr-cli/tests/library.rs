@@ -93,7 +93,8 @@ fn cli_reports_updates_restores_adopts_and_relinks() {
     // The user's own copy of the built-in strip light, followed.
     let mine = user.join("strip-light-2");
     copy_dir(&repo().join("content/assets/strip-light"), &mine);
-    ok(&["asset", "state", "add", s(&mine), "Off"]);
+    // A state of its own (the built-in has `On`, `Dim` and `Off`, issue #98).
+    ok(&["asset", "state", "add", s(&mine), "Broken"]);
     assert_eq!(
         ok(&["level", "library", "relink", p, "b", "--yours", "strip-light-2", "--user", u]),
         "b now follows yours strip-light-2\n"

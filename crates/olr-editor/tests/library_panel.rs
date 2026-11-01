@@ -295,16 +295,17 @@ fn saving_a_library_asset_updates_the_open_levels_copies_in_one_step() {
 }
 
 /// A level placing a copy of the user's `strip` (the strip light with a
-/// second state, "Off") that starts in "Off"; the library holding it.
+/// state of its own, "Broken", beside the built-in's `On`, `Dim` and
+/// `Off`, issue #98) that starts in "Broken"; the library holding it.
 fn starting_off(root: &Path) -> (tempfile::TempDir, tempfile::TempDir, EditorState, PathBuf, AssetSource) {
     use olr_edit::placed::{CopyProperty, add_copy, bake_pack, set_copy};
     let mut asset = olr_edit::asset::decode(&read_builtin("strip-light")).unwrap();
-    olr_edit::asset::add_state(&mut asset, "Off", None).unwrap();
+    olr_edit::asset::add_state(&mut asset, "Broken", None).unwrap();
     let v1 = olr_edit::asset::encode(&asset).unwrap();
     let (t, dir) = copy_pack(root, &fixture());
     let mut pack = olr_edit::pack::load(&dir).unwrap();
     let added = add_copy(&mut pack, &v1, AssetOrigin::Yours("strip".into()), (10, 10), None, None).unwrap();
-    set_copy(&mut pack, &added.id, CopyProperty::State(Some("Off".into()))).unwrap();
+    set_copy(&mut pack, &added.id, CopyProperty::State(Some("Broken".into()))).unwrap();
     bake_pack(&mut pack, &catalog(root).themes[0].back_tile).unwrap();
     olr_edit::pack::save(&dir, &pack).unwrap();
     let (t2, mut s) = editor_at(root, &dir);
@@ -323,12 +324,12 @@ fn a_breaking_library_change_is_not_applied() {
     assert!(!s.can_undo());
     // The library's version loses the state the copy starts in.
     let mut asset = olr_edit::asset::decode(&v1).unwrap();
-    olr_edit::asset::remove_state(&mut asset, "Off").unwrap();
+    olr_edit::asset::remove_state(&mut asset, "Broken").unwrap();
     put(&dir, "strip", &olr_edit::asset::encode(&asset).unwrap());
     changed(&mut s, &dir);
     let doc = s.document().unwrap();
     let key = &doc.keys_of(&strip)[0];
-    assert_eq!(doc.placement().unwrap().assets[key].file.states.len(), 2, "not applied");
+    assert_eq!(doc.placement().unwrap().assets[key].file.states.len(), 4, "not applied");
     assert!(!s.can_undo() && !s.dirty());
     assert!(message(&s).contains("Strip light changed: 1 copy would break"), "{}", message(&s));
     let link = s.library_links().iter().find(|l| l.origin == strip).expect("compared");

@@ -196,7 +196,9 @@ fn built_in_assets_are_what_their_commands_make() {
 }
 
 /// A block whose result differs from the committed folder fails, naming
-/// the folder (issue #96): the strip light cut one pixel to the right.
+/// the folder (issue #96): the strip light's `Dim` glowing at 36, not 35
+/// (since issue #98: cut a pixel to the right, its state pictures no
+/// longer fit, failing before the comparison).
 #[test]
 fn a_block_making_another_asset_fails_naming_its_folder() {
     let readme = std::fs::read_to_string(assets_dir().join("README.md")).unwrap();
@@ -206,7 +208,11 @@ fn a_block_making_another_asset_fails_naming_its_folder() {
         .unwrap();
     let rect = block[0].iter().position(|w| w == "--rect").unwrap() + 1;
     assert_eq!(block[0][rect], "778,80,29,2");
-    block[0][rect] = "779,80,29,2".into();
+    let dim =
+        block.iter_mut().find(|l| l.contains(&"Dim".to_string()) && l.contains(&"lamps.glow".to_string()));
+    let dim = dim.expect("the Dim glow's line");
+    assert_eq!(dim.last().map(String::as_str), Some("35"));
+    *dim.last_mut().unwrap() = "36".into();
     let t = tempfile::tempdir().unwrap();
     let e = run_block(&block, t.path()).unwrap_err();
     assert!(e.starts_with("content/assets/strip-light: its block makes other files"), "{e}");

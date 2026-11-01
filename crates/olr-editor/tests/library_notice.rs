@@ -22,7 +22,7 @@ use crate::common::{built_in_assets, content, list_dir, run, set_library};
 use crate::copy_panel::{console, harness, level, message, place, set};
 
 /// A saved level holding a Console (its `glow` set to 10) and the strip
-/// light with a second state, both from the user's library `yours`.
+/// light with a state of its own, both from the user's library `yours`.
 struct Saved {
     _t: tempfile::TempDir,
     t2: tempfile::TempDir,
@@ -36,7 +36,8 @@ struct Saved {
 fn strip() -> Asset {
     let mut a = olr_edit::asset::load_dir(&built_in_assets().join("strip-light")).unwrap();
     a.name = "Strip two".into();
-    olr_edit::asset::add_state(&mut a, "Off", None).unwrap();
+    // Issue #98: the built-in has `On`, `Dim` and `Off` already.
+    olr_edit::asset::add_state(&mut a, "Broken", None).unwrap();
     a
 }
 

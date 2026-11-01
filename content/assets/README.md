@@ -10,8 +10,8 @@ README stays behind). `cargo xtask check` reads every one whole
 (`olr-cli asset check`, in `olr-cli`'s `tests/asset.rs`).
 They are in the 0.3 asset format (issue #71) and stateless (one state,
 nothing exposed, no sounds, health or script) but for the Crane and the
-Console, which Liero Factory Reloaded brings alive (issue #97). All glow
-but the Crane.
+Console (issue #97) and the Strip light (issue #98), which Liero Factory
+Reloaded brings alive. All glow but the Crane.
 
 Each was cut from OLR's own Reloaded levels (`content/reloaded/`) with
 `olr-cli asset save`. Its entry below holds one block of `olr-cli` lines
@@ -50,9 +50,33 @@ is gone.
       olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 319,137,13,6 --layers rock,lamps --name "Ceiling lamp" --out content/assets/ceiling-lamp
 
 - `strip-light/`: **Strip light**, one of the factory's white ceiling
-  strips, group `lamps`.
+  strips, group `lamps`. Issue #98: a faulty fluorescent tube, states
+  `On` (start: the picture and glow as cut), `Dim` (the tube at 60 %
+  brightness, `lamps.glow` 35) and `Off` (the tube unlit, pale grey
+  `#96969c`, `lamps.glow` 0), their pictures of `lamps` from
+  `tools/levels/factory/art/` (`tools/levels/factory_live.py`); `On` sets
+  nothing, so entering it restores the glow (100) and the picture; no
+  state has a solid pixel (the layer is Background). `On` and `Dim` loop
+  `buzz.wav` and entering `On` plays `tick.wav` (the starter), both
+  synthesised for OLR by `tools/sounds/factory_sounds.py`, CC0 (the
+  maintainer may replace them); its default script
+  `tools/levels/factory/tube.rhai` stays On 3-12 s, then stutters in a
+  burst of 2-6 flickers, now and then staying dark or Dim a while after
+  (`content/reloaded/README.md`). A static copy bakes steady On.
 
       olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 778,80,29,2 --layers lamps --name "Strip light" --out content/assets/strip-light
+      olr-cli asset state set content/assets/strip-light Normal --name On
+      olr-cli asset state add content/assets/strip-light Dim
+      olr-cli asset state picture content/assets/strip-light Dim lamps --art tools/levels/factory/art/strip-dim.png
+      olr-cli asset state value content/assets/strip-light Dim lamps.glow 35
+      olr-cli asset state add content/assets/strip-light Off
+      olr-cli asset state picture content/assets/strip-light Off lamps --art tools/levels/factory/art/strip-off.png
+      olr-cli asset state value content/assets/strip-light Off lamps.glow 0
+      olr-cli asset sound add content/assets/strip-light tools/levels/factory/sounds/buzz.wav
+      olr-cli asset sound add content/assets/strip-light tools/levels/factory/sounds/tick.wav
+      olr-cli asset state set content/assets/strip-light On --loop-sound buzz.wav --enter-sound tick.wav
+      olr-cli asset state set content/assets/strip-light Dim --loop-sound buzz.wav
+      olr-cli asset script content/assets/strip-light --set tools/levels/factory/tube.rhai
 
 - `computer-screen/`: **Computer screen**, the control room's upper
   screen on its wall, group `control` (blue-white, `Tint("#d0e0ff")`;
@@ -148,8 +172,8 @@ was with the reason (`<dir>: <why>`, status 1). `olr-cli asset info`
 lists what a folder holds. Work on a copy: these built-in assets stay
 as their blocks make them (the factory's get states of their own,
 issues #97-#99). For
-a strip light that can be switched off, with a 29 × 2 PNG of its dark
-tube:
+a strip light of your own that can be switched off, with a 29 × 2 PNG of
+its dark tube (the built-in one already has `Dim` and `Off`, issue #98):
 
     cp -r content/assets/strip-light my-strip-light
     olr-cli asset state add my-strip-light Off

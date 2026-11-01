@@ -190,12 +190,13 @@ fn live_is_hidden_disabled_or_offered_as_call_2_says() {
     assert!(!copy(&h.state().state, &id).live);
 }
 
-/// The strip light (Background layers only) with a second state: it can
-/// be Live or Distant.
+/// The strip light (Background layers only) with a state of its own
+/// (beside the built-in's `On`, `Dim` and `Off`, issue #98): it can be
+/// Live or Distant.
 fn strip_with_states() -> Asset {
     let mut a = olr_edit::asset::load_dir(&built_in_assets().join("strip-light")).unwrap();
     a.name = "Strip two".into();
-    olr_edit::asset::add_state(&mut a, "Off", None).unwrap();
+    olr_edit::asset::add_state(&mut a, "Broken", None).unwrap();
     a
 }
 
