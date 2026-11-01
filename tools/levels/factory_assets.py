@@ -56,6 +56,7 @@ SCRATCH = "target/factory-assets"
 NEW_ASSETS = ["crane", "console", "gauge"]
 # Issue #97: the crane's box, whose wall is painted behind its pixels.
 CRANE_BOX = (762, 269, 114, 50)
+WALL_EDGE = 2
 
 # The pieces: key, built-in folder, the ground's layers its pixels come
 # from, its size and its copies (id, top-left), in placing order (later on
@@ -159,7 +160,8 @@ def encode_rgba(path, w, h, rows):
 
 def wall_holes():
     """Issue #97: the crane's pixels the ground lost (After Dark's rock in
-    the crane's box, air in the level's ground now), each with its wall
+    the crane's box, air in the level's ground now) and WALL_EDGE pixels
+    around them, each with its wall
     colour: blended along its row between the nearest other pixels of the
     ground's front left and right of it."""
     _, _, ad = decode(os.path.join(AFTER_DARK, "material.png"))
@@ -167,8 +169,13 @@ def wall_holes():
     _, _, front = decode(os.path.join(OUT, "front.png"))
     rock, air = (128, 128, 128), (0, 0, 0)  # material.png's palette
     bx, by, bw, bh = CRANE_BOX
-    holes = {(x, y) for y in range(by, by + bh) for x in range(bx, bx + bw)
-             if ad[y][x][:3] == rock and ours[y][x][:3] == air}
+    lost = {(x, y) for y in range(by, by + bh) for x in range(bx, bx + bw)
+            if ad[y][x][:3] == rock and ours[y][x][:3] == air}
+    # The ground's pictures are flattened: the claw's art reaches up to
+    # WALL_EDGE pixels beyond its rock, so the holes do too.
+    holes = {(x + dx, y + dy) for x, y in lost
+             for dy in range(-WALL_EDGE, WALL_EDGE + 1) for dx in range(-WALL_EDGE, WALL_EDGE + 1)
+             if bx <= x + dx < bx + bw and by <= y + dy < by + bh and ours[y + dy][x + dx][:3] == air}
     fill = {}
     for x, y in sorted(holes):
         l, r = x - 1, x + 1
