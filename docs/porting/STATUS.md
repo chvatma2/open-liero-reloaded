@@ -7645,7 +7645,8 @@ in `content/reloaded/README.md`. After Dark rebuilt from assets, playing
 and looking as After Dark: its bake is After Dark's byte for byte
 (`material.png`, `front.png`, `back.png`, the distant sky and, as built,
 every `look/` file too), every copy static. Issues #97, #98 and #99 make
-it live.
+it live (the next section: since #97 the bake is After Dark's outside the
+live copies' boxes).
 
 - **The pieces and their keys** (one mnemonic letter each, settled
   while writing the issue up; copy ids at most 10 characters):
@@ -7731,6 +7732,122 @@ it live.
   `every_shipped_level_saves_byte_identical` now gives its test host the
   built-in library (the game's host has it), else the new level opens on
   the library notice of missing assets.
+
+## Liero Factory Reloaded comes alive (issues #97, #98, #99)
+
+No OLX counterpart (OLX's rock never moves). The design
+`docs/superpowers/specs/2026-10-26-asset-based-levels-design.md`
+("Liero Factory", "Order of work" step 3, second part); the build is
+`tools/levels/factory_live.py`, run after `factory_assets.py` (#96), its
+commands in `content/reloaded/README.md`. Issue #97 brings the crane and
+the console's alarm; #98 and #99 add the rest to this section.
+
+- **The live copies (#97).** `crane` and `console` are Live (`level copy
+  set … --live`), each a copy of its built-in asset in its starting
+  state: the played form is `live.ron` and `live/` (#85), the ground
+  leaving them out. The Crane: states `Idle` (start) and `Moving`, one
+  shared picture; `claw_x` exposed as `claw.x`, −10..75, default 0 (the
+  claw at After Dark's place; its rock spans x 772-800 there, so its
+  travel sweeps x 762-875, the asset's box). Its rail row 270 inside x
+  775-797 is drawn hollow (rows 269 and 271 there `#737373`) and the
+  trolley's top (row 272, x 776-796, `#2c2c2c`) is drawn on the `claw`
+  layer, so the trolley rides in the rail: the README block's
+  `level element draw|erase` lines on the source level before its
+  `asset save`. `Moving` loops `hum.wav`. The Console: states `Normal`
+  (start: its LED column as in After Dark, yellow) and `Alarm` (every dot
+  of the column `#ff3020`, and the slot under the sign, x 941-957 × y
+  326-329, a lit red lamp: its greys turned to reds of the same
+  lightness), both pictures of `rock-disp`
+  (`tools/levels/factory/art/console-*.png`, made by `factory_live.py`
+  from After Dark's `front.png`); `Alarm` sets `rock-disp.light` 400 and
+  `rock-disp.animation` `Pulse(period_ms: 600, low: 40, high: 100)`. For
+  the lamp `rock-disp`'s box grows to cover the slot (its block draws the
+  slot into it before the save, then gives a new starting state the
+  LED-only picture and drops the saved one). No state adds or removes a
+  solid pixel: the state pictures lie over the assets' rock.
+- **The scripts (#97).** The Crane's default script
+  `tools/levels/factory/crane.rhai`: rests `REST()` 200 ticks, then
+  `move_to("claw_x", …, SPEED())` at speed 50 (128/256 px a tick: 150
+  ticks from 0 to 75, 170 across the whole rail) to `this.max("claw_x")`
+  and `this.min("claw_x")` in turn (never numbers, so the limits stay
+  the asset's), entering `Moving` as it starts; `arrived` enters `Idle`
+  and rests again; `blocked` stays `Moving`, waits `WAIT()` 50 ticks and
+  heads back. The direction is kept in `mem.up`. The constants are
+  zero-argument functions: Rhai's top-level `const` is not seen inside
+  functions; the entry is `cross`, `go` being a Rhai keyword. The level
+  script `tools/levels/factory/level.rhai` sets the console to `Alarm`
+  while the crane is `Moving` and to `Normal` otherwise, only on a
+  change; it runs first each tick (ruling R8), so the console follows the
+  crane one tick later.
+- **The sound (#97).** `tools/sounds/factory_sounds.py` (stdlib,
+  deterministic: SplitMix64 seed 97) writes
+  `tools/levels/factory/sounds/hum.wav`: mono, 16-bit, 22050 Hz, a
+  1.0 s seamless loop of 100 Hz and four harmonics (weights 1, .55, .30,
+  .16, .08) under a 4 Hz wobble (±18 %), a little noise, at about −18
+  dBFS RMS. Synthesised for OLR, CC0; the maintainer may replace it.
+- **Why the crane does not crush (#97).** The maintainer ruled that the
+  crane, as drawn, must not crush: #90's crushing stays for parts built
+  to crush, tuned in issue #100's playtest. Measured on the level: the
+  claw moves only sideways; the fewest free rows between its lowest
+  pixels and the ground below, over its whole travel, are 11 (claw_x 72,
+  x 865: claw row 318, the dirt at row 330), more than a worm's 9-row
+  footprint (`live_step.rs`: rows `y - 4..=y + 4`), so a standing worm
+  stays under it; beside its travel there are 23 to 69 free columns of
+  air to the left (x 692-738 by row) and 58 to the console on the right,
+  more than a worm's 7, so a worm it meets in the air is pushed on and
+  never wedged. A worm on the claw's shoulders (their top at y 301) is
+  carried. `olr-cli`'s
+  `the_crane_carries_and_pushes_a_worm` checks both, unhurt and with no
+  `Crushed` event. Nothing static or live stands in the travel, so
+  `blocked` never comes in play; the script handles it all the same.
+- **The wall behind the claw (#97).** After Dark's ground pictures are
+  flattened: the claw's rock had no wall behind it, so the moved claw
+  left its old picture on the backdrop. `factory_assets.py` paints the
+  ground's `backdrop` (`level element draw --mask --tile`, before any
+  copy is placed: issue #75) over the pixels the ground lost in the
+  crane's box (After Dark's rock, air now) and 2 pixels around them (the
+  claw's art reaches past its rock), each blended along its row between
+  the nearest unpainted pixels left and right. Below the box (row 319) a
+  three-pixel speck of the claw's tip stays in the static ground.
+- **#96's tests narrowed and retired (#97).** The ground leaves the live
+  copies out (#85), so the level's bake is After Dark's only outside
+  their boxes (crane 762,269 114 × 50; console 933,269 33 × 64):
+  `the_new_factory_bakes_as_after_dark` compares outside them;
+  `the_new_factory_draws_as_after_dark` compares only the truck's view
+  (100, 420), the only one of its four (offices, crane, control room)
+  holding no live copy (`look-preview` draws the bake); `olr-editor`'s
+  `liero_factory_reloaded_opens_with_its_copies` compares the editor's
+  level with the pack's outside the boxes (the canvas draws the copies
+  in place) and checks that they differ inside.
+  `the_new_factory_plays_as_after_dark` is retired: the crane moves its
+  rock, carrying and pushing worms and stopping shots where it is now,
+  so play differs from After Dark's by design.
+- **Tests (#97)** (`olr-cli`'s `tests/reloaded.rs`):
+  `the_live_factory_has_its_live_copies`,
+  `the_crane_crosses_and_the_console_alarms` (the timings above, 2
+  ticks' slack), `live_states_keep_their_solid_pixels`,
+  `the_crane_carries_and_pushes_a_worm`,
+  `explosions_leave_the_factorys_live_copies_alone`,
+  `the_factory_scripts_never_fail` (a 6000-tick match, no `ScriptError`,
+  at most half the operation limits), `bots_play_the_live_factory`
+  (both mods) and `the_live_factory_stays_in_sync` (`netsim`, a lossy
+  network, a late spectator). The live golden
+  `fixtures/matches-live/classic-factory-live-4dm.ron` (4 bots, DM)
+  runs in `golden.rs` and in `cargo xtask determinism` on every leg, the
+  WASI one included: the live content is now `fixtures/live/levels`
+  laid over `content/reloaded` and `content/packs` (as
+  `olr_content::bundled_roots` lays them), and the live goldens' check
+  wants 8 `LiveArrived` events, not 10 (the factory's crane arrives 8
+  times in its 3000 ticks). The factory joins the bot grid's
+  `LIVE_LEVELS`. The render golden `fixtures/render/factory-crane.png`:
+  `render-match`, idle bots, tick 275 (the claw halfway through its
+  first crossing, the console in `Alarm`), the view centred on (870,
+  300) by `render-match --at X,Y` (new: `olr_present::Presentation::
+  look_at`, `olr_scene::Camera::look_at`; one local only).
+- **Unmeasured:** the bot grid with the factory, the rollback cost and
+  the render cost with the live copies in view
+  (`docs/deferred-verification.md`); the liveliness and the crane's
+  harmlessness in play are issue #100's playtest.
 
 ## Kept OLX quirks
 
