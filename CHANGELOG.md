@@ -239,6 +239,12 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   and pushing those in its way aside (it crushes nobody), and the console
   under the deck goes red, its lamp pulsing, while it moves.
   `olr-cli render-match --at X,Y` centres the view on a point.
+- Three of Liero Factory Reloaded's ceiling strips fail like faulty
+  fluorescent tubes, stuttering on and off in uneven bursts, sometimes
+  staying dark or dim a while, with the tube's buzz and its starter's
+  tick. The built-in Strip light has `On`, `Dim` and `Off` states, their
+  sounds and the stutter as its default script; a static strip stays
+  steady.
 
 ### Changed
 

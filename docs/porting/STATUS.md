@@ -7740,7 +7740,8 @@ No OLX counterpart (OLX's rock never moves). The design
 ("Liero Factory", "Order of work" step 3, second part); the build is
 `tools/levels/factory_live.py`, run after `factory_assets.py` (#96), its
 commands in `content/reloaded/README.md`. Issue #97 brings the crane and
-the console's alarm; #98 and #99 add the rest to this section.
+the console's alarm, #98 the faulty fluorescent tubes; #99 adds the rest
+to this section.
 
 - **The live copies (#97).** `crane` and `console` are Live (`level copy
   set … --live`), each a copy of its built-in asset in its starting
@@ -7844,10 +7845,78 @@ the console's alarm; #98 and #99 add the rest to this section.
   first crossing, the console in `Alarm`), the view centred on (870,
   300) by `render-match --at X,Y` (new: `olr_present::Presentation::
   look_at`, `olr_scene::Camera::look_at`; one local only).
+- **The faulty tubes (#98).** The faulty behaviour lives in the built-in
+  Strip light itself: states `On` (start, ★: the picture and glow as
+  cut; it sets nothing), `Dim` (its own picture of `lamps`, the tube's
+  pixels at 60 % brightness, `#999999`; `lamps.glow` 35) and `Off` (its
+  own picture, the tube unlit: the pale grey `#96969c`, each pixel the
+  fraction of it the lit pixel's brightness is of white, so a highlight
+  would stay one: After Dark's strips are plain white, so the unlit tube
+  is plain grey; `lamps.glow` 0), the pictures
+  `tools/levels/factory/art/strip-{dim,off}.png` (`factory_live.py`, from
+  After Dark's first strip). A state's values are complete (#86), so
+  entering `On` restores `lamps.glow` to its default, the layer's own
+  100, and the starting picture, whatever came before (ruling R2); the
+  glow's strength is the authored mask × the value (ruling R10), as the
+  static bake has it. The layer is Background: no state has a solid
+  pixel. `On` and `Dim` loop `buzz.wav`; entering `On` plays `tick.wav`
+  (#92: a state's `enter_sound`), so every flicker back on ticks.
+  `strip-2` (1004, 80, the hall's top floor), `strip-4` (984, 177, the
+  hall, left of the gauge) and `strip-7` (427, 286, the lowest office
+  floor) are Live; the other six are static copies of the same asset,
+  baked steady in `On` (call 4), their states, script and sounds doing
+  nothing. Under each live strip the ground's `backdrop` still holds
+  After Dark's lit strip (its pictures are flattened); every state's
+  picture is opaque over the whole 29 × 2 box, so it never shows.
+- **The tube's script (#98).** `tools/levels/factory/tube.rhai`, the
+  Strip light's default script, its constants at the top (zero-argument
+  functions, ticks): `ON_MIN`/`ON_MAX` 300/1200 (steady `On`),
+  `FLICKERS_MIN`/`FLICKERS_MAX` 2/6 a burst, `OFF_MIN`/`OFF_MAX` 3/10
+  (a flicker `Off`), `BACK_MIN`/`BACK_MAX` 2/15 (`On` between flickers),
+  `DARK_MIN`/`DARK_MAX` 100/400, `DIM_MIN`/`DIM_MAX` 200/600, and the
+  draw after a burst, `this.rand(DRAWS())` of 12: below `DARK_DRAWS` 3
+  (1 in 4) it stays `Off` for the dark spell, then a recovering burst
+  (it comes `On` first); below 3 + `DIM_DRAWS` 2 (1 in 6) `Dim`, then
+  `On`; else `On`. Every range is `lo + this.rand(hi - lo + 1)`. Its
+  step (`on`, `off`, `back`, `dark`, `dim`) is `mem.step`, the burst's
+  flickers to come `mem.left`; the timers `burst`, `back`, `flicker`,
+  `settle` and `steady` chain it (one timer at a time). It never sets
+  the state it is in. All draws come from #88's one generator, drawn in
+  run order, so the three tubes draw different values and never flicker
+  together; the generator is seeded from the match's seed, so the same
+  seed flickers alike and another otherwise. Measured over 12 000 ticks,
+  seed 1: `On` 88 %, 85 % and 79 % of the ticks, 13 to 16 bursts each.
+- **The tubes' sounds (#98).** `tools/sounds/factory_sounds.py` adds
+  `buzz.wav` (a 1.0 s seamless loop: 100 Hz and its 2nd to 12th
+  harmonics, weights 1/k^0.8, phases k × 0.7, softly clipped by `tanh(1.6
+  x)`, a little noise, seed 98, at about −28 dBFS RMS, 10 dB under the
+  crane's hum) and `tick.wav` (40 ms: noise decaying with a 4 ms time
+  constant, each sample less half the one before, seed 981, about −24
+  dBFS RMS), in the hum's format (mono, 16-bit, 22050 Hz, the same bytes
+  on every run). Synthesised for OLR, CC0; the maintainer may replace
+  them. In the level they are `editor/s/sounds/` and `live/<n>.wav`.
+- **Tests (#98)** (`olr-cli`'s `tests/reloaded.rs`): `LIVE_BOXES` gains
+  the three strips' boxes; `the_live_factory_has_its_live_copies` (the
+  three tubes Live in `On` with `tube.rhai`, the other strips static;
+  the live copies in copy order, the tubes first);
+  `live_states_keep_their_solid_pixels` (the Strip light, no solid pixel
+  in any state); `the_factory_scripts_never_fail` (each tube still
+  switching after tick 4500); the new `the_tubes_fail_unevenly` (12 000
+  ticks: each tube `On` at least 70 %, a burst of 2 flickers or more, the
+  three sequences different, the same seed the same, seed 2 others,
+  `lamps.glow` 100 in `On`, 35 in `Dim` and 0 in `Off` on every tick,
+  every static strip no live copy and baked as After Dark's lit strip)
+  and `the_tubes_buzz_and_tick` (issue #92's `LiveSounds` filled
+  headlessly from each tick's events and world: `buzz.wav` loops on
+  exactly the ticks a tube is `On` or `Dim`, `tick.wav` starts once on
+  each entry to `On`, no sound at a static strip).
+  `explosions_leave_the_factorys_live_copies_alone` leaves the tubes'
+  states out of its snapshot (their scripts switch them at any tick).
 - **Unmeasured:** the bot grid with the factory, the rollback cost and
   the render cost with the live copies in view
-  (`docs/deferred-verification.md`); the liveliness and the crane's
-  harmlessness in play are issue #100's playtest.
+  (`docs/deferred-verification.md`); the liveliness, the crane's
+  harmlessness, the tubes' rhythm and the buzz and tick's level in play
+  are issue #100's playtest.
 
 ## Kept OLX quirks
 

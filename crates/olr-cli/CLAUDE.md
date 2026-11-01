@@ -1193,21 +1193,31 @@ bytes). Issue #97 narrows them to outside `LIVE_BOXES` (the crane's and
 the console's boxes: the ground leaves live copies out), the drawing to
 the truck's camera, the one of four holding no live copy, and retires
 `the_new_factory_plays_as_after_dark` (the crane changes play;
-`docs/porting/STATUS.md`). Its live factory (`factory_world` places
+`docs/porting/STATUS.md`); issue #98 adds the three faulty tubes' boxes
+(`strip-2`, `strip-4`, `strip-7`, `TUBES`). Its live factory (`factory_world` places
 worm 0, a human, where a test wants): `the_live_factory_has_its_live_copies`
-(the crane and the console Live, in their starting states, the Crane's
-default script, the level script naming both), `the_crane_crosses_and_the_console_alarms`
+(the crane, the console and, issue #98, the tubes Live in their
+starting states, the Crane's and the Strip light's default scripts, the
+other strips static, the level script naming the crane and the console), `the_crane_crosses_and_the_console_alarms`
 (2000 ticks: rests of 200, crossings of 150 then 170, `Moving` while
 `claw_x` changes, the console in `Alarm` at most 2 ticks behind),
 `live_states_keep_their_solid_pixels` (every state's rock, from the
-asset files and in a match), `the_crane_carries_and_pushes_a_worm` (a
+asset files and in a match; the Strip light's none), `the_crane_carries_and_pushes_a_worm` (a
 worm on the claw's shoulders carried 75 px, one hanging by its rope in
 the claw's path pushed aside, neither `Crushed`),
 `explosions_leave_the_factorys_live_copies_alone` (`World::explode_for_test`
 on the claw, the dirt and the console: the copies unchanged, the
 ground dug as After Dark's outside the boxes), `the_factory_scripts_never_fail`
-(6000 ticks, no `ScriptError`, both still running, at most half of
-`olr_script`'s operation limits), `bots_play_the_live_factory` (both
+(6000 ticks, no `ScriptError`, the crane, the console and each tube
+still running, at most half of `olr_script`'s operation limits), issue
+#98's `the_tubes_fail_unevenly` (`tube_run`: 12 000 ticks of idle bots;
+each tube `On` at least 70 %, a burst of 2 flickers or more, the three
+sequences different, the same seed alike and seed 2 not, `lamps.glow`
+100/35/0 in `On`/`Dim`/`Off` every tick, the static strips baked as
+After Dark's) and `the_tubes_buzz_and_tick` (`olr_content::LiveSounds`
+filled from each tick's events and world, as the presentation reads
+them: `buzz.wav` loops exactly while `On` or `Dim`, `tick.wav` once on
+each entry to `On`, nothing at a static strip), `bots_play_the_live_factory` (both
 mods, 3000 ticks, invariants every tick) and
 `the_live_factory_stays_in_sync` (`netsim`: 3 clients, the `bad`
 profile, a late spectator, an `Ok` verdict with rollbacks). `tests/digest.rs` pins a SHA-256 of what
