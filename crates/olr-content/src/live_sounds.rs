@@ -58,7 +58,8 @@ impl LiveSounds {
     pub fn push_start(&mut self, live: LiveView<'_>, e: &EventKind) -> bool {
         let (copy, sound) = match *e {
             EventKind::LiveState { copy, state } => {
-                let s = live.level().copies.get(usize::from(copy)).and_then(|c| c.states.get(usize::from(state)));
+                let s =
+                    live.level().copies.get(usize::from(copy)).and_then(|c| c.states.get(usize::from(state)));
                 match s.and_then(|s| s.enter_sound) {
                     Some(sound) => (copy, sound),
                     None => return false,

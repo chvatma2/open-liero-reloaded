@@ -179,19 +179,15 @@ impl olr_sim::Director for Player {
 fn a_live_sound_event_changes_no_state() {
     let base = crate::live_level::live_level();
     let base = olr_sim::LiveLevel::new(base.copies.clone(), base.scripts.clone(), base.level_script, 2);
-    let world = |play: bool| {
-        crate::world::world_directed(8, 400, 300, scripted(&base), Box::new(Player { play }))
-    };
+    let world =
+        |play: bool| crate::world::world_directed(8, 400, 300, scripted(&base), Box::new(Player { play }));
     let (mut quiet, mut loud) = (world(false), world(true));
     let (mut ev, mut sounds) = (TickEvents::new(), 0);
     for t in 0..200 {
         quiet.tick(&keys(t), &mut ev);
         assert!(!ev.iter().any(|e| matches!(e.kind, olr_sim::EventKind::LiveSound { .. })));
         loud.tick(&keys(t), &mut ev);
-        sounds += ev
-            .iter()
-            .filter(|e| e.kind == olr_sim::EventKind::LiveSound { copy: 0, sound: 1 })
-            .count();
+        sounds += ev.iter().filter(|e| e.kind == olr_sim::EventKind::LiveSound { copy: 0, sound: 1 }).count();
         assert_eq!(loud.checksum(), quiet.checksum(), "tick {t}");
     }
     assert!(sounds >= 199, "{sounds} sounds");

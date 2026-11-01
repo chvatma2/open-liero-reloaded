@@ -8,8 +8,8 @@ use olr_audio::kira::backend::Backend;
 use olr_audio::kira::backend::Renderer;
 use olr_audio::kira::backend::mock::{MockBackend, MockBackendSettings};
 use olr_audio::{
-    ASSET_MAX_PLAYS, Admit, Audio, MAX_LOOPS, DEFAULT_VOLUME, GLOBAL_GAIN, GLOBAL_VOICES, Mix, SOURCE_GAIN, Voice, Voices, attenuation,
-    decibels, is_global, max_plays, mix, mix_nearest, nearest,
+    ASSET_MAX_PLAYS, Admit, Audio, DEFAULT_VOLUME, GLOBAL_GAIN, GLOBAL_VOICES, MAX_LOOPS, Mix, SOURCE_GAIN,
+    Voice, Voices, attenuation, decibels, is_global, max_plays, mix, mix_nearest, nearest,
 };
 use olr_content::{Content, LiveLoop, LiveSounds, LiveStart};
 use olr_data::manifest::PackKind;
@@ -509,7 +509,10 @@ fn an_entry_sound_plays_once_at_its_copy() {
     // Silent audio plays none.
     let mut s = Audio::<MockBackend>::silent();
     s.load_level_sound_files([("live/0.wav", &wav(800)[..])]);
-    s.play_live(&LiveSounds { starts: vec![one_shot(0, 0, 0.0)], loops: vec![looping(0, 0, 0.0)] }, &[Vec2::ZERO]);
+    s.play_live(
+        &LiveSounds { starts: vec![one_shot(0, 0, 0.0)], loops: vec![looping(0, 0, 0.0)] },
+        &[Vec2::ZERO],
+    );
     assert_eq!((s.playing(), s.loops().count()), (0, 0));
 }
 
@@ -649,7 +652,10 @@ fn an_undecodable_level_sound_is_a_warning() {
     assert!(a.has_level_sound(0) && !a.has_level_sound(1) && !a.has_level_sound(2));
     // It plays nothing, the good one plays.
     a.play_live(
-        &LiveSounds { starts: vec![one_shot(0, 1, 0.0)], loops: vec![looping(0, 1, 0.0), looping(1, 0, 0.0)] },
+        &LiveSounds {
+            starts: vec![one_shot(0, 1, 0.0)],
+            loops: vec![looping(0, 1, 0.0), looping(1, 0, 0.0)],
+        },
         &[Vec2::ZERO],
     );
     assert_eq!(playing_loops(&a), [(1, 0, 0.0)]);

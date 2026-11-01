@@ -252,7 +252,11 @@ impl<B: Backend> Audio<B> {
         };
         let names = &live.source.file.sounds;
         self.load_level_sound_files(
-            live.source.sounds.iter().enumerate().map(|(k, b)| (names.get(k).map_or("", String::as_str), &b[..])),
+            live.source
+                .sounds
+                .iter()
+                .enumerate()
+                .map(|(k, b)| (names.get(k).map_or("", String::as_str), &b[..])),
         );
     }
 
@@ -269,7 +273,8 @@ impl<B: Backend> Audio<B> {
                 Some(_) => match decode(bytes) {
                     Ok(d) => Some(d),
                     Err(e) => {
-                        self.warnings.push(format!("level sound {name} does not decode, it plays nothing: {e}"));
+                        self.warnings
+                            .push(format!("level sound {name} does not decode, it plays nothing: {e}"));
                         None
                     }
                 },

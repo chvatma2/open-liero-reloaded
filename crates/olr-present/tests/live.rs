@@ -381,11 +381,17 @@ fn centre(world: &World, id: &str) -> olr_math::Vec2 {
     olr_content::copy_centre(&world.live().unwrap().copy_by_id(id).unwrap())
 }
 
+/// `(copy, sound)` pairs.
+type Pairs = Vec<(u16, u16)>;
+
 /// `(copy, sound)` of the presentation's starts, taken (as the game plays
 /// them), and of its loops.
-fn heard(present: &mut Presentation) -> (Vec<(u16, u16)>, Vec<(u16, u16)>) {
+fn heard(present: &mut Presentation) -> (Pairs, Pairs) {
     let s = present.live_sounds();
-    let out = (s.starts.iter().map(|s| (s.copy, s.sound)).collect(), s.loops.iter().map(|l| (l.copy, l.sound)).collect());
+    let out = (
+        s.starts.iter().map(|s| (s.copy, s.sound)).collect(),
+        s.loops.iter().map(|l| (l.copy, l.sound)).collect(),
+    );
     present.live_sounds_played();
     out
 }
@@ -412,7 +418,8 @@ impl Online {
 fn a_resimulated_entry_starts_nothing_twice() {
     let Some(c) = content() else { return };
     let p = packs(&c);
-    let mut o = Online { sim: WorldSim::new(world(&c)), rec: TickRecorder::default(), net: NetPresenter::new() };
+    let mut o =
+        Online { sim: WorldSim::new(world(&c)), rec: TickRecorder::default(), net: NetPresenter::new() };
     let mut present = presentation(&c, &p, o.sim.world());
     for t in 0..5 {
         o.advance(&mut present, t, false);
@@ -426,7 +433,10 @@ fn a_resimulated_entry_starts_nothing_twice() {
     o.sim.world_mut().set_live_state(lamp, on).unwrap();
     o.advance(&mut present, 5, false);
     let starts = present.live_sounds().starts.clone();
-    assert!(starts.iter().any(|s| (s.copy, s.sound) == (lamp, tick)), "the lamp ticks entering On: {starts:?}");
+    assert!(
+        starts.iter().any(|s| (s.copy, s.sound) == (lamp, tick)),
+        "the lamp ticks entering On: {starts:?}"
+    );
     let s = starts.iter().find(|s| s.copy == lamp).unwrap();
     assert_eq!(s.pos, centre(o.sim.world(), "lamp"), "at its centre");
     heard(&mut present);
@@ -447,7 +457,8 @@ fn a_resimulated_entry_starts_nothing_twice() {
 fn a_rollback_switches_the_loop_to_the_corrected_state() {
     let Some(c) = content() else { return };
     let p = packs(&c);
-    let mut o = Online { sim: WorldSim::new(world(&c)), rec: TickRecorder::default(), net: NetPresenter::new() };
+    let mut o =
+        Online { sim: WorldSim::new(world(&c)), rec: TickRecorder::default(), net: NetPresenter::new() };
     let mut present = presentation(&c, &p, o.sim.world());
     let (press, hum, still) = {
         let w = o.sim.world();
@@ -483,12 +494,17 @@ fn a_rollback_switches_the_loop_to_the_corrected_state() {
 fn a_hidden_copy_is_silent() {
     let Some(c) = content() else { return };
     let p = packs(&c);
-    let mut o = Online { sim: WorldSim::new(world(&c)), rec: TickRecorder::default(), net: NetPresenter::new() };
+    let mut o =
+        Online { sim: WorldSim::new(world(&c)), rec: TickRecorder::default(), net: NetPresenter::new() };
     let mut present = presentation(&c, &p, o.sim.world());
     let (press, hum, shown) = {
         let w = o.sim.world();
         let press = copy(w, "press");
-        (press, sound(w, "press", "hum.wav"), w.live().unwrap().level().copies[usize::from(press)].prop("press_on").unwrap())
+        (
+            press,
+            sound(w, "press", "hum.wav"),
+            w.live().unwrap().level().copies[usize::from(press)].prop("press_on").unwrap(),
+        )
     };
     for t in 0..5 {
         o.advance(&mut present, t, false);
@@ -500,7 +516,11 @@ fn a_hidden_copy_is_silent() {
         resim: false,
         substeps: 1,
         lost: None,
-        events: vec![olr_sim::Event { substep: 0, death: false, kind: olr_sim::EventKind::LiveSound { copy: press, sound: hum } }],
+        events: vec![olr_sim::Event {
+            substep: 0,
+            death: false,
+            kind: olr_sim::EventKind::LiveSound { copy: press, sound: hum },
+        }],
     };
     // Hidden (press_on 0): no loop, and its sound starts nothing.
     o.sim.world_mut().set_live_value(press, shown, 0).unwrap();
@@ -525,6 +545,9 @@ fn a_hidden_copy_is_silent() {
     o.advance(&mut present, 6, false);
     o.net.apply(&mut present, o.sim.world(), &[], &[played(101)], &mut Vec::new());
     let s = present.live_sounds().starts.clone();
-    assert_eq!(s.iter().map(|s| (s.copy, s.sound, s.pos)).collect::<Vec<_>>(), [(press, hum, centre(o.sim.world(), "press"))]);
+    assert_eq!(
+        s.iter().map(|s| (s.copy, s.sound, s.pos)).collect::<Vec<_>>(),
+        [(press, hum, centre(o.sim.world(), "press"))]
+    );
     assert_eq!(heard(&mut present).1, [(press, hum)]);
 }

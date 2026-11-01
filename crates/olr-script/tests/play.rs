@@ -50,6 +50,11 @@ fn play_queues_a_live_sound() {
     assert_eq!(tick(&mut w), (vec![], 1));
     // The level script has no copy of its own.
     let own = "fn start() { this.play(\"hum.wav\"); }";
-    let level = Arc::new(LiveLevel::new(vec![sounding("a", 20, &[("hum.wav", 0)], vec![])], vec![own.into()], Some(0), 1));
+    let level = Arc::new(LiveLevel::new(
+        vec![sounding("a", 20, &[("hum.wav", 0)], vec![])],
+        vec![own.into()],
+        Some(0),
+        1,
+    ));
     assert_eq!(tick(&mut world(level)), (vec![], 1));
 }

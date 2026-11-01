@@ -123,7 +123,11 @@ impl<V: Voice> Voices<V> {
     /// [`ASSET_MAX_PLAYS`] of it and the limit in all; else it is skipped
     /// (never a steal).
     pub fn admit_asset(&self, sound: u16) -> Admit {
-        if self.playing_asset(sound) < ASSET_MAX_PLAYS && self.has_room() { Admit::Start } else { Admit::Skip }
+        if self.playing_asset(sound) < ASSET_MAX_PLAYS && self.has_room() {
+            Admit::Start
+        } else {
+            Admit::Skip
+        }
     }
 
     /// Adds a started one-shot of asset sound `sound`.
