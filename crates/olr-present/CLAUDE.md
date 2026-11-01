@@ -73,6 +73,23 @@ wired in the frame loop's order **once**, so each mode that draws a world
     `live_beams_are_placed_turned_and_mirrored`, `a_hidden_part_casts_no_beam`;
     `no_alloc.rs` with the spot's beam turning and a console's colour
     changing every tick.
+    Issue #92 (live sounds): `live_sounds()` is an `olr_content::LiveSounds`
+    for `olr_audio::Audio::play_live`: its `starts` are the presented
+    tick's `LiveState` entries whose state has an `enter_sound` and its
+    `LiveSound`s (a script's `this.play`), each at its copy's centre in
+    the presented world, until `live_sounds_played()` (the game calls it
+    once it played them; `on_tick` and each `NetPresenter::apply` start
+    them afresh); its `loops` are the presented world's (each shown copy
+    whose state has a `loop_sound`), rebuilt by `on_tick`, `new`,
+    `restart`, `state_loaded` and last in `NetPresenter::apply`. A hidden
+    copy (`Visible` 0) is silent. Online the starts come only from events
+    `apply` admits (their `EventKey`s: a re-simulated tick starts nothing
+    twice), the loops from the newest world (a rollback that undid a state
+    change switches the loop to the corrected state). Tests:
+    `a_resimulated_entry_starts_nothing_twice`,
+    `a_rollback_switches_the_loop_to_the_corrected_state` (a loaded state
+    and a restart too), `a_hidden_copy_is_silent` (the fixture's press,
+    hidden by its `press_on`).
   - `build(&world, alpha, &mut list)` per drawn frame: scene, then entities
     (`Fx::draw` with the match's lit flag), then `build_look(&world,
     alpha)`: the frame's `olr_look::LookFrame`, which `look()` returns
@@ -261,7 +278,8 @@ wired in the frame loop's order **once**, so each mode that draws a world
   `event_keys` keys an event by tick, sub-step, a hash of its kind and
   integer identity fields (never positions or amounts, which a correction
   moves) and an ordinal among equal ones; a live copy's `LiveState` by its
-  copy and state (issue #86), so a re-simulated entry plays once (#92). An erased event is not undone.
+  copy and state (issue #86), so a re-simulated entry plays once (#92), a
+  `LiveSound` by its copy and sound (#92). An erased event is not undone.
 - **The simulation never sees presentation:** it only reads the world.
 
 Test: `cargo nextest run -p olr-present` (`tests/views.rs`, issue #27:

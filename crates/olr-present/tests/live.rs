@@ -368,3 +368,163 @@ fn a_hidden_part_casts_no_beam() {
     assert_eq!(&beams[i..i + 2], &[0, 0], "nor its texels");
     assert_drawn_as(&present, &p, &world, "the lens hidden");
 }
+
+// Issue #92: the live copies' sounds.
+
+/// The level sound copy `id` names `name`.
+fn sound(world: &World, id: &str, name: &str) -> u16 {
+    world.live().unwrap().level().copy_by_id(id).unwrap().sound(name).unwrap()
+}
+
+/// Copy `id`'s centre in `world`.
+fn centre(world: &World, id: &str) -> olr_math::Vec2 {
+    olr_content::copy_centre(&world.live().unwrap().copy_by_id(id).unwrap())
+}
+
+/// `(copy, sound)` of the presentation's starts, taken (as the game plays
+/// them), and of its loops.
+fn heard(present: &mut Presentation) -> (Vec<(u16, u16)>, Vec<(u16, u16)>) {
+    let s = present.live_sounds();
+    let out = (s.starts.iter().map(|s| (s.copy, s.sound)).collect(), s.loops.iter().map(|l| (l.copy, l.sound)).collect());
+    present.live_sounds_played();
+    out
+}
+
+/// Online play's advance by one tick (`resim`: a correction's), as in
+/// `a_rollback_draws_the_corrected_state`.
+struct Online {
+    sim: WorldSim,
+    rec: TickRecorder,
+    net: NetPresenter,
+}
+
+impl Online {
+    fn advance(&mut self, present: &mut Presentation, tick: u32, resim: bool) {
+        self.sim.tick(&idle());
+        self.rec.simulated(&self.sim, TickInfo { tick, resim, all_final: true });
+        let ticked: Vec<TickedTick> = self.rec.take_ticked();
+        let restored = self.sim.take_restored_areas();
+        self.net.apply(present, self.sim.world(), &restored, &ticked, &mut Vec::new());
+    }
+}
+
+#[test]
+fn a_resimulated_entry_starts_nothing_twice() {
+    let Some(c) = content() else { return };
+    let p = packs(&c);
+    let mut o = Online { sim: WorldSim::new(world(&c)), rec: TickRecorder::default(), net: NetPresenter::new() };
+    let mut present = presentation(&c, &p, o.sim.world());
+    for t in 0..5 {
+        o.advance(&mut present, t, false);
+    }
+    heard(&mut present);
+    let (lamp, on, tick) = {
+        let w = o.sim.world();
+        (copy(w, "lamp"), state(w, "lamp", "On"), sound(w, "lamp", "tick.wav"))
+    };
+    let before = o.sim.save();
+    o.sim.world_mut().set_live_state(lamp, on).unwrap();
+    o.advance(&mut present, 5, false);
+    let starts = present.live_sounds().starts.clone();
+    assert!(starts.iter().any(|s| (s.copy, s.sound) == (lamp, tick)), "the lamp ticks entering On: {starts:?}");
+    let s = starts.iter().find(|s| s.copy == lamp).unwrap();
+    assert_eq!(s.pos, centre(o.sim.world(), "lamp"), "at its centre");
+    heard(&mut present);
+    // Played: the same frame again starts nothing.
+    assert!(present.live_sounds().starts.is_empty());
+    // A correction re-simulates tick 5 with the same entry: nothing again.
+    o.sim.restore(&before);
+    o.sim.world_mut().set_live_state(lamp, on).unwrap();
+    o.advance(&mut present, 5, true);
+    assert_eq!(heard(&mut present).0, [], "a re-simulated tick starts nothing twice");
+    // A later tick's own entry does.
+    o.sim.world_mut().set_live_state(lamp, on).unwrap();
+    o.advance(&mut present, 6, false);
+    assert!(heard(&mut present).0.contains(&(lamp, tick)));
+}
+
+#[test]
+fn a_rollback_switches_the_loop_to_the_corrected_state() {
+    let Some(c) = content() else { return };
+    let p = packs(&c);
+    let mut o = Online { sim: WorldSim::new(world(&c)), rec: TickRecorder::default(), net: NetPresenter::new() };
+    let mut present = presentation(&c, &p, o.sim.world());
+    let (press, hum, still) = {
+        let w = o.sim.world();
+        (copy(w, "press"), sound(w, "press", "hum.wav"), state(w, "press", "Still"))
+    };
+    assert_eq!(heard(&mut present).1, [], "the press starts Still: silent");
+    // From tick 1 its script moves it (Moving: it hums) for 30 ticks.
+    for t in 0..5 {
+        o.advance(&mut present, t, false);
+    }
+    assert_eq!(heard(&mut present).1, [(press, hum)], "moving, it hums");
+    assert_eq!(present.live_sounds().loops[0].pos, centre(o.sim.world(), "press"));
+    // Predicted: it stops (Still) in tick 5: no loop.
+    let before = o.sim.save();
+    o.sim.world_mut().set_live_state(press, still).unwrap();
+    o.advance(&mut present, 5, false);
+    assert_eq!(heard(&mut present).1, [], "predicted Still: silent");
+    // The correction: tick 5 again without it: the loop is back.
+    o.sim.restore(&before);
+    o.advance(&mut present, 5, true);
+    assert_eq!(heard(&mut present).1, [(press, hum)], "corrected: Moving, humming");
+    // A loaded state and a restart rebuild the loops from their world.
+    // (A world at its start: the press still, before its script runs.)
+    let quiet = WorldSim::new(world(&c));
+    o.sim.decode_state(&quiet.encode_state()).unwrap();
+    present.state_loaded(o.sim.world());
+    assert_eq!(heard(&mut present).1, [], "the loaded press is still");
+    present.restart(&world(&c), &p.level, &p.theme);
+    assert_eq!(heard(&mut present), (vec![], vec![]), "a restart's world: Still");
+}
+
+#[test]
+fn a_hidden_copy_is_silent() {
+    let Some(c) = content() else { return };
+    let p = packs(&c);
+    let mut o = Online { sim: WorldSim::new(world(&c)), rec: TickRecorder::default(), net: NetPresenter::new() };
+    let mut present = presentation(&c, &p, o.sim.world());
+    let (press, hum, shown) = {
+        let w = o.sim.world();
+        let press = copy(w, "press");
+        (press, sound(w, "press", "hum.wav"), w.live().unwrap().level().copies[usize::from(press)].prop("press_on").unwrap())
+    };
+    for t in 0..5 {
+        o.advance(&mut present, t, false);
+    }
+    assert_eq!(heard(&mut present).1, [(press, hum)]);
+    // A script's sound of the copy, as online play hands it over.
+    let played = |tick: u32| TickedTick {
+        tick,
+        resim: false,
+        substeps: 1,
+        lost: None,
+        events: vec![olr_sim::Event { substep: 0, death: false, kind: olr_sim::EventKind::LiveSound { copy: press, sound: hum } }],
+    };
+    // Hidden (press_on 0): no loop, and its sound starts nothing.
+    o.sim.world_mut().set_live_value(press, shown, 0).unwrap();
+    o.advance(&mut present, 5, false);
+    assert_eq!(heard(&mut present), (vec![], vec![]), "hidden: silent");
+    o.net.apply(&mut present, o.sim.world(), &[], &[played(100)], &mut Vec::new());
+    assert_eq!(heard(&mut present), (vec![], vec![]), "hidden: its sound starts nothing");
+    // Locally too.
+    let mut events = olr_sim::TickEvents::new();
+    let mut local = world(&c);
+    for _ in 0..5 {
+        local.tick(&idle(), &mut events);
+        present.on_tick(&local, &events);
+    }
+    assert_eq!(heard(&mut present).1, [(press, hum)]);
+    local.set_live_value(press, shown, 0).unwrap();
+    local.tick(&idle(), &mut events);
+    present.on_tick(&local, &events);
+    assert_eq!(heard(&mut present), (vec![], vec![]));
+    // Shown again: it hums, and its sound plays at its centre.
+    o.sim.world_mut().set_live_value(press, shown, 1).unwrap();
+    o.advance(&mut present, 6, false);
+    o.net.apply(&mut present, o.sim.world(), &[], &[played(101)], &mut Vec::new());
+    let s = present.live_sounds().starts.clone();
+    assert_eq!(s.iter().map(|s| (s.copy, s.sound, s.pos)).collect::<Vec<_>>(), [(press, hum, centre(o.sim.world(), "press"))]);
+    assert_eq!(heard(&mut present).1, [(press, hum)]);
+}

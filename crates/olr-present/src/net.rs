@@ -151,6 +151,15 @@ fn class(kind: &EventKind, next: Option<&EventKind>) -> Option<u64> {
     Some(h.0)
 }
 
+/// Issue #92: the start of live event `kind` (a state's `enter_sound`, a
+/// script's sound), admitted by its key, at its copy as the newest
+/// `world` shows it (a hidden copy is silent).
+fn live_start(present: &mut Presentation, world: &World, kind: &EventKind) {
+    if let Some(view) = world.live() {
+        present.live_sounds.push_start(view, kind);
+    }
+}
+
 /// FNV-1a 64 over little-endian words: a stable hash (`std::hash::Hash`'s
 /// output may change between releases).
 struct Fnv(u64);
@@ -221,7 +230,11 @@ impl NetPresenter {
     /// inside the advance, where the world is as of each tick. Last, the
     /// live copies are drawn as `world` shows them (issue #87,
     /// [`Presentation::sync_live`]): a correction's states, never a
-    /// re-simulated tick's.
+    /// re-simulated tick's. So too the live copies' sounds (issue #92,
+    /// [`Presentation::live_sounds`]): the starts are those of the
+    /// `LiveState` and `LiveSound` events admitted here (a key once, at
+    /// their copy in `world`), the loops `world`'s, so a rollback that
+    /// undid a state change switches the loop to the corrected state.
     ///
     /// In debug builds it checks the colour terrain's material is the
     /// world's afterwards ([`Presentation::terrain_drift`]): a drift is
@@ -237,6 +250,7 @@ impl NetPresenter {
         for &area in restored {
             present.color_mut().rebuild_area(area, world.terrain());
         }
+        present.live_sounds.starts.clear();
         let dt = world.settings().lx56_physics_dt();
         for t in ticks {
             let keys = event_keys(t.tick, &t.events);
@@ -257,6 +271,9 @@ impl NetPresenter {
                     match e.kind {
                         EventKind::Sound { .. } if new => sounds.push(*e),
                         EventKind::SpawnCosmetic { .. } => self.spawned += 1,
+                        EventKind::LiveState { .. } | EventKind::LiveSound { .. } if new => {
+                            live_start(present, world, &e.kind);
+                        }
                         _ => {}
                     }
                 }
@@ -286,6 +303,9 @@ impl NetPresenter {
                     }
                     EventKind::Sound { .. } => sounds.push(*e),
                     EventKind::Explosion { .. } => self.shakes.push(*e),
+                    EventKind::LiveState { .. } | EventKind::LiveSound { .. } => {
+                        live_start(present, world, &e.kind);
+                    }
                     _ => {}
                 }
             }
@@ -293,8 +313,9 @@ impl NetPresenter {
             present.scene.shake_for(&self.shakes, world.time());
         }
         // Issue #87: the live copies as the newest world shows them, after
-        // the restored areas and the ticks' edits.
+        // the restored areas and the ticks' edits; issue #92: their loops.
         present.sync_live(world);
+        present.live_sounds.set_loops(world.live());
         if cfg!(debug_assertions) && !(self.next == 0 && restored.is_empty()) && present.terrain_drift(world)
         {
             self.drifts += 1;

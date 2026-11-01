@@ -34,7 +34,7 @@ pub use look::{BlastKey, FlashKey};
 
 use std::sync::Arc;
 
-use olr_content::{CorePack, LiveLight, LoadedLevel, LoadedMod, LoadedSkin, LoadedTheme};
+use olr_content::{CorePack, LiveLight, LiveSounds, LoadedLevel, LoadedMod, LoadedSkin, LoadedTheme};
 use olr_data::image::Rgba;
 use olr_fx::{Fx, FxAssets, FxImages, FxTick, default_dirt_colour};
 use olr_look::{LevelLook, LookFrame, ModLook};
@@ -123,6 +123,9 @@ pub struct Presentation {
     /// Each live copy's light (issue #93: its groups, the values driving
     /// them, its beams), pushed after the level's.
     live_light: Option<Arc<LiveLight>>,
+    /// The live copies' sounds (issue #92): the starts presented since
+    /// they were last played, the loops of the world presented last.
+    pub(crate) live_sounds: LiveSounds,
 }
 
 /// `level`'s colour map with its live copies' pictures (issue #87).
@@ -203,9 +206,30 @@ impl Presentation {
             step: 0,
             live: LiveFrame::default(),
             live_light: live_light(s.level),
+            live_sounds: LiveSounds::default(),
         };
         present.sync_live(world);
+        present.live_sounds.set_loops(world.live());
         present
+    }
+
+    /// The live copies' sounds to play now (issue #92,
+    /// `olr_audio::Audio::play_live`): the starts of the tick (or the
+    /// online advance) presented last, until
+    /// [`Presentation::live_sounds_played`] (a local tick's `LiveState`
+    /// entries with an `enter_sound` and its `LiveSound`s; online those of
+    /// the events [`net::NetPresenter::apply`] admitted, each key once),
+    /// each at its copy's centre in the world presented, and that world's
+    /// loops (a new presentation's, a restart's and a loaded state's from
+    /// their world). A hidden copy is silent.
+    pub fn live_sounds(&self) -> &LiveSounds {
+        &self.live_sounds
+    }
+
+    /// The starts of [`Presentation::live_sounds`] were played (or
+    /// skipped): they go, the loops stay.
+    pub fn live_sounds_played(&mut self) {
+        self.live_sounds.starts.clear();
     }
 
     /// Draws the live copies (issue #87) into the colour map as `world`
@@ -356,6 +380,14 @@ impl Presentation {
         self.step_fx(&FxTick::new(world, events));
         self.sync_live(world);
         self.scene.after_tick(world, events);
+        // Issue #92: the tick's live sounds, after the tick.
+        self.live_sounds.starts.clear();
+        if let Some(view) = world.live() {
+            for e in events {
+                self.live_sounds.push_start(view, &e.kind);
+            }
+        }
+        self.live_sounds.set_loops(world.live());
     }
 
     /// The entities' and the colour terrain's part of
@@ -396,6 +428,8 @@ impl Presentation {
         self.color = color_map(level, theme);
         self.live_light = live_light(level);
         self.sync_live(world);
+        self.live_sounds.starts.clear();
+        self.live_sounds.set_loops(world.live());
         self.distant = level.distant.clone();
         self.surface = level.surface.clone();
         self.distant_surface = level.distant_surface.clone();
@@ -421,6 +455,7 @@ impl Presentation {
     pub fn state_loaded(&mut self, world: &World) {
         self.scene.start(world);
         self.sync_live(world);
+        self.live_sounds.set_loops(world.live());
         self.fx.clear();
         self.dynamic.clear();
         self.reset_heat(world);
