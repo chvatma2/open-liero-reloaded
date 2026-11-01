@@ -245,6 +245,47 @@ pub fn erase(d: &mut Decoded, at: (i32, i32), s: u32, level: (u32, u32), shape: 
     })
 }
 
+/// Takes `shape` out of drawn data `d` (issue #96, `element::extract`):
+/// returns a copy of `d` holding only the world pixels `shape` covers
+/// within the box and the level, and clears them in `d`, whole: art,
+/// back art and all (nothing dug, as `erase` digs). Cells are kept on
+/// both sides (an uncovered block's cell is never read). `None`, `d`
+/// untouched, when no covered block lies in the shape, or `d` is no drawn
+/// data of a consistent size.
+pub fn take(d: &mut Decoded, at: (i32, i32), s: u32, level: (u32, u32), shape: &Shape) -> Option<Decoded> {
+    let size = parts(d, s)?.size;
+    let mut inside = vec![false; size.0 as usize * size.1 as usize];
+    each(shape, at, size, level, |lx, ly, _, _| inside[ly as usize * size.0 as usize + lx as usize] = true);
+    let Decoded::Drawn { art, .. } = &*d else { return None };
+    let covered = |lx: u32, ly: u32| art_block(s, lx, ly).any(|(ax, ay)| art.get(ax, ay).a != 0);
+    let any =
+        (0..size.1).any(|ly| (0..size.0).any(|lx| inside[(ly * size.0 + lx) as usize] && covered(lx, ly)));
+    if !any {
+        return None;
+    }
+    let mut taken = d.clone();
+    // Clears every block but those whose `inside` is `keep`.
+    let clear = |d: &mut Decoded, keep: bool| {
+        let Parts { art, mut back, .. } = parts(d, s).expect("checked above");
+        for ly in 0..size.1 {
+            for lx in 0..size.0 {
+                if inside[(ly * size.0 + lx) as usize] == keep {
+                    continue;
+                }
+                for (ax, ay) in art_block(s, lx, ly) {
+                    art.set(ax, ay, Rgba::TRANSPARENT);
+                    if let Some(back) = back.as_deref_mut() {
+                        back.set(ax, ay, Rgba::TRANSPARENT);
+                    }
+                }
+            }
+        }
+    };
+    clear(&mut taken, true);
+    clear(d, false);
+    Some(taken)
+}
+
 /// Gives a plain layer's data cells, all of `material` (plan 14d R3), so
 /// it can hold other materials; mixed or other data is left as it is.
 pub fn mix(d: &mut Decoded, s: u32, material: Material) {

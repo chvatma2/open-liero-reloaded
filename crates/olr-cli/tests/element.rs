@@ -955,3 +955,59 @@ fn level_group_set_on_a_converted_level_changes_both() {
     let check = ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
     assert!(check.contains("0 errors, 0 warnings"), "{check}");
 }
+
+/// Issue #96: `extract` moves a shape's pixels of a drawn layer into a new
+/// layer directly above it, with its settings; the bake is unchanged, and
+/// a shape holding none of its pixels, or an image, is refused.
+#[test]
+fn cli_extracts_a_shape_into_a_layer_of_its_own() {
+    let Some((tmp, pack, content)) = dirt_level() else { return };
+    compose(tmp.path(), &pack, &content);
+    let baked =
+        |p: &Path| ["material.png", "front.png", "back.png"].map(|f| std::fs::read(p.join(f)).unwrap());
+    let before = baked(&pack);
+    let extract = |id: &str, rect: &str| {
+        cli(
+            &[
+                "level",
+                "element",
+                "extract",
+                "{pack}",
+                id,
+                "--rect",
+                rect,
+                "--name",
+                "Cave right",
+                "--content",
+                "{content}",
+            ],
+            &pack,
+            &content,
+        )
+    };
+    assert_eq!(ok(&extract("cave", "100,85,20,30")), "added element cave-right\n");
+    assert!(baked(&pack) == before, "the bake changed");
+    let list = ok(&cli(&["level", "element", "list", "{pack}"], &pack, &content));
+    let ids: Vec<&str> = list.lines().map(|l| l.split(' ').nth(1).unwrap()).collect();
+    let cave = ids.iter().position(|i| *i == "cave").unwrap();
+    assert_eq!(ids[cave + 1], "cave-right", "{list}");
+    assert!(list.contains("cave-right Drawn Background \"Cave right\""), "{list}");
+    let art = |id: &str| {
+        olr_format::image_io::decode_rgba(
+            &std::fs::read(pack.join(format!("editor/layers/{id}.png"))).unwrap(),
+        )
+        .unwrap()
+    };
+    let (left, right) = (art("cave"), art("cave-right"));
+    for (x, y, in_left) in [(95, 100, true), (99, 100, true), (100, 100, false), (105, 104, false)] {
+        assert_eq!((left.get(x, y).a != 0, right.get(x, y).a != 0), (in_left, !in_left), "({x}, {y})");
+    }
+    ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
+    // Nothing of the cave is left there; an image is not drawn.
+    let files = tree(&pack);
+    for (id, want) in [("cave", "nothing to extract"), ("sign", "not a drawn element")] {
+        let o = extract(id, "100,85,20,30");
+        assert!(!o.status.success() && String::from_utf8_lossy(&o.stderr).contains(want), "{id}");
+    }
+    assert!(tree(&pack) == files, "a refusal wrote");
+}

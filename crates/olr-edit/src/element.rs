@@ -1177,6 +1177,50 @@ pub fn duplicate(pack: &mut Pack, id: &str) -> Result<String, ElementError> {
     })
 }
 
+/// Moves the pixels of drawn layer `id` that `shape` covers into a new
+/// drawn layer directly above it, named `name` (its id made from the name,
+/// as `add_layer` makes one), with every setting of `id` but its name and
+/// lock: material, box, glow and its mask, glass, surfaces and their
+/// painted maps, folder (issue #96: the crane's claw out of the factory's
+/// rock). The pixels move whole, art, cells and back art, nothing dug; the
+/// bake is unchanged wherever no other element lies between the two.
+/// Returns the new id. A locked or distant layer, and a shape covering
+/// none of its pixels, are refused.
+pub fn extract(pack: &mut Pack, id: &str, shape: &Shape, name: &str) -> Result<String, ElementError> {
+    let l = level(pack)?;
+    let (size, s) = (l.size, l.art_scale);
+    let stray = stray(pack);
+    commit(pack, "", |src| {
+        let i = unlocked(src, id)?;
+        if src.composition.elements.len() >= MAX_ELEMENTS {
+            return Err(ElementError::TooMany);
+        }
+        let e = src.composition.elements[i].clone();
+        if !matches!(e.kind, ElementKind::Drawn { .. }) {
+            return Err(ElementError::WrongKind { id: id.into(), want: "a drawn element" });
+        }
+        if e.is_distant() {
+            return Err(ElementError::BadValue("a distant layer does not extract".into()));
+        }
+        let mut d = decoded(src, i, size, s)?;
+        let (at, _) = olr_format::levels::drawn_box(&e.kind, size).unwrap_or(((0, 0), size));
+        let taken = drawn::take(&mut d, at, s, size, shape)
+            .ok_or_else(|| ElementError::BadValue(format!("no pixel of {id:?} there: nothing to extract")))?;
+        let new = new_id(src, &stray, name, "layer");
+        let part = Element { id: new.clone(), name: name.into(), locked: false, ..e.clone() };
+        // Its glow mask and painted maps, copied whole (the box is the same).
+        for (from, to) in element_files(&e).into_iter().zip(element_files(&part)) {
+            if let Some(bytes) = src.files.get(&from).cloned() {
+                src.files.insert(to, bytes);
+            }
+        }
+        store(src, i, e, &d, size);
+        src.composition.elements.insert(i + 1, part.clone());
+        store(src, i + 1, part, &taken, size);
+        Ok(new)
+    })
+}
+
 /// Erases `shape` in drawn layer `id` (plan 14d R5: dirt and rock over back
 /// art are dug to it; the rest cleared).
 pub fn erase(pack: &mut Pack, id: &str, shape: &Shape) -> Result<(), ElementError> {

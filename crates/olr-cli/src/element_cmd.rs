@@ -343,6 +343,21 @@ pub(crate) enum ElementCommand {
         #[command(flatten)]
         content: ContentArg,
     },
+    /// Move a drawn layer's pixels inside a shape into a new layer directly
+    /// above it, with the layer's settings (glow, surfaces and their maps,
+    /// folder); the pixels move whole, nothing dug. Prints `added element
+    /// <id>` (the id made from --name).
+    Extract {
+        pack: PathBuf,
+        id: String,
+        #[command(flatten)]
+        shape: ShapeArgs,
+        /// The new layer's name.
+        #[arg(long)]
+        name: String,
+        #[command(flatten)]
+        content: ContentArg,
+    },
     /// Merge an element into the drawn layer directly below it: per pixel
     /// rock, then dirt, then background wins.
     MergeDown {
@@ -689,6 +704,9 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
         ElementCommand::Duplicate { pack, id, content } => {
             edit(pack, content, |p| Ok(vec![format!("added element {}", element::duplicate(p, id)?)]))
         }
+        ElementCommand::Extract { pack, id, shape, name, content } => edit(pack, content, |p| {
+            Ok(vec![format!("added element {}", element::extract(p, id, &shape.shape(), name)?)])
+        }),
         ElementCommand::MergeDown { pack, id, content } => edit(pack, content, |p| {
             element::merge_down(p, id)?;
             Ok(Vec::new())
