@@ -358,6 +358,14 @@ impl Renderer {
             }
             tex.gi.made(key);
         }
+        // The beam shadow map (issue #100), once a frame however many views,
+        // before the composites read it; no pass without beams.
+        if let (Some(_), Some(state)) = (look, self.look.as_ref())
+            && let Some(tex) = &state.textures
+            && !views.is_empty()
+        {
+            state.shadow.encode(&mut encoder, &tex.glow_beams.march_bind, timer);
+        }
         for (_, world) in views_drawn.clone() {
             let lit_target = look.and(self.look.as_ref()).and(world.shade.as_ref()).and(world.lit.as_ref());
             let (Some(lt), Some(state)) = (lit_target, self.look.as_ref()) else { continue };

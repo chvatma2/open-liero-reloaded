@@ -51,12 +51,20 @@ pub(super) const BEAM_BLOCK_SHIFT: u32 = 3;
 /// The side of a block of the block map, world pixels.
 pub(super) const BEAM_BLOCK: u32 = 1 << BEAM_BLOCK_SHIFT;
 
-/// The composite's prelude: the uniform's array length, the walk's bound
-/// and the block map's block.
+/// The composite's and the shadow map pass's prelude: the uniform's array
+/// length, the walk's bound, the block map's block, the shadow map's
+/// constants (issue #100) and the shared WGSL (`look/beam_walk.wgsl`).
 pub(super) fn wgsl() -> String {
+    use super::beam_shadow::{
+        BEAM_POINTS, BEAM_RAYS, MAX_SHADOW_ROWS, SHADOW_CLEAR, SHADOW_SCALE, SHADOW_WIDTH,
+    };
     format!(
         "const MAX_GLOW_BEAMS: i32 = {MAX_GLOW_BEAMS};\nconst BEAM_MAX_STEPS: i32 = {BEAM_MAX_STEPS};\n\
-         const BEAM_BLOCK_SHIFT: u32 = {BEAM_BLOCK_SHIFT}u;\nconst BEAM_BLOCK: i32 = {BEAM_BLOCK};\n"
+         const BEAM_BLOCK_SHIFT: u32 = {BEAM_BLOCK_SHIFT}u;\nconst BEAM_BLOCK: i32 = {BEAM_BLOCK};\n\
+         const BEAM_RAYS: u32 = {BEAM_RAYS}u;\nconst SHADOW_WIDTH: u32 = {SHADOW_WIDTH}u;\n\
+         const MAX_SHADOW_ROWS: u32 = {MAX_SHADOW_ROWS}u;\nconst BEAM_POINTS: i32 = {BEAM_POINTS};\n\
+         const SHADOW_SCALE: f32 = {SHADOW_SCALE:?};\nconst SHADOW_CLEAR: u32 = {SHADOW_CLEAR}u;\n{}",
+        include_str!("../look/beam_walk.wgsl")
     )
 }
 
@@ -81,6 +89,11 @@ pub(super) struct BeamBinding<'a> {
     /// The composite's group 1: the beams uniform and the haze map.
     pub(super) composite_layout: &'a wgpu::BindGroupLayout,
     pub(super) uniform: &'a wgpu::Buffer,
+    /// The shadow map (issue #100): its pass's layout and rows, and the
+    /// composite's binds of it.
+    pub(super) shadow: &'a super::beam_shadow::BeamShadow,
+    /// The level's solid map (the shadow map's pass marches over it).
+    pub(super) solid: &'a wgpu::TextureView,
 }
 
 /// A level's glow beams on the GPU.
@@ -105,6 +118,9 @@ pub(super) struct GlowBeams {
     pub(super) cascade_bind: wgpu::BindGroup,
     /// The composite's group 1.
     pub(super) composite_bind: wgpu::BindGroup,
+    /// The shadow map pass's group 0 (issue #100): the beams, the rows, the
+    /// solid and block maps.
+    pub(super) march_bind: wgpu::BindGroup,
     /// Whether [`Self::map`] holds a level's beam map (else 1 × 1 none).
     mapped: bool,
     /// The `ColorMap::beams_generation` the textures hold.
@@ -196,7 +212,7 @@ impl GlowBeams {
         write(queue, &map, &[0, 0], (0, 0, 1, 1), 2);
         write(queue, &haze, &[255], (0, 0, 1, 1), 1);
         write(queue, &blocks, &[1], (0, 0, 1, 1), 1);
-        let (cascade_bind, composite_bind) = Self::binds(device, b, (&map, &haze, &blocks));
+        let (cascade_bind, composite_bind, march_bind) = Self::binds(device, b, (&map, &haze, &blocks));
         GlowBeams {
             sources: Vec::new(),
             map,
@@ -204,6 +220,7 @@ impl GlowBeams {
             blocks,
             cascade_bind,
             composite_bind,
+            march_bind,
             mapped: false,
             generation: None,
             scratch: Vec::new(),
@@ -214,9 +231,10 @@ impl GlowBeams {
         device: &wgpu::Device,
         b: &BeamBinding,
         (map, haze, blocks): (&wgpu::Texture, &wgpu::Texture, &wgpu::Texture),
-    ) -> (wgpu::BindGroup, wgpu::BindGroup) {
+    ) -> (wgpu::BindGroup, wgpu::BindGroup, wgpu::BindGroup) {
         let view = |t: &wgpu::Texture| t.create_view(&wgpu::TextureViewDescriptor::default());
         let (map, haze, blocks) = (view(map), view(haze), view(blocks));
+        let march = b.shadow.bind(device, b.uniform, b.solid, &blocks);
         let cascade = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("olr-render glow beams cascade"),
             layout: b.cascade_layout,
@@ -234,7 +252,7 @@ impl GlowBeams {
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&blocks) },
             ],
         });
-        (cascade, composite)
+        (cascade, composite, march)
     }
 
     /// Whether the level has a beam map (the cascades weight by its cone).
@@ -277,7 +295,7 @@ impl GlowBeams {
             self.map = texture(device, "olr-render glow beams", map_size, wgpu::TextureFormat::Rg8Uint);
             self.haze = texture(device, "olr-render haze", haze_size, wgpu::TextureFormat::R8Unorm);
             self.blocks = texture(device, "olr-render beam blocks", blocks_size, wgpu::TextureFormat::R8Uint);
-            (self.cascade_bind, self.composite_bind) =
+            (self.cascade_bind, self.composite_bind, self.march_bind) =
                 Self::binds(device, b, (&self.map, &self.haze, &self.blocks));
         }
         let whole = Rect { x: 0, y: 0, w: level.0, h: level.1 };

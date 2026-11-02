@@ -39,27 +39,6 @@ struct WormBoxes {
 // and light only, which draw issue #39's look of a hot pixel).
 @group(0) @binding(8) var heat_tex: texture_2d<f32>;
 
-// One glow beam (the directional-glow design; `renderer/glow_beams.rs`
-// packs them): its source is a segment across it, `half` world pixels each
-// side of `at`, facing `dir`; it widens by `tan_spread` and reaches `reach`
-// world pixels. `light` is its strength (linear), `group` its glow group's
-// value, negative for a backdrop patch's beam, `region` its patch's
-// flicker region.
-struct GlowBeam {
-    at: vec2<f32>,
-    dir: vec2<f32>,
-    half: f32,
-    tan_spread: f32,
-    reach: f32,
-    group: f32,
-    light: vec3<f32>,
-    region: f32,
-};
-// The frame's beams, `look.beams.x` of them (MAX_GLOW_BEAMS is prepended
-// from Rust).
-struct GlowBeams {
-    beams: array<GlowBeam, MAX_GLOW_BEAMS>,
-};
 @group(1) @binding(0) var<uniform> glow_beams: GlowBeams;
 // The haze map (the directional-glow design): per world pixel, 0 none to
 // 1 the level's haze; 1 x 1 at 1 without a map.
@@ -102,15 +81,6 @@ fn solid_px(w: vec2<i32>) -> bool {
     return textureLoad(solid_tex, w, 0).r != 1u;
 }
 
-// Whether world pixel `c` lies wholly behind beam `b`'s face: its farthest
-// corner along the beam (as `derive` finds the face from its patch's
-// corners) not past it. Exact for the pixel, unlike a point summed along a
-// long walk (a thousandth of a pixel of slack).
-fn behind_face(c: vec2<i32>, b: GlowBeam) -> bool {
-    let far = dot(vec2<f32>(c) - b.at, b.dir) + max(b.dir.x, 0.0) + max(b.dir.y, 0.0);
-    return far <= 1e-3;
-}
-
 // Whether block `k` of the block map holds no opaque pixel.
 fn block_open(k: vec2<i32>) -> bool {
     let size = vec2<i32>(textureDimensions(solid_blocks));
@@ -118,14 +88,6 @@ fn block_open(k: vec2<i32>) -> bool {
         return true;
     }
     return textureLoad(solid_blocks, k, 0).r == 0u;
-}
-
-// Whether any pixel of block `k` lies wholly behind beam `b`'s face
-// (`behind_face`, linear in the pixel: its least corner decides).
-fn block_behind_face(k: vec2<i32>, b: GlowBeam) -> bool {
-    let lo = k * BEAM_BLOCK;
-    let c = select(lo + vec2<i32>(BEAM_BLOCK - 1), lo, b.dir >= vec2<f32>(0.0));
-    return behind_face(c, b);
 }
 
 // Whether nothing opaque lies between `o` and source point `e` of beam

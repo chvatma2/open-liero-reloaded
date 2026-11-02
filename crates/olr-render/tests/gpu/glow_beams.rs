@@ -720,3 +720,96 @@ fn the_beam_map_follows_a_turned_live_beam() {
     let (ahead, behind) = (f.light(30, 32), f.light(12, 32));
     assert!(behind > 1.5 * amb && ahead < 1.1 * amb, "at 180°: ahead {ahead}, behind {behind}, {amb}");
 }
+
+// Beam shadow maps (issue #100): each beam's shadow rays, traced once a
+// frame outward from its 8 source points, a row each, a texel a ray.
+
+/// The shadow map as last made (stored distances, × 8 world pixels;
+/// `u16::MAX` clear), its width and its rows (first ray, rays, limit).
+type Shadow = (Vec<u16>, u32, Vec<(u32, u32, f32)>);
+
+fn shadow_map(gpu: &Offscreen, r: &Renderer) -> Shadow {
+    let tex = r.beam_shadow_map().expect("a level with beams has a shadow map");
+    let bytes = gpu.read_bytes(tex);
+    let map = bytes.as_chunks::<2>().0.iter().map(|&b| u16::from_le_bytes(b)).collect();
+    (map, tex.width(), r.beam_shadow_rows())
+}
+
+/// Row `row`'s stored distance of the ray nearest world angle `deg`.
+fn ray(shadow: &Shadow, row: usize, deg: f32) -> u16 {
+    let (map, width, rows) = shadow;
+    let (start, count, _) = rows[row];
+    let i = ((deg / 360.0 * 4000.0).round() as i64).rem_euclid(4000);
+    let j = (i - i64::from(start)).rem_euclid(4000) as u32;
+    assert!(j < count, "ray {i} outside row {row}: {:?}", rows[row]);
+    map[row * *width as usize + j as usize]
+}
+
+/// Source point 4 of the patch's beam (its face at x 21, rows 30 to 34:
+/// half 2.5 about y 32.5) lies at (20.5, 32.8125); its ray along 0° enters
+/// the rock column at x 60 39.5 px out.
+#[test]
+fn a_ray_stops_at_the_wall() {
+    let Some(gpu) = offscreen() else { return };
+    let map = beam_level(|x, _| (x == 60).then_some(Material::Rock), true);
+    let mut r = renderer(&gpu, &map);
+    frame(&gpu, &mut r, &beam_look(0));
+    let d = f32::from(ray(&shadow_map(&gpu, &r), 4, 0.0)) / 8.0;
+    assert!((d - 39.5).abs() <= 1.0, "stopped at {d}");
+}
+
+#[test]
+fn an_open_ray_runs_to_its_limit() {
+    let Some(gpu) = offscreen() else { return };
+    let map = beam_level(|_, _| None, true);
+    let mut r = renderer(&gpu, &map);
+    frame(&gpu, &mut r, &beam_look(0));
+    assert_eq!(ray(&shadow_map(&gpu, &r), 4, 0.0), u16::MAX);
+}
+
+/// A backdrop patch under dirt: every ray of its rows stops at once.
+#[test]
+fn a_covered_backdrop_source_sees_nothing() {
+    let Some(gpu) = offscreen() else { return };
+    let cell = |x, y| if in_patch(x, y) { Material::Dirt } else { Material::Background };
+    let map = patch_level(cell, |_, _| false, in_patch, 1);
+    let mut r = renderer(&gpu, &map);
+    frame(&gpu, &mut r, &beam_look(0));
+    let (shadow, width, rows) = shadow_map(&gpu, &r);
+    assert_eq!(rows.len(), 8, "one beam");
+    for (row, &(_, count, _)) in rows.iter().enumerate() {
+        let texels = &shadow[row * width as usize..][..count as usize];
+        assert!(texels.iter().all(|&d| d == 0), "row {row}: {:?}", &texels[..8]);
+    }
+}
+
+/// A ray up and to the right leaves the level's top 51 px out, within
+/// its limit: outside is open, as for the composite.
+#[test]
+fn rays_leaving_the_level_run_open() {
+    let Some(gpu) = offscreen() else { return };
+    let map = beam_level(|_, _| None, true);
+    let mut r = renderer(&gpu, &map);
+    frame(&gpu, &mut r, &beam_look(0));
+    let shadow = shadow_map(&gpu, &r);
+    assert!(shadow.2[4].2 > 60.0, "the limit reaches past the top: {:?}", shadow.2[4]);
+    assert_eq!(ray(&shadow, 4, -38.0), u16::MAX);
+}
+
+/// The map is at most 2048 texels wide: a device of that limit draws it.
+#[test]
+fn the_map_fits_a_2048_device() {
+    if std::env::var_os("OLR_GPU_TESTS").is_none() {
+        return;
+    }
+    let Ok(gpu) =
+        Offscreen::open(&OffscreenOptions { max_texture_side: Some(2048), ..OffscreenOptions::default() })
+    else {
+        return;
+    };
+    let map = beam_level(|x, _| (x == 60).then_some(Material::Rock), true);
+    let mut r = renderer(&gpu, &map);
+    let f = frame(&gpu, &mut r, &beam_look(0));
+    assert!(f.light(41, 32) > 3.0 * ambient(&f));
+    assert!(r.beam_shadow_map().is_some_and(|t| t.width() <= 2048));
+}

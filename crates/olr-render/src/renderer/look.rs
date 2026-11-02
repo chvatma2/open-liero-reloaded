@@ -301,6 +301,8 @@ pub(super) struct LookState {
     beam_light: bool,
     /// The composite's group 1 before a level's exists: no beam, no haze map.
     no_beams: super::glow_beams::GlowBeams,
+    /// The beam shadow map and its pass (issue #100).
+    pub(super) shadow: super::beam_shadow::BeamShadow,
 }
 
 const UINT_TEXTURE: wgpu::BindingType = wgpu::BindingType::Texture {
@@ -687,10 +689,13 @@ impl LookState {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let shadow = super::beam_shadow::BeamShadow::new(device, &super::glow_beams::wgsl());
         let binding = super::glow_beams::BeamBinding {
             cascade_layout: &gi.beam_layout,
             composite_layout: &beam_layout,
             uniform: &beams,
+            shadow: &shadow,
+            solid: &no_solid,
         };
         let no_beams = super::glow_beams::GlowBeams::new(device, queue, &binding);
         let light_source = format!("{}\n{}", common(), include_str!("../look/light.wgsl"));
@@ -789,15 +794,18 @@ impl LookState {
             beam_count: 0,
             beam_light: true,
             no_beams,
+            shadow,
         }
     }
 
     /// The layouts and uniform of the level's glow beam binds.
-    fn beam_binding(&self) -> super::glow_beams::BeamBinding<'_> {
+    fn beam_binding<'a>(&'a self, solid: &'a wgpu::TextureView) -> super::glow_beams::BeamBinding<'a> {
         super::glow_beams::BeamBinding {
             cascade_layout: &self.gi.beam_layout,
             composite_layout: &self.beam_layout,
             uniform: &self.beams,
+            shadow: &self.shadow,
+            solid,
         }
     }
 
@@ -990,6 +998,7 @@ impl LookState {
         // Over the level the device keeps (cropped like the terrain): past it
         // is open, as for the soak.
         let gi = super::gi::GiState::new(device, &self.gi, sizes.world, max_dim, &inputs);
+        let glow_beams = super::glow_beams::GlowBeams::new(device, queue, &self.beam_binding(&view(&solid)));
         let t = LookTextures {
             glow,
             groups,
@@ -1008,7 +1017,7 @@ impl LookState {
             gi,
             heat: None,
             soak: None,
-            glow_beams: super::glow_beams::GlowBeams::new(device, queue, &self.beam_binding()),
+            glow_beams,
         };
         let mut t = t;
         t.set_surface(device, queue, (&self.heat, &self.soak_material_layout), surface);
@@ -1041,12 +1050,14 @@ impl LookState {
         queue: &super::uploads::Queue,
         map: &ColorMap,
     ) {
+        let Some(t) = &mut self.textures else { return };
         let binding = super::glow_beams::BeamBinding {
             cascade_layout: &self.gi.beam_layout,
             composite_layout: &self.beam_layout,
             uniform: &self.beams,
+            shadow: &self.shadow,
+            solid: &t.solid_view,
         };
-        let Some(t) = &mut self.textures else { return };
         let world = (t.solid.width(), t.solid.height());
         let cells = map.material().cells();
         // The solid map as written (`write`): with clear solids or live
@@ -1067,6 +1078,9 @@ impl LookState {
         if self.beam_count > 0 {
             queue.write_buffer(&self.beams, 0, bytemuck::cast_slice(&self.packed_beams));
         }
+        // Issue #100: the shadow map's rows, none without beams.
+        let packed = if self.beam_count > 0 { &self.packed_beams[..] } else { &[] };
+        self.shadow.prepare(queue, packed);
     }
 
     /// Uploads `map`'s glass map when it is not the one uploaded (the
@@ -1334,6 +1348,22 @@ impl Renderer {
         if let Some(l) = self.look.as_mut() {
             l.bloom = on;
         }
+    }
+
+    /// The beam shadow map as last drawn (issue #100; tests): none
+    /// without lighting.
+    #[doc(hidden)]
+    pub fn beam_shadow_map(&self) -> Option<&wgpu::Texture> {
+        self.look.as_ref().map(|l| l.shadow.map())
+    }
+
+    /// The beam shadow map's rows of the last frame (tests): each's first
+    /// ray, rays and limit.
+    #[doc(hidden)]
+    pub fn beam_shadow_rows(&self) -> Vec<(u32, u32, f32)> {
+        self.look
+            .as_ref()
+            .map_or(Vec::new(), |l| l.shadow.rows().iter().map(|r| (r.start, r.count, r.limit)).collect())
     }
 
     /// Turns the glow beams' light off or on (the directional-glow design;

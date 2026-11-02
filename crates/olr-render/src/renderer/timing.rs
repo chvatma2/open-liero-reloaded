@@ -57,6 +57,8 @@ pub enum PassGroup {
     Cascades,
     /// The fluence (and its clear on a fresh start).
     Fluence,
+    /// The beam shadow map (issue #100), once a frame with beams.
+    BeamShadow,
     /// The ambient occlusion's rows (issue #10, only with occlusion).
     Occlusion,
     /// The light sum.
@@ -74,7 +76,7 @@ pub enum PassGroup {
 }
 
 /// How many [`PassGroup`]s there are.
-pub const PASS_GROUPS: usize = 18;
+pub const PASS_GROUPS: usize = 19;
 
 impl PassGroup {
     /// Every group, in the GPU's order ([`GpuTimes::passes`]' indices).
@@ -90,6 +92,7 @@ impl PassGroup {
         PassGroup::JumpFlood,
         PassGroup::Cascades,
         PassGroup::Fluence,
+        PassGroup::BeamShadow,
         PassGroup::Occlusion,
         PassGroup::Sum,
         PassGroup::Soak,
@@ -113,6 +116,7 @@ impl PassGroup {
             PassGroup::JumpFlood => "jump flood",
             PassGroup::Cascades => "cascades",
             PassGroup::Fluence => "fluence",
+            PassGroup::BeamShadow => "beam shadow",
             PassGroup::Occlusion => "occlusion",
             PassGroup::Sum => "light sum",
             PassGroup::Soak => "soak",

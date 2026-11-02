@@ -9,6 +9,7 @@ use crate::atlas::{self, AtlasLayout};
 use crate::frame::Instance;
 use crate::upscale::UpscaleFilter;
 
+mod beam_shadow;
 mod gi;
 mod glow_beams;
 mod heat;
