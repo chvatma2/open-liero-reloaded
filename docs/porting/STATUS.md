@@ -7985,6 +7985,23 @@ to this section.
   (`docs/deferred-verification.md`); the liveliness, the crane's
   harmlessness, the tubes' rhythm and the buzz and tick's level in play
   are issue #100's playtest.
+- **After the first playtest (#100, 2026-11-02, build
+  0.3.0-dev.228).** The maintainer asked for a slower crane and for the
+  alarm on the other console. The crane's `SPEED()` is 25 (half: 300
+  ticks from 0 to 75, 340 across the whole rail). The alarm is now the
+  **Terminal**'s (`content/assets/terminal`, key `e`): the small desk
+  terminal left of the crane, cut from After Dark at 723,351 15 × 14
+  (`rock` and the 9 glowing pixels of `rock-bcn`, group `beacons`), its
+  `Alarm` every `rock-bcn` pixel `#ff3020`, light 400, `Pulse(600, 40,
+  100)`, as the Console's was; the level script switches it. The
+  `console` copy is static again (the Console asset keeps its states);
+  the ground loses `rock-bcn` (empty without the terminal). Tests:
+  `LIVE_BOXES`, `LIVE_COPIES` and the copies' list swap the console for
+  the terminal; `the_crane_crosses_and_the_terminal_alarms` plays 2800
+  ticks; the carrying, pushing and explosion tests wait for the slower
+  claw; the live goldens' check wants 5 `LiveArrived` events, not 8;
+  `factory-crane.png` and `factory-beacon-side.png` and the live golden
+  `classic-factory-live-4dm.ron` re-blessed.
 
 ## Kept OLX quirks
 

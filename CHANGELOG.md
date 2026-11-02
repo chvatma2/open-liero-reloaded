@@ -235,9 +235,9 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   layer of their own, `level notes` sets a level's notes and `pack new
   --keep-origin` keeps the copied pack's origin.
 - Liero Factory Reloaded comes alive: every couple of seconds the
-  crane's claw crosses its rail, humming, carrying worms on its shoulders
-  and pushing those in its way aside (it crushes nobody), and the console
-  under the deck goes red, its lamp pulsing, while it moves.
+  crane's claw slowly crosses its rail, humming, carrying worms on its
+  shoulders and pushing those in its way aside (it crushes nobody), and
+  the small terminal left of it goes red, pulsing, while it moves.
   `olr-cli render-match --at X,Y` centres the view on a point.
 - Three of Liero Factory Reloaded's ceiling strips fail like faulty
   fluorescent tubes, stuttering on and off in uneven bursts, sometimes

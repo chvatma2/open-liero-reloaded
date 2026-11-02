@@ -524,8 +524,8 @@ The headless command-line tool. Its commands:
   `live-beam-turned.png` (`spot.beam_dir=10`, `spot.beam_spread=10`): the
   spot's beam worked out each frame at two directions.
   Issue #97's `factory-crane.png` (`factory_crane`): idle bots on Liero
-  Factory Reloaded, seed 1, tick 275 (the claw halfway through its first
-  crossing, the console in `Alarm`; issue #99: the warning beacon
+  Factory Reloaded, seed 1, tick 275 (the claw a quarter through its
+  first crossing, the terminal in `Alarm`; issue #99: the warning beacon
   end-on, flaring), `--at 870,300`. Issue #99's (`factory_golden`):
   `factory-screen.png` (tick 300, `--at 930,110`: the security screen on
   `Crane`) and `factory-beacon-side.png` (tick 340, `--at 870,300`: the
@@ -1201,17 +1201,19 @@ the truck's camera, the one of four holding no live copy, and retires
 `docs/porting/STATUS.md`); issue #98 adds the three faulty tubes' boxes
 (`strip-2`, `strip-4`, `strip-7`, `TUBES`). Its live factory (`factory_world` places
 worm 0, a human, where a test wants): `the_live_factory_has_its_live_copies`
-(the crane, the console and, issue #98, the tubes Live in their
-starting states, the Crane's and the Strip light's default scripts, the
-other strips static, the level script naming the crane and the console), `the_crane_crosses_and_the_console_alarms`
-(2000 ticks: rests of 200, crossings of 150 then 170, `Moving` while
-`claw_x` changes, the console in `Alarm` at most 2 ticks behind),
+(the crane, the terminal (issue #100; the console before it) and,
+issue #98, the tubes Live in their starting states, the Crane's and
+the Strip light's default scripts, the other strips static, the level
+script naming the crane and the terminal),
+`the_crane_crosses_and_the_terminal_alarms` (2800 ticks: rests of 200,
+crossings of 300 then 340 at issue #100's half speed, `Moving` while
+`claw_x` changes, the terminal in `Alarm` at most 2 ticks behind),
 `live_states_keep_their_solid_pixels` (every state's rock, from the
 asset files and in a match; the Strip light's none), `the_crane_carries_and_pushes_a_worm` (a
 worm on the claw's shoulders carried 75 px, one hanging by its rope in
 the claw's path pushed aside, neither `Crushed`),
 `explosions_leave_the_factorys_live_copies_alone` (`World::explode_for_test`
-on the claw, the dirt and the console: the copies unchanged, the
+on the claw, the dirt and the terminal: the copies unchanged, the
 ground dug as After Dark's outside the boxes), `the_factory_scripts_never_fail`
 (6000 ticks, no `ScriptError`, the crane, the console and each tube
 still running, at most half of `olr_script`'s operation limits; issue
