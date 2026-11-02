@@ -435,6 +435,110 @@
             ],
         ),
         (
+            id: "terminal",
+            asset: "Terminal",
+            at: (723, 351),
+            size: (15, 14),
+            props: [
+                (
+                    drives: LightIntensity(1),
+                    min: 0,
+                    max: 1000,
+                    default: 200,
+                ),
+                (
+                    drives: GlowAnimation(1),
+                    min: 0,
+                    max: 1,
+                    default: 0,
+                ),
+            ],
+            pictures: [
+                (
+                    size: (15, 14),
+                    rock: true,
+                ),
+                (
+                    size: (8, 8),
+                    rock: true,
+                    glow: true,
+                    groups: true,
+                ),
+                (
+                    size: (8, 8),
+                    rock: true,
+                    glow: true,
+                    groups: true,
+                ),
+            ],
+            states: [
+                (
+                    name: "Normal",
+                    values: [
+                        (0, 200),
+                        (1, 0),
+                    ],
+                    parts: [
+                        (
+                            kind: Rock,
+                            picture: 0,
+                        ),
+                        (
+                            layer: 1,
+                            kind: Rock,
+                            picture: 1,
+                            at: (0, 1),
+                            glow_strength: 100,
+                        ),
+                    ],
+                ),
+                (
+                    name: "Alarm",
+                    values: [
+                        (0, 400),
+                        (1, 1),
+                    ],
+                    parts: [
+                        (
+                            kind: Rock,
+                            picture: 0,
+                        ),
+                        (
+                            layer: 1,
+                            kind: Rock,
+                            picture: 2,
+                            at: (0, 1),
+                            glow_strength: 100,
+                        ),
+                    ],
+                ),
+            ],
+            animations: [
+                Pulse(
+                    period_ms: 2400,
+                    low: 30,
+                    high: 100,
+                ),
+                Pulse(
+                    period_ms: 600,
+                    low: 40,
+                    high: 100,
+                ),
+            ],
+            groups: [
+                (
+                    id: "beacons",
+                    intensity: 200,
+                    reach: Pixels(20),
+                    animation: Pulse(
+                        period_ms: 2400,
+                        low: 30,
+                        high: 100,
+                    ),
+                ),
+            ],
+        ),
+        (
             id: "crane",
             asset: "Crane",
             at: (762, 269),
@@ -638,108 +742,6 @@
             ],
             sounds: [
                 ("hum.wav", 2),
-            ],
-        ),
-        (
-            id: "console",
-            asset: "Console",
-            at: (933, 269),
-            size: (33, 64),
-            props: [
-                (
-                    drives: LightIntensity(1),
-                    min: 0,
-                    max: 1000,
-                    default: 180,
-                ),
-                (
-                    drives: GlowAnimation(1),
-                    min: 0,
-                    max: 1,
-                    default: 0,
-                ),
-            ],
-            pictures: [
-                (
-                    size: (33, 64),
-                    rock: true,
-                ),
-                (
-                    size: (17, 51),
-                    rock: true,
-                    glow: true,
-                    groups: true,
-                ),
-                (
-                    size: (17, 51),
-                    rock: true,
-                    glow: true,
-                    groups: true,
-                ),
-            ],
-            states: [
-                (
-                    name: "Normal",
-                    values: [
-                        (0, 180),
-                        (1, 0),
-                    ],
-                    parts: [
-                        (
-                            kind: Rock,
-                            picture: 0,
-                        ),
-                        (
-                            layer: 1,
-                            kind: Rock,
-                            picture: 1,
-                            at: (8, 10),
-                            glow_strength: 100,
-                        ),
-                    ],
-                ),
-                (
-                    name: "Alarm",
-                    values: [
-                        (0, 400),
-                        (1, 1),
-                    ],
-                    parts: [
-                        (
-                            kind: Rock,
-                            picture: 0,
-                        ),
-                        (
-                            layer: 1,
-                            kind: Rock,
-                            picture: 2,
-                            at: (8, 10),
-                            glow_strength: 100,
-                        ),
-                    ],
-                ),
-            ],
-            animations: [
-                Flicker(
-                    speed: 6,
-                    depth: 25,
-                ),
-                Pulse(
-                    period_ms: 600,
-                    low: 40,
-                    high: 100,
-                ),
-            ],
-            groups: [
-                (
-                    id: "displays",
-                    intensity: 180,
-                    reach: Pixels(28),
-                    animation: Flicker(
-                        speed: 6,
-                        depth: 25,
-                    ),
-                ),
             ],
         ),
         (

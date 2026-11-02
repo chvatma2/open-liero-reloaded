@@ -284,10 +284,11 @@ Remade OLX content is named "<Old name> Reloaded".
   materials are After Dark's, and so is its bake outside its live
   copies (`material.png`, `front.png`, `back.png`, the distant sky and
   the `look/` files; `olr-cli`'s `tests/reloaded.rs`). Since issue #97
-  the crane and the console are live: every couple of seconds the
-  crane's claw crosses its rail, humming, carrying worms on its shoulders
-  and pushing those in its way aside (it crushes nobody), and the
-  console under the deck goes red, its lamp pulsing, while it moves.
+  the crane is live: every couple of seconds the crane's claw crosses
+  its rail (25 px a second since issue #100), humming, carrying worms on
+  its shoulders and pushing those in its way aside (it crushes nobody),
+  and the terminal left of it (issue #100; the console under the deck
+  before it) goes red, pulsing, while it moves.
   Since issue #98 three ceiling strips (`strip-2`, `strip-4`,
   `strip-7`) fail like faulty tubes, stuttering on and off in uneven
   bursts, sometimes dark or dim a while, buzzing and ticking; the other

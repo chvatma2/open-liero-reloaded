@@ -29,6 +29,10 @@
             origin: Builtin("warning-beacon"),
         ),
         (
+            key: "e",
+            origin: Builtin("terminal"),
+        ),
+        (
             key: "k",
             origin: Builtin("crane"),
         ),
@@ -127,6 +131,12 @@
             at: (951, 45),
         ),
         (
+            id: "terminal",
+            asset: "e",
+            at: (723, 351),
+            live: true,
+        ),
+        (
             id: "crane",
             asset: "k",
             at: (762, 269),
@@ -136,7 +146,6 @@
             id: "console",
             asset: "o",
             at: (933, 269),
-            live: true,
         ),
         (
             id: "sign",

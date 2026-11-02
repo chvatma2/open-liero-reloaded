@@ -153,19 +153,6 @@
             ),
             surface: "metal",
         ),
-        (
-            id: "rock-bcn",
-            name: "Beacons in rock",
-            locked: true,
-            kind: Drawn(
-                material: Rock,
-            ),
-            glow: (
-                strength: 100,
-                group: "beacons",
-            ),
-            surface: "metal",
-        ),
     ],
     glow_groups: [
         (
