@@ -110,6 +110,11 @@ pub(super) struct BeamShadow {
     /// The frame's rows ([`BeamShadow::prepare`]).
     rows: Vec<ShadowRow>,
     words: Vec<[u32; 4]>,
+    /// The packed beams the rows are of: the map is kept while they and
+    /// the terrain stay (compared, not hashed).
+    packed: Vec<f32>,
+    /// Whether the map no longer shows the rows' beams over the terrain.
+    stale: bool,
 }
 
 impl BeamShadow {
@@ -163,6 +168,8 @@ impl BeamShadow {
             pipeline,
             rows: Vec::with_capacity(MAX_SHADOW_ROWS as usize),
             words: Vec::with_capacity(MAX_SHADOW_ROWS as usize),
+            packed: Vec::with_capacity(olr_look::glow_beams::MAX_GLOW_BEAMS * super::glow_beams::BEAM_FLOATS),
+            stale: true,
         }
     }
 
@@ -188,8 +195,15 @@ impl BeamShadow {
     }
 
     /// The frame's rows from its packed beams (none: no pass), written to
-    /// the rows' uniform.
+    /// the rows' uniform when they are not the last frame's (the map is
+    /// then made again).
     pub(super) fn prepare(&mut self, queue: &super::uploads::Queue, packed: &[f32]) {
+        if packed == self.packed.as_slice() {
+            return;
+        }
+        self.packed.clear();
+        self.packed.extend_from_slice(packed);
+        self.stale = true;
         rows(packed, &mut self.rows);
         self.words.clear();
         self.words.extend(
@@ -203,17 +217,25 @@ impl BeamShadow {
         }
     }
 
+    /// The terrain changed (or the level's textures were made anew): the
+    /// map is made again.
+    pub(super) fn stale(&mut self) {
+        self.stale = true;
+    }
+
     /// Draws the frame's rows into the map with `bind` (the level's
-    /// [`BeamShadow::bind`]); whether a pass ran (none without rows).
+    /// [`BeamShadow::bind`]) unless it already shows them; whether a pass
+    /// ran (none without rows).
     pub(super) fn encode(
-        &self,
+        &mut self,
         encoder: &mut wgpu::CommandEncoder,
         bind: &wgpu::BindGroup,
         timer: Option<&Timer>,
     ) -> bool {
-        if self.rows.is_empty() {
+        if self.rows.is_empty() || !self.stale {
             return false;
         }
+        self.stale = false;
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("olr-render beam shadow"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

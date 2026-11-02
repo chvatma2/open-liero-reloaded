@@ -359,12 +359,14 @@ impl Renderer {
             tex.gi.made(key);
         }
         // The beam shadow map (issue #100), once a frame however many views,
-        // before the composites read it; no pass without beams.
-        if let (Some(_), Some(state)) = (look, self.look.as_ref())
+        // before the composites read it; no pass without beams, nor while
+        // the map already shows them over the terrain.
+        if let (Some(_), Some(state)) = (look, self.look.as_mut())
             && let Some(tex) = &state.textures
             && !views.is_empty()
+            && state.shadow.encode(&mut encoder, &tex.glow_beams.march_bind, timer)
         {
-            state.shadow.encode(&mut encoder, &tex.glow_beams.march_bind, timer);
+            self.beam_shadow_builds += 1;
         }
         for (_, world) in views_drawn.clone() {
             let lit_target = look.and(self.look.as_ref()).and(world.shade.as_ref()).and(world.lit.as_ref());

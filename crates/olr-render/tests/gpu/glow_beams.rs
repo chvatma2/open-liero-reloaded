@@ -950,3 +950,69 @@ fn a_far_diagonal_wall_stops_a_beam() {
         assert_eq!(f.texels(x, y), glow.texels(x, y), "({x}, {y}) past the wall: no beam");
     }
 }
+
+/// The beam shadow map is kept while nothing it reads changes (issue
+/// #100): two frames of the same beams over the same terrain make it once.
+#[test]
+fn a_still_frame_keeps_the_shadow_map() {
+    let Some(gpu) = offscreen() else { return };
+    let mut r = renderer(&gpu, &beam_level(|x, _| (x == 60).then_some(Material::Rock), true));
+    let look = beam_look(0);
+    let a = frame(&gpu, &mut r, &look);
+    let b = frame(&gpu, &mut r, &look);
+    assert_eq!(r.beam_shadow_builds(), 1);
+    assert!(a.img == b.img, "the kept map draws the same frame");
+}
+
+/// A terrain change between frames makes it again.
+#[test]
+fn a_terrain_change_makes_it_again() {
+    let Some(gpu) = offscreen() else { return };
+    let look = beam_look(0);
+    let mut map = beam_level(|_, _| None, true);
+    let mut r = renderer(&gpu, &map);
+    frame(&gpu, &mut r, &look);
+    map.apply(ColorEdit::Dirt { hole: 0, x: 50, y: 32 });
+    r.update_terrain(&mut map);
+    frame(&gpu, &mut r, &look);
+    assert_eq!(r.beam_shadow_builds(), 2);
+}
+
+/// A beam turned between frames makes it again.
+#[test]
+fn a_moved_beam_makes_it_again() {
+    let Some(gpu) = offscreen() else { return };
+    let mut r = renderer(&gpu, &level(|_, _| None, false));
+    for deg in [0.0, 0.0, 5.0] {
+        let mut look = beam_look(0);
+        look.live_beams.push(live_at(deg, 30.0));
+        frame(&gpu, &mut r, &look);
+    }
+    assert_eq!(r.beam_shadow_builds(), 2);
+}
+
+/// Two views make the map once a frame, not once a view: three frames
+/// of a turning beam, three builds.
+#[test]
+fn two_views_make_the_map_once() {
+    let Some(gpu) = offscreen() else { return };
+    let mut r = renderer(&gpu, &level(|x, _| (x == 60).then_some(Material::Rock), false));
+    let lists: Vec<DrawList> = [0.0, 64.0]
+        .map(|x| {
+            let mut l = list(View { x, y: 0.0, w: 64.0, h: H as f32 });
+            l.map = (W, H);
+            l
+        })
+        .into();
+    let draws: Vec<_> = lists
+        .iter()
+        .zip([[0, 0, 128, 128], [128, 0, 128, 128]])
+        .map(|(list, area)| olr_render::ViewDraw { list, area })
+        .collect();
+    for deg in [0.0, 10.0, 20.0] {
+        let mut look = beam_look(0);
+        look.live_beams.push(live_at(deg, 30.0));
+        gpu.render_views_to_image(&mut r, &draws, Some(&look), (256, 128));
+    }
+    assert_eq!(r.beam_shadow_builds(), 3);
+}

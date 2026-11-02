@@ -174,6 +174,8 @@ pub struct Renderer {
     /// The glow light's history steps so far (tests: one a lit frame,
     /// however many views it draws).
     glow_light_steps: u64,
+    /// The beam shadow map's passes so far (tests, issue #100).
+    beam_shadow_builds: u64,
     /// The level's surface materials, when any heats (issue #39) or sets
     /// its own soak (issue #57).
     surface: Option<Surface>,
@@ -416,6 +418,7 @@ impl Renderer {
             probe: None,
             look: None,
             glow_light_steps: 0,
+            beam_shadow_builds: 0,
             surface: None,
             distant_surface: Vec::new(),
         }

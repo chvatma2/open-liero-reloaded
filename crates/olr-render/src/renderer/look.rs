@@ -1035,6 +1035,8 @@ impl LookState {
             );
         }
         self.textures = Some(t);
+        // Issue #100: a new solid map, its shadows traced anew.
+        self.shadow.stale();
         self.sync_glass(device, queue, map);
         self.write(queue, map, whole);
         // After the whole write, which finds no beam map yet: the sync
@@ -1067,6 +1069,7 @@ impl LookState {
         let solid = if t.light_cells.len() == cells.len() { &t.light_cells[..] } else { cells };
         if t.glow_beams.sync(device, queue, &binding, map, (world, (solid, t.level.0))) {
             t.gi.stale();
+            self.shadow.stale();
         }
     }
 
@@ -1118,6 +1121,8 @@ impl LookState {
     /// so light passes it); issue #67: the heat resets the pixels there
     /// that changed layer.
     pub(super) fn write(&mut self, queue: &super::uploads::Queue, map: &ColorMap, r: Rect) {
+        // Issue #100: the beams' shadows are traced over it again.
+        self.shadow.stale();
         let Some(t) = &mut self.textures else { return };
         let wr = world_rect(r, t.art_scale);
         if let (Some(glow), Some(groups)) = (map.glow(), map.glow_groups()) {
@@ -1430,6 +1435,14 @@ impl Renderer {
     #[doc(hidden)]
     pub fn glow_light_steps(&self) -> u64 {
         self.glow_light_steps
+    }
+
+    /// How many times the beam shadow map has been made (tests, issue
+    /// #100: at most once a frame, however many views it draws, and only
+    /// when its beams or the terrain changed).
+    #[doc(hidden)]
+    pub fn beam_shadow_builds(&self) -> u64 {
+        self.beam_shadow_builds
     }
 
     /// The glow texture (tests); `None` without lighting or a terrain.
