@@ -28,10 +28,27 @@ struct GlowBeams {
 
 // The beam shadow map's rows (`renderer/beam_shadow.rs`), BEAM_POINTS a
 // beam in point order: per row, the span's first ray, its rays, the
-// march's limit (f32 bits) and the beam's index.
+// march's limit (f32 bits) and the beam's index | its rays a circle << 8
+// (`ray_count`).
 struct Rows {
     r: array<vec4<u32>, MAX_SHADOW_ROWS>,
 };
+
+// The near zone's radius round a source point of a beam `half` wide each
+// side spreading `tan` (`near` in `renderer/beam_shadow.rs`, the same):
+// within it the composite walks exactly, beyond it looks the map up.
+fn beam_near(half: f32, tan: f32) -> f32 {
+    let t = max(tan, 0.0) + 0.03;
+    let h = max(half, 0.0);
+    let width = 2.0 * h + 0.5;
+    return min(width * (1.0 + (1.0 + t) / t), 6.0 * h + 24.0);
+}
+
+// Row `r`'s rays a circle: ray `i` leaves at the world angle `i 2pi /
+// rays`.
+fn ray_count(r: vec4<u32>) -> u32 {
+    return max(r.w >> 8u, 1u);
+}
 
 // Whether block `k` of block map `blocks` holds no opaque pixel of a solid
 // map `solid` pixels wide and high. Past the block map, a block is open

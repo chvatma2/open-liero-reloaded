@@ -56,16 +56,14 @@ pub(super) const BEAM_BLOCK: u32 = 1 << BEAM_BLOCK_SHIFT;
 /// constants (issue #100) and the shared WGSL (`look/beam_walk.wgsl`).
 pub(super) fn wgsl() -> String {
     use super::beam_shadow::{
-        BEAM_POINTS, BEAM_RAYS, MAX_SHADOW_ROWS, NEAR_BASE, NEAR_PER_HALF, SHADOW_CLEAR, SHADOW_SCALE,
-        SHADOW_WIDTH,
+        BEAM_POINTS, BEAM_RAYS, MAX_SHADOW_ROWS, SHADOW_CLEAR, SHADOW_SCALE, SHADOW_WIDTH,
     };
     format!(
         "const MAX_GLOW_BEAMS: i32 = {MAX_GLOW_BEAMS};\nconst BEAM_MAX_STEPS: i32 = {BEAM_MAX_STEPS};\n\
          const BEAM_BLOCK_SHIFT: u32 = {BEAM_BLOCK_SHIFT}u;\nconst BEAM_BLOCK: i32 = {BEAM_BLOCK};\n\
          const BEAM_RAYS: u32 = {BEAM_RAYS}u;\nconst SHADOW_WIDTH: u32 = {SHADOW_WIDTH}u;\n\
          const MAX_SHADOW_ROWS: u32 = {MAX_SHADOW_ROWS}u;\nconst BEAM_POINTS: i32 = {BEAM_POINTS};\n\
-         const SHADOW_SCALE: f32 = {SHADOW_SCALE:?};\nconst SHADOW_CLEAR: u32 = {SHADOW_CLEAR}u;\n\
-         const NEAR_PER_HALF: f32 = {NEAR_PER_HALF:?};\nconst NEAR_BASE: f32 = {NEAR_BASE:?};\n{}",
+         const SHADOW_SCALE: f32 = {SHADOW_SCALE:?};\nconst SHADOW_CLEAR: u32 = {SHADOW_CLEAR}u;\n{}",
         include_str!("../look/beam_walk.wgsl")
     )
 }

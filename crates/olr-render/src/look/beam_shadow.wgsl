@@ -115,13 +115,14 @@ fn vs_row(@builtin(vertex_index) vi: u32, @builtin(instance_index) row: u32) -> 
 @fragment
 fn fs_march(in: RowOut) -> @location(0) vec4<u32> {
     let r = rows.r[in.row];
-    let b = glow_beams.beams[r.w];
+    let b = glow_beams.beams[r.w & 0xffu];
     // Source point k, as the composite's.
     let k = in.row % u32(BEAM_POINTS);
     let u = (f32(k) + 0.5) / f32(BEAM_POINTS) * 2.0 - 1.0;
     let s = b.at + vec2<f32>(-b.dir.y, b.dir.x) * (u * b.half) - b.dir * 0.5;
-    let ray = (r.x + u32(in.pos.x)) % BEAM_RAYS;
-    let a = f32(ray) * (6.2831855 / f32(BEAM_RAYS));
+    let rays = ray_count(r);
+    let ray = (r.x + u32(in.pos.x)) % rays;
+    let a = f32(ray) * (6.2831855 / f32(rays));
     let limit = bitcast<f32>(r.z);
     let t = march(s, vec2<f32>(cos(a), sin(a)), limit, b, b.group < 0.0);
     if t > 1.0 {

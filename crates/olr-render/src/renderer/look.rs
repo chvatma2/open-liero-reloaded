@@ -1365,12 +1365,12 @@ impl Renderer {
     }
 
     /// The beam shadow map's rows of the last frame (tests): each's first
-    /// ray, rays and limit.
+    /// ray, rays, limit and rays a circle.
     #[doc(hidden)]
-    pub fn beam_shadow_rows(&self) -> Vec<(u32, u32, f32)> {
-        self.look
-            .as_ref()
-            .map_or(Vec::new(), |l| l.shadow.rows().iter().map(|r| (r.start, r.count, r.limit)).collect())
+    pub fn beam_shadow_rows(&self) -> Vec<(u32, u32, f32, u32)> {
+        self.look.as_ref().map_or(Vec::new(), |l| {
+            l.shadow.rows().iter().map(|r| (r.start, r.count, r.limit, r.rays)).collect()
+        })
     }
 
     /// Turns the glow beams' light off or on (the directional-glow design;

@@ -11,11 +11,20 @@
 use super::timing::{PassGroup, Timer};
 use super::{UNIFORM, entry, pipeline};
 
-/// Rays over the full circle: ray `i` leaves its point at the world angle
-/// `i × 2π / BEAM_RAYS` (y down), whatever the beam's direction, so a
-/// turning beam's rays never move over still scenery. At the longest reach
-/// (`MAX_BEAM_REACH`, 512) neighbours are 0.8 px apart.
+/// The most rays over the full circle a row takes: ray `i` of a row's
+/// `rays` leaves its point at the world angle `i × 2π / rays` (y down),
+/// whatever the beam's direction, so a turning beam's rays never move over
+/// still scenery. At the longest reach (`MAX_BEAM_REACH`, 512) neighbours
+/// are [`RAY_GAP`] apart.
 pub(super) const BEAM_RAYS: u32 = 4000;
+
+/// The widest gap between neighbouring rays at a row's limit, world
+/// pixels: a row of a shorter beam takes fewer rays a circle (issue #100's
+/// tuning: the many-beam scene's street lamps a third).
+pub(super) const RAY_GAP: f32 = core::f32::consts::TAU * super::glow_beams::MAX_BEAM_REACH / BEAM_RAYS as f32;
+
+/// The fewest rays a circle a row takes.
+const MIN_RAYS: u32 = 64;
 
 /// The map's width: a half-plane's rays and one each side (within the
 /// 2048 texels every device allows).
@@ -37,17 +46,23 @@ pub(super) const MAX_SHADOW_ROWS: u32 = olr_look::glow_beams::MAX_GLOW_BEAMS as 
 /// The map's format: a stored distance a texel (GL renders into it).
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Uint;
 
-/// The near zone's radius round each source point: a lit pixel within it
-/// walks to the point exactly (the walks are short there); beyond it, its
-/// angle from the point lies within its row's span. `NEAR_PER_HALF` world
-/// pixels a pixel of the source's half-width, plus `NEAR_BASE`.
-pub(super) fn near(half: f32) -> f32 {
-    NEAR_PER_HALF * half.max(0.0) + NEAR_BASE
+/// The near zone's radius round each source point of a beam `half` wide
+/// each side spreading `tan`: a lit pixel within it walks to the point
+/// exactly; beyond it, its angle from the point lies within its row's
+/// span ([`widest`]). As small as keeps the span within twice the wedge's
+/// own angle (`atan 2t`: `width (1 + (1 + t) / t)`), at most `6 half +
+/// 24`: the walks within it were most of the composite's beam cost, and
+/// they cost by the wedge's area there, small for a narrow beam, whose
+/// span a small zone would widen most (issue #100's tuning: the many-beam
+/// scene, RTX 5070 Ti, the composite's beams 0.22 ms of which 0.15 the
+/// walks at `6 half + 24` for all). `beam_near` in `look/beam_walk.wgsl`
+/// is the same.
+pub(super) fn near(half: f32, tan: f32) -> f32 {
+    let t = tan.max(0.0) + 0.03;
+    let half = half.max(0.0);
+    let width = 2.0 * half + 0.5;
+    (width * (1.0 + (1.0 + t) / t)).min(6.0 * half + 24.0)
 }
-
-/// [`near`]'s terms (the composite's too).
-pub(super) const NEAR_PER_HALF: f32 = 6.0;
-pub(super) const NEAR_BASE: f32 = 24.0;
 
 /// The widest angle from a beam's direction, radians, at which a lit pixel
 /// at least [`near`] from one of its source points lies as seen from it:
@@ -59,17 +74,19 @@ pub(super) const NEAR_BASE: f32 = 24.0;
 fn widest(half: f32, tan: f32) -> f32 {
     let t = tan.max(0.0) + 0.03;
     let width = 2.0 * half.max(0.0) + 0.5;
-    let ahead = (near(half) - width) / (1.0 + t);
+    // A thousandth short: the composite's f32 `beam_near` may round below.
+    let ahead = (near(half, tan) * 0.999 - width) / (1.0 + t);
     (t + width / ahead).atan().min(core::f32::consts::FRAC_PI_2)
 }
 
-/// One row of the map: the rays `start..start + count` (mod
-/// [`BEAM_RAYS`]) from one source point, marched to `limit` world pixels.
+/// One row of the map: the rays `start..start + count` (mod `rays`, its
+/// rays a circle) from one source point, marched to `limit` world pixels.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct ShadowRow {
     pub start: u32,
     pub count: u32,
     pub limit: f32,
+    pub rays: u32,
 }
 
 /// The rows of `packed` (`glow_beams::pack`'s beams, `BEAM_FLOATS` each):
@@ -77,22 +94,24 @@ pub(super) struct ShadowRow {
 pub(super) fn rows(packed: &[f32], out: &mut Vec<ShadowRow>) {
     use super::glow_beams::BEAM_FLOATS;
     out.clear();
-    let step = core::f32::consts::TAU / BEAM_RAYS as f32;
     for b in packed.as_chunks::<BEAM_FLOATS>().0 {
         let (dir, half, tan, reach) = ([b[2], b[3]], b[4].max(0.0), b[5].max(0.0), b[6].max(0.0));
-        let facing = dir[1].atan2(dir[0]);
-        let wide = widest(half, tan);
-        // One ray of margin each side of the bracketing pair.
-        let first = ((facing - wide) / step).floor() as i64 - 1;
-        let last = ((facing + wide) / step).ceil() as i64 + 1;
-        let count = ((last - first + 1) as u32).min(SHADOW_WIDTH);
-        let start = first.rem_euclid(i64::from(BEAM_RAYS)) as u32;
         // The farthest lit pixel: `reach` along, at the wedge's edge, from
         // the farthest point.
         let aside = 2.0 * half + reach * (tan + 0.03) + 0.5;
         let limit = (reach + 0.5).hypot(aside) + 2.0;
+        let rays = ((core::f32::consts::TAU * limit / RAY_GAP).ceil() as u32).clamp(MIN_RAYS, BEAM_RAYS);
+        let step = core::f32::consts::TAU / rays as f32;
+        let facing = dir[1].atan2(dir[0]);
+        let wide = widest(half, tan);
+        // One ray of margin each side of the bracketing pair (but past a
+        // half-plane, where no lit pixel lies).
+        let first = ((facing - wide) / step).floor() as i64 - 1;
+        let last = ((facing + wide) / step).ceil() as i64 + 1;
+        let count = ((last - first + 1) as u32).min(rays / 2 + 2).min(SHADOW_WIDTH);
+        let start = first.rem_euclid(i64::from(rays)) as u32;
         for _ in 0..BEAM_POINTS {
-            out.push(ShadowRow { start, count, limit });
+            out.push(ShadowRow { start, count, limit, rays });
         }
     }
 }
@@ -102,7 +121,8 @@ pub(super) fn rows(packed: &[f32], out: &mut Vec<ShadowRow>) {
 pub(super) struct BeamShadow {
     map: wgpu::Texture,
     map_view: wgpu::TextureView,
-    /// Per row: first ray, rays, limit (f32 bits), beam (`Rows` in the
+    /// Per row: first ray, rays, limit (f32 bits), beam | rays a circle
+    /// << 8 (`Rows` in the
     /// shaders); the composite reads it too.
     rows_buffer: wgpu::Buffer,
     layout: wgpu::BindGroupLayout,
@@ -207,10 +227,9 @@ impl BeamShadow {
         rows(packed, &mut self.rows);
         self.words.clear();
         self.words.extend(
-            self.rows
-                .iter()
-                .enumerate()
-                .map(|(i, r)| [r.start, r.count, r.limit.to_bits(), i as u32 / BEAM_POINTS]),
+            self.rows.iter().enumerate().map(|(i, r)| {
+                [r.start, r.count, r.limit.to_bits(), (i as u32 / BEAM_POINTS) | (r.rays << 8)]
+            }),
         );
         if !self.words.is_empty() {
             queue.write_buffer(&self.rows_buffer, 0, bytemuck::cast_slice(&self.words));
@@ -300,15 +319,14 @@ mod tests {
         v
     }
 
-    /// Whether ray `i` (any integer, taken mod [`BEAM_RAYS`]) is in `row`.
+    /// Whether ray `i` (any integer, taken mod the row's rays) is in `row`.
     fn has(row: &ShadowRow, i: i64) -> bool {
-        let r = i64::from(BEAM_RAYS);
+        let r = i64::from(row.rays);
         (i - i64::from(row.start)).rem_euclid(r) < i64::from(row.count)
     }
 
     #[test]
     fn every_lit_point_beyond_the_near_zone_has_its_rays() {
-        let step = 2.0 * PI / BEAM_RAYS as f32;
         let mut out = Vec::new();
         for angle in [0.0f32, 37.0, 90.0, 181.0, 300.0] {
             for half in [0.5f32, 3.0, 8.0] {
@@ -333,10 +351,10 @@ mod tests {
                                 let s = point(at, dir, half, k as u32);
                                 let v = [p[0] - s[0], p[1] - s[1]];
                                 let d = v[0].hypot(v[1]);
-                                if d < near(half) {
+                                if d < near(half, tan) {
                                     continue;
                                 }
-                                let f = v[1].atan2(v[0]) / step;
+                                let f = v[1].atan2(v[0]) / (2.0 * PI / row.rays as f32);
                                 let i = f.floor() as i64;
                                 let what = format!("angle {angle} half {half} spread {spread} k {k} p {p:?}");
                                 assert!(
@@ -355,12 +373,29 @@ mod tests {
         }
     }
 
+    /// A row's rays a circle keep neighbours at most [`RAY_GAP`] apart at its
+    /// limit: a short beam spends fewer, the longest all [`BEAM_RAYS`].
+    #[test]
+    fn a_short_beam_takes_fewer_rays_a_circle() {
+        let mut out = Vec::new();
+        for reach in [20.0f32, 120.0, 200.0, 400.0, 512.0] {
+            rows(&packed([100.0, 100.0], 37.0, 3.0, 40.0, reach), &mut out);
+            for r in &out {
+                let gap = core::f32::consts::TAU * r.limit / r.rays as f32;
+                assert!(gap <= RAY_GAP + 1e-4 || r.rays == BEAM_RAYS, "{reach}: {r:?} gap {gap}");
+                assert!(r.count <= r.rays / 2 + 2 && r.count <= SHADOW_WIDTH, "{reach}: {r:?}");
+            }
+        }
+        rows(&packed([100.0, 100.0], 37.0, 3.0, 40.0, 120.0), &mut out);
+        assert!(out[0].rays < BEAM_RAYS / 3, "{:?}", out[0]);
+    }
+
     #[test]
     fn a_span_across_angle_zero_wraps() {
         let mut out = Vec::new();
         rows(&packed([100.0, 100.0], 0.0, 2.0, 10.0, 200.0), &mut out);
         for row in &out {
-            assert!(row.start + row.count > BEAM_RAYS, "{row:?} wraps");
+            assert!(row.start + row.count > row.rays, "{row:?} wraps");
             assert!(has(row, 0) && has(row, -1), "{row:?} holds angle 0");
         }
     }
@@ -383,14 +418,10 @@ mod tests {
     fn rows_follow_the_packed_beams() {
         let mut beams = packed([100.0, 100.0], 0.0, 2.0, 10.0, 200.0);
         beams.extend(packed([300.0, 50.0], 180.0, 2.0, 10.0, 200.0));
-        let mut out = vec![ShadowRow { start: 1, count: 1, limit: 1.0 }];
+        let mut out = vec![ShadowRow { start: 1, count: 1, limit: 1.0, rays: 1 }];
         rows(&beams, &mut out);
         assert_eq!(out.len(), 16);
-        assert!(
-            out[8..].iter().all(|r| has(r, i64::from(BEAM_RAYS / 2))),
-            "beam 1 faces left: {:?}",
-            &out[8..]
-        );
+        assert!(out[8..].iter().all(|r| has(r, i64::from(r.rays / 2))), "beam 1 faces left: {:?}", &out[8..]);
         rows(&[], &mut out);
         assert!(out.is_empty());
     }

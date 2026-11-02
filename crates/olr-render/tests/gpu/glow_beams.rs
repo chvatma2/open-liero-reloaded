@@ -726,7 +726,7 @@ fn the_beam_map_follows_a_turned_live_beam() {
 
 /// The shadow map as last made (stored distances, × 8 world pixels;
 /// `u16::MAX` clear), its width and its rows (first ray, rays, limit).
-type Shadow = (Vec<u16>, u32, Vec<(u32, u32, f32)>);
+type Shadow = (Vec<u16>, u32, Vec<(u32, u32, f32, u32)>);
 
 fn shadow_map(gpu: &Offscreen, r: &Renderer) -> Shadow {
     let tex = r.beam_shadow_map().expect("a level with beams has a shadow map");
@@ -738,9 +738,10 @@ fn shadow_map(gpu: &Offscreen, r: &Renderer) -> Shadow {
 /// Row `row`'s stored distance of the ray nearest world angle `deg`.
 fn ray(shadow: &Shadow, row: usize, deg: f32) -> u16 {
     let (map, width, rows) = shadow;
-    let (start, count, _) = rows[row];
-    let i = ((deg / 360.0 * 4000.0).round() as i64).rem_euclid(4000);
-    let j = (i - i64::from(start)).rem_euclid(4000) as u32;
+    let (start, count, _, rays) = rows[row];
+    let n = i64::from(rays);
+    let i = ((deg / 360.0 * rays as f32).round() as i64).rem_euclid(n);
+    let j = (i - i64::from(start)).rem_euclid(n) as u32;
     assert!(j < count, "ray {i} outside row {row}: {:?}", rows[row]);
     map[row * *width as usize + j as usize]
 }
@@ -777,7 +778,7 @@ fn a_covered_backdrop_source_sees_nothing() {
     frame(&gpu, &mut r, &beam_look(0));
     let (shadow, width, rows) = shadow_map(&gpu, &r);
     assert_eq!(rows.len(), 8, "one beam");
-    for (row, &(_, count, _)) in rows.iter().enumerate() {
+    for (row, &(_, count, _, _)) in rows.iter().enumerate() {
         let texels = &shadow[row * width as usize..][..count as usize];
         assert!(texels.iter().all(|&d| d == 0), "row {row}: {:?}", &texels[..8]);
     }

@@ -180,7 +180,8 @@ fn beam_sees(o: vec2<f32>, e: vec2<f32>, b: GlowBeam, back: bool) -> bool {
 // zone looks along one) is dark.
 fn ray_reaches(row: u32, ray: u32, dist: f32) -> f32 {
     let r = shadow_rows.r[row];
-    let j = (ray + BEAM_RAYS - r.x) % BEAM_RAYS;
+    let rays = ray_count(r);
+    let j = (ray + rays - r.x) % rays;
     if j >= r.y {
         return 0.0;
     }
@@ -198,18 +199,19 @@ fn ray_reaches(row: u32, ray: u32, dist: f32) -> f32 {
 fn shadow_seen(i: i32, k: i32, o: vec2<f32>, e: vec2<f32>, b: GlowBeam, back: bool) -> f32 {
     let v = o - e;
     let dist = length(v);
-    if dist < NEAR_PER_HALF * max(b.half, 0.0) + NEAR_BASE {
+    if dist < beam_near(b.half, b.tan_spread) {
         return select(0.0, 1.0, beam_sees(o, e, b, back));
     }
     var a = atan2(v.y, v.x);
     if a < 0.0 {
         a += 6.2831855;
     }
-    let f = a * (f32(BEAM_RAYS) / 6.2831855);
-    let lo = floor(f);
-    let r0 = u32(lo) % BEAM_RAYS;
     let row = u32(i * BEAM_POINTS + k);
-    return mix(ray_reaches(row, r0, dist), ray_reaches(row, (r0 + 1u) % BEAM_RAYS, dist), f - lo);
+    let rays = ray_count(shadow_rows.r[row]);
+    let f = a * (f32(rays) / 6.2831855);
+    let lo = floor(f);
+    let r0 = u32(lo) % rays;
+    return mix(ray_reaches(row, r0, dist), ray_reaches(row, (r0 + 1u) % rays, dist), f - lo);
 }
 
 // Where a solid world pixel `w` (its centre `c`) looks for beam source
