@@ -1038,3 +1038,77 @@ fn a_still_beam_keeps_its_rows_while_another_turns() {
     let mut fresh = renderer(&gpu, &map);
     assert!(kept.img == frame(&gpu, &mut fresh, &turned(20.0)).img, "kept rows draw as fresh ones");
 }
+
+/// Final review I-1 (issue #100): a rock pixel beside a wide, thin lens
+/// takes its beam. It looks from its open neighbour facing the source,
+/// which lies past the near zone at an angle outside its rows' spans (a
+/// solid pixel's origin is up to a pixel nearer the source than any open
+/// texel the spans are sized for): it walks exactly there, not dark.
+#[test]
+fn a_rock_pixel_beside_a_wide_thin_lens_takes_its_beam() {
+    let Some(gpu) = offscreen() else { return };
+    let map = level(|x, y| (x == 45 && y == 37).then_some(Material::Rock), false);
+    let mut r = renderer(&gpu, &map);
+    let a = 135f32.to_radians();
+    let mut look = beam_look(0);
+    look.live_beams.push(olr_look::glow_beams::GlowBeamSource {
+        at: [40.3, 32.2],
+        dir: [a.cos(), a.sin()],
+        half: 0.5,
+        spread: 89.5f32.to_radians(),
+        ..live_at(0.0, 30.0)
+    });
+    let f = frame(&gpu, &mut r, &look);
+    // Against the frame without the beams' own light (the patch's glow
+    // light reaches it too).
+    r.set_glow_beam_light(false);
+    let glow = frame(&gpu, &mut r, &look);
+    let (lit, unlit) = (f.light(45, 37), glow.light(45, 37));
+    assert!(lit > 2.0 * unlit, "the beam adds to it: {lit} against {unlit}");
+}
+
+/// Final review I-2 (issue #100): a pulsing group's beam keeps its rows:
+/// its light changes each frame, nothing its shadows read does.
+#[test]
+fn a_pulsing_beam_keeps_its_rows() {
+    let Some(gpu) = offscreen() else { return };
+    let mut r = renderer(&gpu, &beam_level(|x, _| (x == 60).then_some(Material::Rock), true));
+    for cast in [10.0, 6.0, 3.0] {
+        let mut look = beam_look(0);
+        look.groups[0].cast = [cast; 3];
+        frame(&gpu, &mut r, &look);
+    }
+    assert_eq!(r.beam_shadow_rows_drawn(), 8, "traced once");
+}
+
+/// Final review I-4 (issue #100): a slanted rock face beyond the near
+/// zone, lit from the shadow map, is lit evenly: every face pixel takes
+/// the beam alike on its texels, none drops out between its neighbours
+/// (no stair-stepping from the rays).
+#[test]
+fn a_far_slanted_face_is_lit_evenly() {
+    let Some(gpu) = offscreen() else { return };
+    // A face stepping one pixel right every two rows, 50 to 60 px out.
+    let face = |y: u32| 70 + y / 2;
+    let map = beam_level(|x, y| (x >= face(y)).then_some(Material::Rock), true);
+    let mut r = renderer(&gpu, &map);
+    let lit = frame(&gpu, &mut r, &far_look());
+    r.set_glow_beam_light(false);
+    let dark = frame(&gpu, &mut r, &far_look());
+    let beam = |x: u32, y: u32| -> [f32; 4] {
+        let (a, b) = (lit.texels(x, y), dark.texels(x, y));
+        std::array::from_fn(|i| srgb(a[i].r) - srgb(b[i].r))
+    };
+    let shares: Vec<f32> = (26..40)
+        .map(|y| {
+            let t = beam(face(y), y);
+            let (lo, hi) = t.iter().fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+            assert!(hi - lo < 0.006, "({}, {y}): its texels differ, {t:?}", face(y));
+            assert!(t[0] > 0.01, "({}, {y}) lit: {t:?}", face(y));
+            t[0]
+        })
+        .collect();
+    for (i, w) in shares.windows(3).enumerate() {
+        assert!(w[1] > 0.5 * w[0].max(w[2]), "row {}: {w:?} drops out", 27 + i);
+    }
+}

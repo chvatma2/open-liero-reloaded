@@ -176,14 +176,15 @@ fn beam_sees(o: vec2<f32>, e: vec2<f32>, b: GlowBeam, back: bool) -> bool {
 }
 
 // Whether ray `ray` of row `row` reaches `dist` world pixels from its
-// point: 0 or 1; a ray outside the row's span (none lit beyond the near
-// zone looks along one) is dark.
+// point: 0 or 1; -1 for a ray outside the row's span (no open texel
+// beyond the near zone looks along one, but a solid pixel's origin, up to
+// a pixel nearer the source, may: final review I-1).
 fn ray_reaches(row: u32, ray: u32, dist: f32) -> f32 {
     let r = shadow_rows.r[row];
     let rays = ray_count(r);
     let j = (ray + rays - r.x) % rays;
     if j >= r.y {
-        return 0.0;
+        return -1.0;
     }
     let stored = textureLoad(beam_shadow, vec2<u32>(j, row), 0).r;
     return select(0.0, 1.0, stored == SHADOW_CLEAR || dist * SHADOW_SCALE < f32(stored));
@@ -195,7 +196,8 @@ fn ray_reaches(row: u32, ray: u32, dist: f32) -> f32 {
 // shadow map: the two rays from `e` either side of `o`'s angle, each seen
 // when it runs past `o` before anything stops it, blended by where the
 // angle falls between them (smooth edges; the accepted inexactness of up
-// to about a pixel far from the source).
+// to about a pixel far from the source); either outside the row's span,
+// the exact walk.
 fn shadow_seen(i: i32, k: i32, o: vec2<f32>, e: vec2<f32>, b: GlowBeam, back: bool) -> f32 {
     let v = o - e;
     let dist = length(v);
@@ -211,7 +213,12 @@ fn shadow_seen(i: i32, k: i32, o: vec2<f32>, e: vec2<f32>, b: GlowBeam, back: bo
     let f = a * (f32(rays) / 6.2831855);
     let lo = floor(f);
     let r0 = u32(lo) % rays;
-    return mix(ray_reaches(row, r0, dist), ray_reaches(row, (r0 + 1u) % rays, dist), f - lo);
+    let a0 = ray_reaches(row, r0, dist);
+    let a1 = ray_reaches(row, (r0 + 1u) % rays, dist);
+    if min(a0, a1) < 0.0 {
+        return select(0.0, 1.0, beam_sees(o, e, b, back));
+    }
+    return mix(a0, a1, f - lo);
 }
 
 // Where a solid world pixel `w` (its centre `c`) looks for beam source

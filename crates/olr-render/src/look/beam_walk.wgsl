@@ -41,7 +41,7 @@ fn beam_near(half: f32, tan: f32) -> f32 {
     let t = max(tan, 0.0) + 0.03;
     let h = max(half, 0.0);
     let width = 2.0 * h + 0.5;
-    return min(width * (1.0 + (1.0 + t) / t), 6.0 * h + 24.0);
+    return min(width * (1.0 + (1.0 + t) / t), NEAR_MAX);
 }
 
 // Row `r`'s rays a circle: ray `i` leaves at the world angle `i 2pi /

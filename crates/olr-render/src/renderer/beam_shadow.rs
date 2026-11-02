@@ -23,6 +23,10 @@ pub(super) const BEAM_RAYS: u32 = 4000;
 /// tuning: the many-beam scene's street lamps a third).
 pub(super) const RAY_GAP: f32 = core::f32::consts::TAU * super::glow_beams::MAX_BEAM_REACH / BEAM_RAYS as f32;
 
+/// The near zone's largest radius, world pixels (final review I-3: a wide
+/// source's exact walks would otherwise cover most of its beam).
+pub(super) const NEAR_MAX: f32 = 24.0;
+
 /// The fewest rays a circle a row takes.
 const MIN_RAYS: u32 = 64;
 
@@ -50,18 +54,19 @@ const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Uint;
 /// each side spreading `tan`: a lit pixel within it walks to the point
 /// exactly; beyond it, its angle from the point lies within its row's
 /// span ([`widest`]). As small as keeps the span within twice the wedge's
-/// own angle (`atan 2t`: `width (1 + (1 + t) / t)`), at most `6 half +
-/// 24`: the walks within it were most of the composite's beam cost, and
-/// they cost by the wedge's area there, small for a narrow beam, whose
-/// span a small zone would widen most (issue #100's tuning: the many-beam
-/// scene, RTX 5070 Ti, the composite's beams 0.22 ms of which 0.15 the
-/// walks at `6 half + 24` for all). `beam_near` in `look/beam_walk.wgsl`
-/// is the same.
+/// own angle (`atan 2t`: `width (1 + (1 + t) / t)`), at most
+/// [`NEAR_MAX`]: the walks within it were most of the composite's beam
+/// cost, and they cost by the wedge's area there, small for a narrow
+/// beam, whose span a small zone would widen most (issue #100's tuning:
+/// the many-beam scene, RTX 5070 Ti, the composite's beams 0.22 ms of
+/// which 0.15 the walks at `6 half + 24` for all). A solid pixel's origin
+/// outside its row's span walks exactly too (`shadow_seen`). `beam_near`
+/// in `look/beam_walk.wgsl` is the same.
 pub(super) fn near(half: f32, tan: f32) -> f32 {
     let t = tan.max(0.0) + 0.03;
     let half = half.max(0.0);
     let width = 2.0 * half + 0.5;
-    (width * (1.0 + (1.0 + t) / t)).min(6.0 * half + 24.0)
+    (width * (1.0 + (1.0 + t) / t)).min(NEAR_MAX)
 }
 
 /// The widest angle from a beam's direction, radians, at which a lit pixel
@@ -76,6 +81,10 @@ fn widest(half: f32, tan: f32) -> f32 {
     let width = 2.0 * half.max(0.0) + 0.5;
     // A thousandth short: the composite's f32 `beam_near` may round below.
     let ahead = (near(half, tan) * 0.999 - width) / (1.0 + t);
+    if ahead <= 0.0 {
+        // A source wider than its near zone: the half-plane.
+        return core::f32::consts::FRAC_PI_2;
+    }
     (t + width / ahead).atan().min(core::f32::consts::FRAC_PI_2)
 }
 
@@ -114,6 +123,18 @@ pub(super) fn rows(packed: &[f32], out: &mut Vec<ShadowRow>) {
             out.push(ShadowRow { start, count, limit, rays });
         }
     }
+}
+
+/// Whether two packed beams cast the same shadows: the same source,
+/// direction, half-width, spread and reach (bit for bit) and layer (the
+/// group's sign); their light, group and region may differ (final review
+/// I-2: a pulsing group's beam keeps its rows).
+fn same_shadows(
+    a: &[f32; super::glow_beams::BEAM_FLOATS],
+    b: &[f32; super::glow_beams::BEAM_FLOATS],
+) -> bool {
+    a[..7].iter().zip(&b[..7]).all(|(x, y)| x.to_bits() == y.to_bits())
+        && a[7].is_sign_negative() == b[7].is_sign_negative()
 }
 
 /// The shadow map and its pass (one for every level: the map is sized for
@@ -219,21 +240,24 @@ impl BeamShadow {
     }
 
     /// The frame's rows from its packed beams (none: no pass), written to
-    /// the rows' uniform when they are not the last frame's; each beam not
-    /// the last frame's at its place has its rows made again.
+    /// the rows' uniform when their shadows are not the last frame's; each
+    /// beam whose shadows differ from the last frame's at its place
+    /// ([`same_shadows`]) has its rows made again.
     pub(super) fn prepare(&mut self, queue: &super::uploads::Queue, packed: &[f32]) {
         use super::glow_beams::BEAM_FLOATS;
-        if packed == self.packed.as_slice() {
-            return;
-        }
-        let old = self.packed.as_chunks::<BEAM_FLOATS>().0;
-        for (i, b) in packed.as_chunks::<BEAM_FLOATS>().0.iter().enumerate().take(64) {
-            if old.get(i) != Some(b) {
+        let (old, new) = (self.packed.as_chunks::<BEAM_FLOATS>().0, packed.as_chunks::<BEAM_FLOATS>().0);
+        let mut changed = old.len() != new.len();
+        for (i, b) in new.iter().enumerate().take(64) {
+            if !old.get(i).is_some_and(|o| same_shadows(o, b)) {
                 self.dirty |= 1 << i;
+                changed = true;
             }
         }
         self.packed.clear();
         self.packed.extend_from_slice(packed);
+        if !changed {
+            return;
+        }
         rows(packed, &mut self.rows);
         self.words.clear();
         self.words.extend(
@@ -355,7 +379,7 @@ mod tests {
     fn every_lit_point_beyond_the_near_zone_has_its_rays() {
         let mut out = Vec::new();
         for angle in [0.0f32, 37.0, 90.0, 181.0, 300.0] {
-            for half in [0.5f32, 3.0, 8.0] {
+            for half in [0.5f32, 3.0, 8.0, 20.0] {
                 for spread in [1.0f32, 10.0, 40.0, 70.0, 89.5] {
                     let tan = spread.to_radians().tan();
                     let reach = walk_reach(half, tan).min(512.0);
@@ -414,6 +438,22 @@ mod tests {
         }
         rows(&packed([100.0, 100.0], 37.0, 3.0, 40.0, 120.0), &mut out);
         assert!(out[0].rays < BEAM_RAYS / 3, "{:?}", out[0]);
+    }
+
+    /// Final review I-3: a wide source's near zone stays small, so its
+    /// exact walks do not cover the beam (the span widens instead, at most
+    /// the half-plane).
+    #[test]
+    fn a_wide_source_keeps_a_small_near_zone() {
+        let mut out = Vec::new();
+        for half in [8.0f32, 20.0, 40.0] {
+            for spread in [1.0f32, 40.0, 89.5] {
+                let tan = spread.to_radians().tan();
+                assert!(near(half, tan) <= NEAR_MAX, "half {half} spread {spread}: {}", near(half, tan));
+                rows(&packed([100.0, 100.0], 37.0, half, spread, 120.0), &mut out);
+                assert!(out.iter().all(|r| r.count <= r.rays / 2 + 2), "{out:?}");
+            }
+        }
     }
 
     #[test]
