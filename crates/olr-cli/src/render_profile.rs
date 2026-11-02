@@ -238,6 +238,9 @@ pub struct ProfileConfig {
     /// The ticks `[from, to)` drawn (`None`: all); the others are played
     /// undrawn, their heat run, so the heat is the same.
     pub window: Option<(u32, u32)>,
+    /// A fixed camera on this world point (issue #100: a live copy's
+    /// light), else worm 0 followed as the game does.
+    pub at: Option<(f32, f32)>,
 }
 
 /// One pass group over a phase's frames.
@@ -399,10 +402,11 @@ pub fn run(
         backend: format!("{:?}", info.backend),
         device_type: format!("{:?}", info.device_type),
         scene: format!(
-            "{} on {}, {FIGHT_LOCALS} scripted player and {FIGHT_BOTS} Medium bots, ticks {from} to {to} of {}; fired: {}",
+            "{} on {}, {FIGHT_LOCALS} scripted player and {FIGHT_BOTS} Medium bots, ticks {from} to {to} of {}{}; fired: {}",
             packs.mod_pack.id,
             packs.level.id,
             replay.ticks(),
+            cfg.at.map(|(x, y)| format!(", the camera at {x},{y}")).unwrap_or_default(),
             nukes.join(", ")
         ),
         frames_per_tick: fpt,
@@ -423,6 +427,9 @@ pub fn run(
         };
         let mut present = Presentation::new(&setup, &world);
         present.set_blood(100);
+        if let Some((x, y)) = cfg.at {
+            present.look_at(x, y);
+        }
         let mut renderer = gpu.renderer(RenderSettings { filter: UpscaleFilter::SharpBilinear });
         report.timestamps = renderer.enable_gpu_timing();
         let texture = gpu.device().create_texture(&wgpu::TextureDescriptor {

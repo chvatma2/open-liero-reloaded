@@ -60,7 +60,7 @@ pub struct Args {
 }
 
 /// `--at`'s `X,Y`: two finite numbers.
-fn point(s: &str) -> Result<(f32, f32), String> {
+pub(crate) fn point(s: &str) -> Result<(f32, f32), String> {
     let (x, y) = s.split_once(',').ok_or_else(|| format!("{s:?}: X,Y"))?;
     let num = |v: &str| v.trim().parse::<f32>().ok().filter(|v| v.is_finite());
     match (num(x), num(y)) {

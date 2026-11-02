@@ -44,6 +44,11 @@ pub struct Args {
     /// with a run on its own level).
     #[arg(long, default_value = render_profile::FIGHT_LEVEL)]
     level: String,
+    /// A fixed camera on world point `X,Y` (the view's centre, clamped to
+    /// the level) instead of following worm 0; the scene names it, so a
+    /// base compares only with a run at the same point.
+    #[arg(long, value_name = "X,Y", value_parser = crate::render_match::point)]
+    at: Option<(f32, f32)>,
 }
 
 fn parse_ticks(s: &str) -> Result<(u32, u32), String> {
@@ -79,6 +84,7 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
             max_texture_side: None,
         },
         window: args.ticks,
+        at: args.at,
     };
     let report = render_profile::run(&content, &fight, &cfg, &mut |l| eprintln!("  {l}"))?;
     let against = args.against.as_deref().and_then(|p| match base(p) {

@@ -967,7 +967,7 @@ The headless command-line tool. Its commands:
 - `olr-cli render-profile [--sizes 1920x1080,3440x1440,3840x2160]
   [--frames-per-tick 2] [--ticks FROM..TO] [--adapter hardware|integrated|software]
   [--backend auto|gl|vulkan|dx12] [--content DIR] [--out F.ron] [--against F.ron]
-  [--save-replay F.olrp] [--level ID]` (`render_profile.rs`, the command in
+  [--save-replay F.olrp] [--level ID] [--at X,Y]` (`render_profile.rs`, the command in
   `render_profile_cmd.rs`; spec
   `docs/superpowers/specs/2026-10-24-render-profile-design.md`): where a
   heavy lit frame's time goes. `stage_fight` plays a nuke fight headless
@@ -978,7 +978,9 @@ The headless command-line tool. Its commands:
   bots alone fire 3, chaos bots rotate the whole mod's weapons; issue
   #100: `--level` stages the same fight elsewhere, `stage_fight_on`,
   such as Liero Factory Reloaded against After Dark, the base compared
-  only on its own level's scene); no nuke
+  only on its own level's scene; `--at X,Y`, `ProfileConfig::at`, fixes
+  the camera on a world point, named in the scene, such as the crane's
+  beacon at 870,300); no nuke
   going off is an error (`the staged fight set off no nukes`); `Fight`
   holds the replay, each nuke's tick (`blasts`: explosions of the
   projectiles `NUKES` fire, `nuke_projectiles`/`has_blast`; their
@@ -1212,7 +1214,9 @@ script naming the crane and the terminal),
 crossings of 300 then 340 at issue #100's half speed, `Moving` while
 `claw_x` changes, the terminal in `Alarm` at most 2 ticks behind),
 `live_states_keep_their_solid_pixels` (every state's rock, from the
-asset files and in a match; the Strip light's none), `the_crane_carries_and_pushes_a_worm` (a
+asset files and in a match; the Strip light's none), `a_sight_on_the_crane_finds_no_worm` (issue #100's playtest: a rifle's
+laser sight stopped in the crane leaves the crosshair as it is, the
+scene's marks reading `World::solid`), `the_crane_carries_and_pushes_a_worm` (a
 worm on the claw's shoulders carried 75 px, one hanging by its rope in
 the claw's path pushed aside, neither `Crushed`),
 `explosions_leave_the_factorys_live_copies_alone` (`World::explode_for_test`

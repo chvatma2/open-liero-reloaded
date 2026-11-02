@@ -140,6 +140,7 @@ fn a_profile_reports_every_phase_and_the_heat() {
         // llvmpipe draws a lit frame in about 0.2 s: 160 frames round the
         // first nukes, the last ones a quiet hot stretch after them.
         window: fight.first_explosion.map(|t| (t.saturating_sub(20), t + 140)),
+        at: None,
     };
     let r = render_profile::run(&content, &fight, &cfg, &mut |_| {}).unwrap();
     let s = &r.sizes[0];
