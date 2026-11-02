@@ -3,7 +3,7 @@
 // Issue #99: its warning beacon, under the trolley, turns while it moves.
 // Its constants (ticks are 10 ms; tuned in issue #100):
 fn REST() { 200 }   // ticks the claw rests at each end (2 s)
-fn SPEED() { 50 }   // world px a second (0.5 a tick)
+fn SPEED() { 25 }   // world px a second (0.25 a tick; halved in issue #100)
 fn WAIT() { 50 }    // ticks stopped by something before heading back
 
 // The ends are the claw's limits, `max("claw_x")` and `min("claw_x")`,

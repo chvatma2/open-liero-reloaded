@@ -1,0 +1,90 @@
+(
+    name: "Terminal",
+    size: (15, 14),
+    elements: [
+        (
+            id: "rock",
+            name: "Rock",
+            kind: Drawn(
+                material: Rock,
+                size: (15, 14),
+            ),
+            surface: "stone",
+            surface_map: true,
+        ),
+        (
+            id: "rock-bcn",
+            name: "Beacons in rock",
+            kind: Drawn(
+                material: Rock,
+                at: (0, 1),
+                size: (8, 8),
+            ),
+            glow: (
+                strength: 100,
+                group: "beacons",
+            ),
+            surface: "metal",
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "beacons",
+            intensity: 200,
+            reach: Pixels(20),
+            animation: Pulse(
+                period_ms: 2400,
+                low: 30,
+                high: 100,
+            ),
+        ),
+    ],
+    materials: [
+        (
+            id: "stone",
+            name: "Stone",
+            notes: "Grey rock: the reference every heat value is a percent of. A blast leaves the rim glowing like lava, cooling slowly.",
+            light_soak: 2,
+            heat: (
+                capacity: 100,
+                conductivity: 100,
+                cooling: 100,
+            ),
+        ),
+        (
+            id: "metal",
+            name: "Metal",
+            notes: "Steel: heat runs far through it, so a blast warms a wide patch less; it sheds heat fast to the air.",
+            heat: (
+                capacity: 80,
+                conductivity: 600,
+                cooling: 150,
+            ),
+        ),
+    ],
+    states: [
+        (
+            name: "Normal",
+        ),
+        (
+            name: "Alarm",
+            own: [
+                "rock-bcn",
+            ],
+            values: [
+                (
+                    property: LightIntensity("rock-bcn"),
+                    value: Int(400),
+                ),
+                (
+                    property: GlowAnimation("rock-bcn"),
+                    value: Animation(Pulse(
+                        period_ms: 600,
+                        low: 40,
+                        high: 100,
+                    )),
+                ),
+            ],
+        ),
+    ],
+)

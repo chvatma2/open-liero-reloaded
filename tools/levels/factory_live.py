@@ -1,6 +1,7 @@
 # Brings Liero Factory Reloaded alive, part 1 (issue #97): the crane's
-# claw crossing its rail, humming while it moves, and the console going
-# red (Alarm) while it does; part 2 (issue #98): three of the ceiling
+# claw crossing its rail, humming while it moves, and the terminal left
+# of it (issue #100; the console under the deck before it) going red
+# (Alarm) while it does; part 2 (issue #98): three of the ceiling
 # strips failing like faulty tubes, buzzing and ticking; through
 # `olr-cli` commands only. Run it after
 # `factory_assets.py` (issue #96), from the repository's root:
@@ -19,9 +20,10 @@
 #    brightness and `strip-off.png` the tube unlit, its white the pale
 #    grey OFF and every other pixel the same fraction of it (a highlight
 #    stays a highlight).
-# 2. The Crane, the Console and the Strip light are made again by their
-#    blocks in
-#    `content/assets/README.md` (each on a fresh copy of After Dark),
+#    Issue #100: the Terminal's `terminal-alarm.png` (its `rock-bcn`
+#    box, x 723-731 x y 352-359, every pixel #ff3020).
+# 2. The Crane, the Terminal (issue #100) and the Strip light are made
+#    again by their blocks in `content/assets/README.md` (each on a fresh copy of After Dark),
 #    which read those pictures, `tools/levels/factory/sounds/` (`hum.wav`,
 #    `buzz.wav`, `tick.wav`: `tools/sounds/factory_sounds.py`) and the
 #    default scripts `tools/levels/factory/crane.rhai` and `tube.rhai`.
@@ -33,8 +35,8 @@
 #    glow masks), the Control desk's (`desk-*.png`) and the Gauge's
 #    (`gauge-*.png`) state pictures; the Crane's block now paints its
 #    warning beacon itself.
-# 3. The level takes them (`level library update <pack> k o s c t d g`),
-#    its `crane` and `console` copies, the strips `LIVE_STRIPS` and (issue
+# 3. The level takes them (`level library update <pack> k e s c t d g`),
+#    its `crane` and (issue #100) `terminal` copies, the strips `LIVE_STRIPS` and (issue
 #    #99) `LIVE_DISPLAYS` are switched live (`level copy set … --live`;
 #    the other strips stay static, baked steady On), its level script is
 #    `tools/levels/factory/level.rhai` (`level script --set`) and its
@@ -52,7 +54,7 @@ from reloaded_materials import decode  # noqa: E402
 import struct, zlib  # noqa: E402
 
 ART = "tools/levels/factory/art"
-LIVE_ASSETS = ["crane", "console", "strip-light", "computer-screen", "lit-sign", "control-desk", "gauge"]
+LIVE_ASSETS = ["crane", "terminal", "strip-light", "computer-screen", "lit-sign", "control-desk", "gauge"]
 # Issue #98: the faulty tubes: the hall's top floor's middle strip, the
 # hall's strip left of the gauge and the lowest office floor's middle one.
 LIVE_STRIPS = ["strip-2", "strip-4", "strip-7"]
@@ -93,10 +95,10 @@ BUTTONS = [(0, 1), (31, 2)]
 NOTES = (
     "Liero Factory After Dark rebuilt from assets (issue #96): the ground is the level's own "
     "asset, the night sky a copy of its own at depth 90, and the strip lights, the ceiling lamp, "
-    "the control room's screen and desk, the lit sign, a roof beacon, the crane, the console and "
-    "the gauge are copies of the built-in assets where After Dark has them. Since issue #97 the "
+    "the control room's screen and desk, the lit sign, a roof beacon, the terminal, the crane, "
+    "the console and the gauge are copies of the built-in assets where After Dark has them. Since issue #97 the "
     "crane's claw crosses its rail every couple of seconds, humming and pushing worms in its "
-    "way, and the console under the deck goes red while it moves; since issue #98 three of the "
+    "way, and the terminal left of it goes red while it moves (issue #100); since issue #98 three of the "
     "ceiling strips fail like faulty tubes, stuttering, buzzing and ticking; since issue #99 the "
     "control room's screen is a security camera, the 13-37 sign, the desk's lamps and the gauge "
     "change now and then, and an orange warning beacon under the crane's trolley turns while it "
@@ -111,6 +113,10 @@ LED_ROWS = range(279, 298, 3)
 SLOT = (941, 326, 17, 4)
 LIT = (0xFF, 0xFF, 0x00)
 RED = (0xFF, 0x30, 0x20)
+# Issue #100: the Terminal's box in the level (After Dark's place, left
+# of the crane), its `rock-bcn` layer's screen edge and lamp (9 glowing
+# pixels) all red in Alarm.
+TERMINAL = (723, 351, 15, 14)
 # Issue #98: the Strip light's `lamps` box in After Dark, its Dim
 # brightness (percent) and its unlit tube's grey.
 STRIP_AT, STRIP_SIZE = (778, 80), (29, 2)
@@ -167,6 +173,21 @@ def make_art():
     encode_rgba(os.path.join(ART, "console-normal.png"), w, h, normal)
     encode_rgba(os.path.join(ART, "console-alarm.png"), w, h, alarm)
     make_strip_art(front)
+    make_terminal_art()
+
+
+def make_terminal_art():
+    """Issue #100: the Terminal's Alarm picture of `rock-bcn` (its box
+    within TERMINAL), every pixel red."""
+    _, _, bcn = decode(os.path.join(AFTER_DARK, "editor/layers/rock-bcn.png"))
+    tx, ty, tw, th = TERMINAL
+    pts = [(x, y) for y in range(ty, ty + th) for x in range(tx, tx + tw) if bcn[y][x][3]]
+    x0, y0 = min(p[0] for p in pts), min(p[1] for p in pts)
+    w, h = max(p[0] for p in pts) - x0 + 1, max(p[1] for p in pts) - y0 + 1
+    alarm = [[(0, 0, 0, 0)] * w for _ in range(h)]
+    for x, y in pts:
+        alarm[y - y0][x - x0] = RED + (255,)
+    encode_rgba(os.path.join(ART, "terminal-alarm.png"), w, h, alarm)
 
 
 def make_screen_art(cli):
@@ -294,9 +315,9 @@ def make_assets(cli):
 
 
 def make_level(cli):
-    run(cli, "level", "library", "update", OUT, "k", "o", "s", "c", "t", "d", "g")
+    run(cli, "level", "library", "update", OUT, "k", "e", "s", "c", "t", "d", "g")
     run(cli, "level", "copy", "set", OUT, "crane", "--live")
-    run(cli, "level", "copy", "set", OUT, "console", "--live")
+    run(cli, "level", "copy", "set", OUT, "terminal", "--live")
     for copy in LIVE_STRIPS + LIVE_DISPLAYS:
         run(cli, "level", "copy", "set", OUT, copy, "--live")
     run(cli, "level", "script", OUT, "--set", "tools/levels/factory/level.rhai")

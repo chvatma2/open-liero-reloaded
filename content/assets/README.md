@@ -10,9 +10,10 @@ README stays behind). `cargo xtask check` reads every one whole
 (`olr-cli asset check`, in `olr-cli`'s `tests/asset.rs`).
 They are in the 0.3 asset format (issue #71) and stateless (one state,
 nothing exposed, no sounds, health or script) but for the Crane and the
-Console (issue #97), the Strip light (issue #98) and the Computer
-screen, the Control desk, the Lit sign and the Gauge (issue #99), which
-Liero Factory Reloaded brings alive. All glow; the Crane since issue
+Console (issue #97), the Strip light (issue #98), the Computer
+screen, the Control desk, the Lit sign and the Gauge (issue #99) and
+the Terminal (issue #100), which Liero Factory Reloaded brings alive
+(all but the Console, its copy static since issue #100). All glow; the Crane since issue
 #99 (its warning beacon).
 
 Each was cut from OLR's own Reloaded levels (`content/reloaded/`) with
@@ -227,7 +228,8 @@ is gone.
   `tools/levels/factory/art/` (`tools/levels/factory_live.py`);
   `rock-disp`'s box grows to cover the slot (drawn into it before the
   save, then the saved starting state swapped for one with the LEDs
-  alone).
+  alone). Issue #100: Liero Factory Reloaded's copy is static again,
+  the crane's alarm is the Terminal's.
 
       olr-cli level element erase content/reloaded/olr-level-liero-factory-after-dark rock --rect 934,299,31,21
       olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark rock-disp --locked false
@@ -243,6 +245,22 @@ is gone.
       olr-cli asset state picture content/assets/console Alarm rock-disp --art tools/levels/factory/art/console-alarm.png
       olr-cli asset state value content/assets/console Alarm rock-disp.light 400
       olr-cli asset state value content/assets/console Alarm rock-disp.animation "Pulse(period_ms: 600, low: 40, high: 100)"
+
+- `terminal/`: **Terminal** (issue #100), the small desk terminal left
+  of the crane: its grey body and keyboard (`rock`) and its cyan screen
+  edge and red lamp (`rock-bcn`, group `beacons`, pulsing slowly as in
+  After Dark). States `Normal` (start: as cut) and `Alarm` (every
+  `rock-bcn` pixel red, `#ff3020`, `rock-bcn.light` 400 and
+  `rock-bcn.animation` `Pulse(period_ms: 600, low: 40, high: 100)`), its
+  picture of `rock-bcn` from `tools/levels/factory/art/`
+  (`tools/levels/factory_live.py`). Liero Factory Reloaded's level script
+  puts it in Alarm while the crane moves.
+
+      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 723,351,15,14 --layers rock,rock-bcn --name Terminal --out content/assets/terminal
+      olr-cli asset state add content/assets/terminal Alarm
+      olr-cli asset state picture content/assets/terminal Alarm rock-bcn --art tools/levels/factory/art/terminal-alarm.png
+      olr-cli asset state value content/assets/terminal Alarm rock-bcn.light 400
+      olr-cli asset state value content/assets/terminal Alarm rock-bcn.animation "Pulse(period_ms: 600, low: 40, high: 100)"
 
 - `gauge/`: **Gauge** (issue #96), the teal device of the upper floor:
   its yellow gauge and lit buttons (`rock-disp`, group `displays`) and

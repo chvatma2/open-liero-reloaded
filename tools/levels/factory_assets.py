@@ -5,7 +5,7 @@
 #   python3 -I tools/levels/factory_assets.py target/debug/olr-cli
 #
 # 1. The new built-in assets (`NEW_ASSETS`: the Crane, the Console, the
-#    Gauge) are made by their blocks in `content/assets/README.md`, each run
+#    Gauge and, issue #100, the Terminal) are made by their blocks in `content/assets/README.md`, each run
 #    on a fresh copy of After Dark (a block may prepare its source level),
 #    written to `content/assets/<folder>`.
 # 2. The level is a copy of After Dark keeping its origin (`pack new
@@ -29,7 +29,7 @@
 # along its row between the nearest wall pixels left and right of it.
 #
 # Every copy is static (`factory_live.py`, issue #97, then makes the crane
-# and the console live). The bake is After Dark's but where the crane's
+# and, since issue #100, the terminal live). The bake is After Dark's but where the crane's
 # pixels were, under the crane (`olr-cli`'s `tests/reloaded.rs`). Scratch
 # files go to `target/factory-assets/`. Running it again makes the same
 # bytes.
@@ -46,14 +46,14 @@ NAME = "Liero Factory Reloaded"
 NOTES = (
     "Liero Factory After Dark rebuilt from assets (issue #96): the ground is the level's own "
     "asset, the night sky a copy of its own at depth 90, and the strip lights, the ceiling lamp, "
-    "the control room's screen and desk, the lit sign, a roof beacon, the crane, the console and "
-    "the gauge are copies of the built-in assets where After Dark has them. It plays and looks "
+    "the control room's screen and desk, the lit sign, a roof beacon, the terminal, the crane, "
+    "the console and the gauge are copies of the built-in assets where After Dark has them. It plays and looks "
     "as After Dark; issues #97, #98 and #99 bring it alive."
 )
 ASSETS = "content/assets"
 README = os.path.join(ASSETS, "README.md")
 SCRATCH = "target/factory-assets"
-NEW_ASSETS = ["crane", "console", "gauge"]
+NEW_ASSETS = ["crane", "console", "gauge", "terminal"]
 # Issue #97: the crane's box, whose wall is painted behind its pixels.
 CRANE_BOX = (762, 269, 114, 50)
 WALL_EDGE = 2
@@ -71,6 +71,7 @@ PIECES = [
     ("c", "computer-screen", ["backdrop", "ctrl-scr"], (14, 14), [("screen", (906, 83))]),
     ("d", "control-desk", ["backdrop", "screens", "displays"], (30, 11), [("desk", (903, 119))]),
     ("w", "warning-beacon", ["backdrop", "beacons"], (25, 28), [("beacon", (951, 45))]),
+    ("e", "terminal", ["rock", "rock-bcn"], (15, 14), [("terminal", (723, 351))]),
     ("k", "crane", ["rock"], (114, 50), [("crane", (762, 269))]),
     ("o", "console", ["rock", "rock-disp"], (33, 64), [("console", (933, 269))]),
     ("t", "lit-sign", ["rock", "rock-disp"], (31, 21), [("sign", (934, 299))]),
