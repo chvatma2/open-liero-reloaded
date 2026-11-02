@@ -335,6 +335,12 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
 
 ### Fixed
 
+- The crosshair no longer turns green when a laser sight points at a
+  moving part such as Liero Factory Reloaded's crane: only a worm turns
+  it green.
+- Liero Factory Reloaded no longer stutters while the crane's warning
+  beacon turns towards the view: light beams find what shadows them up to
+  8 pixels a step through open air.
 - The Windows zip extracts with Explorer's **Extract All** without a
   "path too long" warning: every file is within 80 characters of the
   game's folder. Imported nested projectiles have shorter ids

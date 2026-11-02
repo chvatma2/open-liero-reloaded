@@ -8016,6 +8016,23 @@ to this section.
   Dark's blasts too: p99 1.65 to 0.41). The simulation was never the
   cost: `rollback-cost`, 8 worms, depth 12, re-simulation p50 341 us
   (After Dark 218), p99 585 (555).
+- **The beacon's beams (#100's second playtest, 2026-11-02).** The FPS
+  fell to about a third while the crane moved. That profile's camera
+  followed the fight, away from the crane; `render-profile --at 870,300`
+  (the crane, ticks 200..500, RTX 5070 Ti, Vulkan, 1080p): GPU frame
+  mean 1.75 ms, p99 27 ms, max 42 ms, 34 of 600 frames over 5 ms, against
+  0.82 ms and p99 3.5 ms with the crane resting (ticks 500..700). The
+  composite's shadow walk of the beacon's two live beams: end-on they
+  spread 89° and reach 360 px, so nearly every texel of the view walks
+  to each of 8 points across the lens pixel by pixel; without the walk
+  (a throwaway build) p99 1.4 ms. Most of it showed as copies and gaps,
+  not the composite's own timestamps (0.30 ms). Fix (option 1 of 4 put
+  to the maintainer; option 2 a beam per world pixel, 3 shadow maps per
+  beam, 4 a smaller flare): the walk crosses a block of 8 × 8 pixels
+  without opaque ones in one step (`olr-render`'s block map). After:
+  mean 1.30 ms, p99 5.5 ms, max 8.4 ms. Also: the crosshair turned green
+  on the crane, the scene's check reading the ground and not
+  `World::solid`.
 
 ## Kept OLX quirks
 
