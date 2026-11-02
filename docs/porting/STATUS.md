@@ -8002,6 +8002,20 @@ to this section.
   claw; the live goldens' check wants 5 `LiveArrived` events, not 8;
   `factory-crane.png` and `factory-beacon-side.png` and the live golden
   `classic-factory-live-4dm.ron` re-blessed.
+- **The factory's cost (#100, 2026-11-02).** The playtest felt slower;
+  measured against After Dark (the same nuke fight, `olr-cli
+  render-profile --level`, RTX 5070 Ti, Vulkan, 1080p): the GPU alike
+  (0.72 ms calm, 0.83 ms blast), but the CPU's tick 1.34 ms (After Dark
+  0.01-0.03) and frame 0.85 ms calm, p99 4.8 ms in blasts (0.17 and 1.65).
+  Cause: `ColorMap::ground()`, twice a tick in `set_live` and once a
+  frame from `take_dirty`, checked the level's `GlowBeamMap` with
+  `fits`, a scan of its 2.3 MB (0.6 ms), and the renderer's beam
+  `write`, for every dirty rectangle, did too. The colour map holds only
+  a map that fitted when set, so those check `GlowBeamMap::sized`. After:
+  tick 0.03-0.07 ms, frame 0.17 ms calm and p99 0.47 ms in blasts (After
+  Dark's blasts too: p99 1.65 to 0.41). The simulation was never the
+  cost: `rollback-cost`, 8 worms, depth 12, re-simulation p50 341 us
+  (After Dark 218), p99 585 (555).
 
 ## Kept OLX quirks
 
