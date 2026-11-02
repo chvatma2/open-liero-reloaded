@@ -340,7 +340,9 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   it green.
 - Liero Factory Reloaded no longer stutters while the crane's warning
   beacon turns towards the view: light beams find what shadows them up to
-  8 pixels a step through open air.
+  8 pixels a step through open air, and each beam's shadows are now
+  traced once a frame for every view, so a wide beam costs about the same
+  however much of the screen it lights.
 - The Windows zip extracts with Explorer's **Extract All** without a
   "path too long" warning: every file is within 80 characters of the
   game's folder. Imported nested projectiles have shorter ids

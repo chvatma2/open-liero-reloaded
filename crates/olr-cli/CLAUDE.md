@@ -967,7 +967,8 @@ The headless command-line tool. Its commands:
 - `olr-cli render-profile [--sizes 1920x1080,3440x1440,3840x2160]
   [--frames-per-tick 2] [--ticks FROM..TO] [--adapter hardware|integrated|software]
   [--backend auto|gl|vulkan|dx12] [--content DIR] [--out F.ron] [--against F.ron]
-  [--save-replay F.olrp] [--level ID] [--at X,Y]` (`render_profile.rs`, the command in
+  [--save-replay F.olrp] [--level ID] [--at X,Y [--beams]] [--views 1|2]
+  [--no-beam-light]` (`render_profile.rs`, the command in
   `render_profile_cmd.rs`; spec
   `docs/superpowers/specs/2026-10-24-render-profile-design.md`): where a
   heavy lit frame's time goes. `stage_fight` plays a nuke fight headless
@@ -980,7 +981,16 @@ The headless command-line tool. Its commands:
   such as Liero Factory Reloaded against After Dark, the base compared
   only on its own level's scene; `--at X,Y`, `ProfileConfig::at`, fixes
   the camera on a world point, named in the scene, such as the crane's
-  beacon at 870,300); no nuke
+  beacon at 870,300; the beam shadow maps design: `--beams`
+  (`ProfileConfig::beams`, needs `--at`) adds `many_beams` round it, the
+  spec's load of 6 still street lamps (40°, 120 px), 2 searchlights
+  sweeping each tick (10°, 400 px) and 4 flashlights turning every frame
+  (20°, 200 px), each kind its own group; `--views 2` draws two-player
+  split screen, both views on the same camera (`draw_views`), and
+  `--no-beam-light` the frame without the beams' own light, the baseline
+  the beam work is measured against; the scene names each, so a base
+  compares only like with like; tests `many_beams_carry_the_specs_load`,
+  `tests/gpu_bench.rs`' `a_profile_draws_the_many_beam_scene`); no nuke
   going off is an error (`the staged fight set off no nukes`); `Fight`
   holds the replay, each nuke's tick (`blasts`: explosions of the
   projectiles `NUKES` fire, `nuke_projectiles`/`has_blast`; their

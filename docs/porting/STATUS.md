@@ -8033,6 +8033,40 @@ to this section.
   mean 1.30 ms, p99 5.5 ms, max 8.4 ms. Also: the crosshair turned green
   on the crane, the scene's check reading the ground and not
   `World::solid`.
+- **Beam shadow maps (#100, spec
+  `docs/superpowers/specs/2026-11-02-beam-shadow-maps-design.md`).** Each
+  beam's shadows are traced once a frame into a map shared by every view
+  (`olr-render`'s `renderer/beam_shadow.rs`): a row per (beam, source
+  point), a texel per ray of a world-fixed fan (at most 4000 a circle, as
+  many as keep neighbours 0.8 px apart at the row's limit), the distance
+  at which the ray meets what stops it; the composite reads the two rays
+  either side of a texel's angle, and walks exactly only within a near
+  zone round each point (as small as keeps the row's span within twice
+  the wedge's angle, at most `6 half + 24`). A beam's rows are kept while
+  it and the terrain stay. Measured with `render-profile --level
+  olr-level-liero-factory-reloaded --at 870,300 --sizes 1920x1080
+  --ticks 200..500`, beam work = the GPU frame's mean against the same
+  run with `--no-beam-light` (blast / hot phase):
+  - AMD integrated GPU (Vulkan): the beacon 1.16 / 1.08 ms with the map
+    as first built, 0.88 / 1.02 ms tuned: **within the 2 ms budget**. The
+    many-beam scene (`--beams`: 6 street lamps, 2 searchlights, 4
+    flashlights) **over it**: one view 9.2 / 4.8 → 7.1 / 3.6 ms, two views
+    (`--views 2`, one camera) 15.3 / 13.4 → 9.2 / 7.4 ms (runs vary by
+    about ±1.5 ms; the frame itself 23 to 26 ms without beams, nearly all
+    the cascades). Accepted by the maintainer (2026-11-02): the shipped
+    beacon holds the budget; light per world pixel shared by the views,
+    which would reach it, waits until street lamps or flashlights exist.
+  - RTX 5070 Ti (Vulkan): the beacon 0.98 ms mean, p99 2.33 (first build)
+    → 0.92, p99 1.73, against the crane resting (ticks 500..700) 0.93,
+    p99 2.26 (before the maps: 1.75 / p99 27 ms, after the block map 1.30
+    / 5.5). The many-beam scene in two views: 0.55 → 0.35 ms, the
+    composite 0.31 of it, the map's pass 0.06.
+  - Where the composite's beam cost went (RTX, one view, throwaway
+    variants): 0.22 ms, of which 0.15 the near zone's exact walks at
+    `6 half + 24` for every beam and 0.04 the map's lookups; hence the
+    near zone by the spread. A tiny zone for every beam (`2 half + 4`)
+    measured no better on the iGPU: the spans it widens cost the pass
+    what the composite saves.
 
 ## Kept OLX quirks
 
