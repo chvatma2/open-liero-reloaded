@@ -7,11 +7,6 @@
 // BEAM_POINTS, SHADOW_SCALE, SHADOW_CLEAR, BEAM_MAX_STEPS and BEAM_BLOCK(_SHIFT)
 // are prepended from Rust; `beam_walk.wgsl` before this.
 
-// Per row: the span's first ray, its rays, the march's limit (f32 bits)
-// and the beam's index.
-struct Rows {
-    r: array<vec4<u32>, MAX_SHADOW_ROWS>,
-};
 @group(0) @binding(0) var<uniform> glow_beams: GlowBeams;
 @group(0) @binding(1) var<uniform> rows: Rows;
 // The solid map (material 1 background; a clear solid written as it) and
@@ -28,13 +23,9 @@ fn solid_px(w: vec2<i32>) -> bool {
     return textureLoad(solid_tex, w, 0).r != 1u;
 }
 
-// Whether block `k` holds no opaque pixel; outside the map is open.
+// Whether block `k` holds no opaque pixel (`block_map_open`).
 fn block_open(k: vec2<i32>) -> bool {
-    let size = vec2<i32>(textureDimensions(solid_blocks));
-    if any(k < vec2<i32>(0)) || any(k >= size) {
-        return true;
-    }
-    return textureLoad(solid_blocks, k, 0).r == 0u;
+    return block_map_open(solid_blocks, vec2<i32>(textureDimensions(solid_tex)), k);
 }
 
 // Where, as a share of `limit`, the ray from `s` along unit `v` enters the

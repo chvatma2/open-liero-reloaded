@@ -813,3 +813,140 @@ fn the_map_fits_a_2048_device() {
     assert!(f.light(41, 32) > 3.0 * ambient(&f));
     assert!(r.beam_shadow_map().is_some_and(|t| t.width() <= 2048));
 }
+
+/// A beam of `look`'s group 1 at the patch's face, as a live copy's.
+fn live_at(angle_deg: f32, spread_deg: f32) -> olr_look::glow_beams::GlowBeamSource {
+    let a = angle_deg.to_radians();
+    olr_look::glow_beams::GlowBeamSource {
+        group: 1,
+        at: [PATCH_X as f32 + 1.0, 32.5],
+        dir: [a.cos(), a.sin()],
+        half: 2.5,
+        spread: spread_deg.to_radians(),
+        glow: 1.0,
+        colour: [1.0; 3],
+        first: 0,
+        back: false,
+    }
+}
+
+/// The anti-goal of crawling shadows (issue #100): a beam turned by 2°
+/// past a short wall moves its shadow by as much, never flips a pixel
+/// well inside both wedges between lit and dark.
+#[test]
+fn shadows_hold_still_as_a_beam_turns() {
+    let Some(gpu) = offscreen() else { return };
+    let map = level(|x, y| (x == 50 && (34..40).contains(&y)).then_some(Material::Rock), false);
+    let mut r = renderer(&gpu, &map);
+    let draw = |r: &mut Renderer, deg: f32| {
+        let mut look = beam_look(0);
+        look.live_beams.push(live_at(deg, 30.0));
+        frame(&gpu, r, &look)
+    };
+    let (a, b) = (draw(&mut r, 0.0), draw(&mut r, 2.0));
+    let amb = ambient(&a);
+    let tan = 30f32.to_radians().tan();
+    for y in 0..H {
+        for x in (PATCH_X + 4)..76 {
+            let inside = |deg: f32| {
+                let t = deg.to_radians();
+                let (dx, dy) = (x as f32 + 0.5 - 21.0, y as f32 + 0.5 - 32.5);
+                let (along, side) = (dx * t.cos() + dy * t.sin(), -dx * t.sin() + dy * t.cos());
+                along > 3.0 && along < 50.0 && side.abs() < 2.5 + along * tan - 3.0
+            };
+            if !(inside(0.0) && inside(2.0))
+                || map.material().material(i64::from(x), i64::from(y)) != Some(Material::Background)
+            {
+                continue;
+            }
+            let (la, lb) = (a.light(x, y), b.light(x, y));
+            assert!(
+                !(la > 3.0 * amb && lb < 1.1 * amb) && !(lb > 3.0 * amb && la < 1.1 * amb),
+                "({x}, {y}) flips: {la} at 0°, {lb} at 2° (ambient {amb})"
+            );
+        }
+    }
+}
+
+/// 64 beams at the cap, as wide as they come: drawn, slower, never wrong.
+#[test]
+fn sixty_four_beams_draw() {
+    let Some(gpu) = offscreen() else { return };
+    let map = beam_level(|x, _| (x == 60).then_some(Material::Rock), true);
+    let mut r = renderer(&gpu, &map);
+    let mut look = beam_look(0);
+    look.live_beams = (0..70).map(|i| live_at(i as f32 * 5.0, 89.5)).collect();
+    let f = frame(&gpu, &mut r, &look);
+    assert!(f.light(41, 32) > 3.0 * ambient(&f));
+    assert_eq!(r.beam_shadow_rows().len(), 64 * 8, "the cap");
+}
+
+/// The map is made in one pass a frame with beams, none without.
+#[test]
+fn a_frame_with_beams_runs_one_shadow_pass() {
+    let Some(gpu) = offscreen() else { return };
+    let passes = |map: &ColorMap| {
+        let mut r = renderer(&gpu, map);
+        if !r.enable_gpu_timing() {
+            return None;
+        }
+        frame(&gpu, &mut r, &beam_look(0));
+        r.gpu_times()?;
+        Some(r.last_passes().iter().filter(|(g, _)| *g == olr_render::PassGroup::BeamShadow).count())
+    };
+    let Some(with) = passes(&beam_level(|_, _| None, true)) else { return };
+    assert_eq!(with, 1);
+    assert_eq!(passes(&level(|_, _| None, false)), Some(0));
+}
+
+/// A live beam on a level without a beam map (its block map 1 × 1) stops
+/// at a wall: past the block map is unknown, not open.
+#[test]
+fn a_live_beam_on_a_level_without_a_beam_map_stops_at_walls() {
+    let Some(gpu) = offscreen() else { return };
+    let map = level(|x, _| (x == 40).then_some(Material::Rock), false);
+    let mut r = renderer(&gpu, &map);
+    let mut look = beam_look(0);
+    look.live_beams.push(live_at(0.0, 30.0));
+    let f = frame(&gpu, &mut r, &look);
+    assert!(f.light(30, 32) > 3.0 * ambient(&f), "lit before the wall");
+    assert_eq!(f.texels(45, 32), f.texels(FAR.0, FAR.1), "behind the wall: the ambient");
+}
+
+/// [`beam_look`] reaching 120 px, so the beam runs well past the near zone
+/// (39 px for the patch's source) into the shadow map's.
+fn far_look() -> olr_look::LookFrame {
+    let mut look = beam_look(0);
+    look.groups[0].reach = 120.0;
+    look
+}
+
+/// A 1-pixel wall beyond the near zone stops the beam completely (the
+/// shadow map's rays, not the walk).
+#[test]
+fn a_far_wall_stops_a_beam() {
+    let Some(gpu) = offscreen() else { return };
+    let mut r = renderer(&gpu, &beam_level(|x, _| (x == 75).then_some(Material::Rock), true));
+    let f = frame(&gpu, &mut r, &far_look());
+    assert!(f.light(70, 32) > 3.0 * ambient(&f), "before the wall: lit");
+    r.set_glow_beam_light(false);
+    let glow = frame(&gpu, &mut r, &far_look());
+    for (x, y) in [(76, 32), (80, 32), (90, 40), (100, 20), (85, 50)] {
+        assert_eq!(f.texels(x, y), glow.texels(x, y), "({x}, {y}) past the wall: no beam");
+    }
+}
+
+/// A diagonal 1-pixel wall (pixels touching only at corners) beyond the
+/// near zone stops it too: the rays' corner rule.
+#[test]
+fn a_far_diagonal_wall_stops_a_beam() {
+    let Some(gpu) = offscreen() else { return };
+    let mut r = renderer(&gpu, &beam_level(|x, y| (x + y == 100).then_some(Material::Rock), true));
+    let f = frame(&gpu, &mut r, &far_look());
+    assert!(f.light(64, 32) > 3.0 * ambient(&f), "before the wall: lit");
+    r.set_glow_beam_light(false);
+    let glow = frame(&gpu, &mut r, &far_look());
+    for (x, y) in [(70, 32), (75, 30), (80, 40), (90, 20), (95, 25), (72, 45)] {
+        assert_eq!(f.texels(x, y), glow.texels(x, y), "({x}, {y}) past the wall: no beam");
+    }
+}

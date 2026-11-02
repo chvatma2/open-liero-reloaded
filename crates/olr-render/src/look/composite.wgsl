@@ -47,12 +47,16 @@ struct WormBoxes {
 // (BEAM_BLOCK and BEAM_BLOCK_SHIFT prepended from Rust), 1 when any of its
 // pixels is opaque, else 0; past it open, as `solid_px`.
 @group(1) @binding(2) var solid_blocks: texture_2d<u32>;
+// The beam shadow map (issue #100, `renderer/beam_shadow.rs`): per row (a
+// beam's source point, `Rows`), per ray of its span, the distance x
+// SHADOW_SCALE at which the ray enters the first pixel that stops it, or
+// SHADOW_CLEAR.
+@group(1) @binding(3) var beam_shadow: texture_2d<u32>;
+@group(1) @binding(4) var<uniform> shadow_rows: Rows;
 
 // A beam's edge widens by this much of its distance, world pixels (the
 // picked look's "softest edge").
 const BEAM_PENUMBRA: f32 = 0.03;
-// The points across a beam's source a pixel looks for (soft shadows).
-const BEAM_SHADOW_POINTS: i32 = 8;
 // The most pixels a shadow march visits, BEAM_MAX_STEPS (2048, given by
 // `renderer/glow_beams.rs`, four times the longest reach): a walk that runs
 // out counts as blocked, so each beam's reach is cut to fit (`walk_reach`).
@@ -81,13 +85,10 @@ fn solid_px(w: vec2<i32>) -> bool {
     return textureLoad(solid_tex, w, 0).r != 1u;
 }
 
-// Whether block `k` of the block map holds no opaque pixel.
+// Whether block `k` of the block map holds no opaque pixel
+// (`block_map_open`).
 fn block_open(k: vec2<i32>) -> bool {
-    let size = vec2<i32>(textureDimensions(solid_blocks));
-    if any(k < vec2<i32>(0)) || any(k >= size) {
-        return true;
-    }
-    return textureLoad(solid_blocks, k, 0).r == 0u;
+    return block_map_open(solid_blocks, vec2<i32>(textureDimensions(solid_tex)), k);
 }
 
 // Whether nothing opaque lies between `o` and source point `e` of beam
@@ -174,6 +175,43 @@ fn beam_sees(o: vec2<f32>, e: vec2<f32>, b: GlowBeam, back: bool) -> bool {
     return false;
 }
 
+// Whether ray `ray` of row `row` reaches `dist` world pixels from its
+// point: 0 or 1; a ray outside the row's span (none lit beyond the near
+// zone looks along one) is dark.
+fn ray_reaches(row: u32, ray: u32, dist: f32) -> f32 {
+    let r = shadow_rows.r[row];
+    let j = (ray + BEAM_RAYS - r.x) % BEAM_RAYS;
+    if j >= r.y {
+        return 0.0;
+    }
+    let stored = textureLoad(beam_shadow, vec2<u32>(j, row), 0).r;
+    return select(0.0, 1.0, stored == SHADOW_CLEAR || dist * SHADOW_SCALE < f32(stored));
+}
+
+// How much of source point `e` (point `k` of beam `i`, `b`) `o` sees past
+// opaque rock and dirt, 0 to 1. Within the near zone (`near` in
+// `renderer/beam_shadow.rs`) the exact walk (`beam_sees`); beyond it, the
+// shadow map: the two rays from `e` either side of `o`'s angle, each seen
+// when it runs past `o` before anything stops it, blended by where the
+// angle falls between them (smooth edges; the accepted inexactness of up
+// to about a pixel far from the source).
+fn shadow_seen(i: i32, k: i32, o: vec2<f32>, e: vec2<f32>, b: GlowBeam, back: bool) -> f32 {
+    let v = o - e;
+    let dist = length(v);
+    if dist < NEAR_PER_HALF * max(b.half, 0.0) + NEAR_BASE {
+        return select(0.0, 1.0, beam_sees(o, e, b, back));
+    }
+    var a = atan2(v.y, v.x);
+    if a < 0.0 {
+        a += 6.2831855;
+    }
+    let f = a * (f32(BEAM_RAYS) / 6.2831855);
+    let lo = floor(f);
+    let r0 = u32(lo) % BEAM_RAYS;
+    let row = u32(i * BEAM_POINTS + k);
+    return mix(ray_reaches(row, r0, dist), ray_reaches(row, (r0 + 1u) % BEAM_RAYS, dist), f - lo);
+}
+
 // Where a solid world pixel `w` (its centre `c`) looks for beam source
 // point `to` from: its open 4-neighbour's centre that faces the source
 // most; `found` false when no open one faces it (it shows no face to the
@@ -206,9 +244,9 @@ fn face_start(w: vec2<i32>, c: vec2<f32>, to: vec2<f32>) -> Start {
 // wide as its source where it starts, `half + along tan(spread)`, its edge
 // a smoothstep over a penumbra of `0.5 + along BEAM_PENUMBRA`, fading as
 // `(1 - along/reach)^3`, flickering with its patch's region, shadowed by
-// the share of BEAM_SHADOW_POINTS points across its source (half a pixel
+// the share of BEAM_POINTS points across its source (half a pixel
 // behind its face) that `p` sees past opaque rock and dirt (the live solid
-// map, `beam_sees`). A `solid` pixel (`p` its centre: every texel alike)
+// map, `shadow_seen`). A `solid` pixel (`p` its centre: every texel alike)
 // looks from its open neighbour facing the source, never from inside its
 // own rock. Cheapest rejects first: `along` outside (0, reach], then the
 // wedge; the shadow march last.
@@ -246,14 +284,12 @@ fn glow_beams_at(p: vec2<f32>, w: vec2<i32>, solid: bool) -> vec3<f32> {
             origin = start.at;
         }
         var seen = 0.0;
-        for (var k = 0; k < BEAM_SHADOW_POINTS; k++) {
-            let u = (f32(k) + 0.5) / f32(BEAM_SHADOW_POINTS) * 2.0 - 1.0;
+        for (var k = 0; k < BEAM_POINTS; k++) {
+            let u = (f32(k) + 0.5) / f32(BEAM_POINTS) * 2.0 - 1.0;
             let src = b.at + perp * (u * b.half) - b.dir * 0.5;
-            if beam_sees(origin, src, b, back) {
-                seen += 1.0;
-            }
+            seen += shadow_seen(i, k, origin, src, b, back);
         }
-        acc += light * (seen / f32(BEAM_SHADOW_POINTS));
+        acc += light * (seen / f32(BEAM_POINTS));
     }
     return acc;
 }

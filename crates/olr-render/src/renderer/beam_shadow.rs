@@ -22,7 +22,7 @@ pub(super) const BEAM_RAYS: u32 = 4000;
 pub(super) const SHADOW_WIDTH: u32 = BEAM_RAYS / 2 + 2;
 
 /// The points across a beam's source a pixel looks for (soft shadows;
-/// `BEAM_SHADOW_POINTS` in `composite.wgsl`).
+/// the composite reads the same).
 pub(super) const BEAM_POINTS: u32 = 8;
 
 /// Stored distance units a world pixel.
@@ -39,10 +39,15 @@ const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Uint;
 
 /// The near zone's radius round each source point: a lit pixel within it
 /// walks to the point exactly (the walks are short there); beyond it, its
-/// angle from the point lies within its row's span.
+/// angle from the point lies within its row's span. `NEAR_PER_HALF` world
+/// pixels a pixel of the source's half-width, plus `NEAR_BASE`.
 pub(super) fn near(half: f32) -> f32 {
-    6.0 * half.max(0.0) + 24.0
+    NEAR_PER_HALF * half.max(0.0) + NEAR_BASE
 }
+
+/// [`near`]'s terms (the composite's too).
+pub(super) const NEAR_PER_HALF: f32 = 6.0;
+pub(super) const NEAR_BASE: f32 = 24.0;
 
 /// The widest angle from a beam's direction, radians, at which a lit pixel
 /// at least [`near`] from one of its source points lies as seen from it:
@@ -227,6 +232,16 @@ impl BeamShadow {
         pass.set_bind_group(0, bind, &[]);
         pass.draw(0..4, 0..self.rows.len() as u32);
         true
+    }
+
+    /// The map's view (the composite reads it).
+    pub(super) fn map_view(&self) -> &wgpu::TextureView {
+        &self.map_view
+    }
+
+    /// The rows' uniform (the composite reads it).
+    pub(super) fn rows_buffer(&self) -> &wgpu::Buffer {
+        &self.rows_buffer
     }
 
     /// The map (tests).

@@ -681,6 +681,8 @@ impl LookState {
                 entry(0, frag, super::UNIFORM),
                 entry(1, frag, FLOAT_TEXTURE),
                 entry(2, frag, UINT_TEXTURE),
+                entry(3, frag, UINT_TEXTURE),
+                entry(4, frag, super::UNIFORM),
             ],
         });
         let beams = device.create_buffer(&wgpu::BufferDescriptor {

@@ -26,6 +26,27 @@ struct GlowBeams {
     beams: array<GlowBeam, MAX_GLOW_BEAMS>,
 };
 
+// The beam shadow map's rows (`renderer/beam_shadow.rs`), BEAM_POINTS a
+// beam in point order: per row, the span's first ray, its rays, the
+// march's limit (f32 bits) and the beam's index.
+struct Rows {
+    r: array<vec4<u32>, MAX_SHADOW_ROWS>,
+};
+
+// Whether block `k` of block map `blocks` holds no opaque pixel of a solid
+// map `solid` pixels wide and high. Past the block map, a block is open
+// only when it lies wholly past the solid map too: a level without a beam
+// map has a 1 x 1 block map, which knows nothing of its rock.
+fn block_map_open(blocks: texture_2d<u32>, solid: vec2<i32>, k: vec2<i32>) -> bool {
+    if any(k < vec2<i32>(0)) || any(k * BEAM_BLOCK >= solid) {
+        return true;
+    }
+    if any(k >= vec2<i32>(textureDimensions(blocks))) {
+        return false;
+    }
+    return textureLoad(blocks, k, 0).r == 0u;
+}
+
 // Whether world pixel `c` lies wholly behind beam `b`'s face: its farthest
 // corner along the beam (as `derive` finds the face from its patch's
 // corners) not past it. Exact for the pixel, unlike a point summed along a
