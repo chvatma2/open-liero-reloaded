@@ -466,13 +466,14 @@ fn baked(level: &str) -> olr_format::levels::LevelSource {
 }
 
 /// Issue #97: Liero Factory Reloaded's live copies' boxes (x, y, width,
-/// height): the crane's and the console's, (issue #98) the faulty
+/// height): the crane's and the terminal's (issue #100; the console's
+/// before it), (issue #98) the faulty
 /// tubes' and (issue #99) the screen's, the sign's, the desk's and the
 /// gauge's. The ground leaves live copies out (#85), so its bake differs
 /// from After Dark's only inside them.
 const LIVE_BOXES: [(u32, u32, u32, u32); 9] = [
     (762, 269, 114, 50),
-    (933, 269, 33, 64),
+    (723, 351, 15, 14),
     (1004, 80, 29, 2),
     (984, 177, 29, 2),
     (427, 286, 29, 2),
@@ -488,9 +489,10 @@ const TUBES: [&str; 3] = ["strip-2", "strip-4", "strip-7"];
 
 /// Liero Factory Reloaded's live copies in copy order (issue #98's tubes
 /// come first: they are placed before the crane; issue #99's screen and
-/// desk before it too, its sign and gauge after the console).
+/// desk before it too, its sign and gauge after the static console; issue
+/// #100's terminal just before the crane).
 const LIVE_COPIES: [&str; 9] =
-    ["strip-2", "strip-4", "strip-7", "screen", "desk", "crane", "console", "sign", "gauge"];
+    ["strip-2", "strip-4", "strip-7", "screen", "desk", "terminal", "crane", "sign", "gauge"];
 
 /// Issue #99: the copies whose displays change, with their assets' names,
 /// starting states and default scripts (`tools/levels/factory/`).
@@ -627,7 +629,7 @@ type CopyRow<'a> = (String, &'a str, Option<&'a str>, (i32, i32), (u32, u32));
 
 /// Issue #96: Liero Factory Reloaded is made of assets: its copies by id,
 /// each with its key, asset, origin, place and size, every one static
-/// but the crane and the console (issue #97) and the three faulty tubes
+/// but the crane and the terminal (issues #97 and #100) and the three faulty tubes
 /// (issue #98), in their starting states with their defaults and their
 /// asset's default script;
 /// the ground and the sky the level's own (the sky distant at 90), the
@@ -661,6 +663,7 @@ fn the_new_factory_is_made_of_assets() {
         ("screen", "c", "computer-screen", (906, 83), (14, 14)),
         ("desk", "d", "control-desk", (903, 119), (30, 11)),
         ("beacon", "w", "warning-beacon", (951, 45), (25, 28)),
+        ("terminal", "e", "terminal", (723, 351), (15, 14)),
         ("crane", "k", "crane", (762, 269), (114, 50)),
         ("console", "o", "console", (933, 269), (33, 64)),
         ("sign", "t", "lit-sign", (934, 299), (31, 21)),
@@ -759,14 +762,14 @@ fn factory_world(content: &Content, at: (i32, i32)) -> olr_sim::World {
 }
 
 /// Issue #97: Liero Factory Reloaded's live copies are exactly the crane
-/// and the console, (issue #98) the tubes `strip-2`, `strip-4` and
-/// `strip-7`, the other strips static, and (issue #99) the screen, the
+/// and the terminal (issue #100; the console before it), (issue #98) the
+/// tubes `strip-2`, `strip-4` and `strip-7`, the other strips static, and (issue #99) the screen, the
 /// sign, the desk and the gauge ([`DISPLAYS`]), each a copy of its
 /// built-in asset in its starting state with its asset's default script
 /// (the Crane's `tools/levels/factory/crane.rhai`, the Strip light's
-/// `tube.rhai`, the displays' their own; the Console has none), every
+/// `tube.rhai`, the displays' their own; the Terminal has none), every
 /// other copy static, the level script
-/// (`tools/levels/factory/level.rhai`) names the crane and the console,
+/// (`tools/levels/factory/level.rhai`) names the crane and the terminal,
 /// and no live asset holds a dirt layer (call 2). A match loads them so.
 #[test]
 fn the_live_factory_has_its_live_copies() {
@@ -781,7 +784,7 @@ fn the_live_factory_has_its_live_copies() {
     let crane_script = std::fs::read_to_string(repo().join("tools/levels/factory/crane.rhai")).unwrap();
     let tube_script = std::fs::read_to_string(repo().join("tools/levels/factory/tube.rhai")).unwrap();
     let mut want =
-        vec![("crane", "Crane", "Idle", Some(&crane_script)), ("console", "Console", "Normal", None)];
+        vec![("crane", "Crane", "Idle", Some(&crane_script)), ("terminal", "Terminal", "Normal", None)];
     want.extend(TUBES.map(|t| (t, "Strip light", "On", Some(&tube_script))));
     let display_scripts: Vec<String> = DISPLAYS
         .iter()
@@ -810,7 +813,7 @@ fn the_live_factory_has_its_live_copies() {
     }
     let level = placed.level_script.as_deref().expect("the level script");
     assert_eq!(level, std::fs::read_to_string(repo().join("tools/levels/factory/level.rhai")).unwrap());
-    assert!(level.contains("this.copy(\"crane\")") && level.contains("this.copy(\"console\")"));
+    assert!(level.contains("this.copy(\"crane\")") && level.contains("this.copy(\"terminal\")"));
     // As a match loads them.
     use olr_cli::runner::{Match, Options};
     let content = Content::open_bundled(&packs_dir()).unwrap();
@@ -824,7 +827,7 @@ fn the_live_factory_has_its_live_copies() {
         assert_eq!(live_copy(w, t).state_name(), "On", "{t}");
     }
     assert_eq!(
-        (live_copy(w, "crane").state_name(), live_copy(w, "console").state_name()),
+        (live_copy(w, "crane").state_name(), live_copy(w, "terminal").state_name()),
         ("Idle", "Normal")
     );
     for d in DISPLAYS {
@@ -836,22 +839,23 @@ fn the_live_factory_has_its_live_copies() {
     assert_eq!((p.min, p.max, p.default), (-10, 75, 0), "claw_x's limits and default (whole pixels)");
 }
 
-/// Issue #97: in a 2000-tick match of two idle bots spawned away from the
-/// crane, its claw rests 200 ticks, crosses to 75 in 150 ticks (±2), and
-/// then goes on resting 200 and crossing the whole rail (85 px) in 170
-/// (±2): 75, −10, 75 and on. The crane is `Moving` while `claw_x`
-/// changes and `Idle` while it rests (2 ticks' slack at each end), and the
-/// console is in `Alarm` while the crane moves, `Normal` otherwise, at
+/// Issue #97: in a 2800-tick match of two idle bots spawned away from the
+/// crane, its claw rests 200 ticks, crosses to 75 in 300 ticks (±2), and
+/// then goes on resting 200 and crossing the whole rail (85 px) in 340
+/// (±2; issue #100 halved its speed): 75, −10, 75 and on. The crane is
+/// `Moving` while `claw_x` changes and `Idle` while it rests (2 ticks'
+/// slack at each end), and the terminal (issue #100; the console before
+/// it) is in `Alarm` while the crane moves, `Normal` otherwise, at
 /// most 2 ticks behind it (ruling R8: the level script reads the crane's
 /// state change the tick after).
 #[test]
-fn the_crane_crosses_and_the_console_alarms() {
+fn the_crane_crosses_and_the_terminal_alarms() {
     use olr_cli::runner::{Match, Options};
     use olr_cli::spec::{MatchSpec, Personality};
     let content = Content::open_bundled(&packs_dir()).unwrap();
-    let spec = MatchSpec { personality: Personality::Idle, ..MatchSpec::new(CLASSIC, FACTORY, 2, 1, 2000) };
+    let spec = MatchSpec { personality: Personality::Idle, ..MatchSpec::new(CLASSIC, FACTORY, 2, 1, 2800) };
     let mut m = Match::new(&content, &spec, &Options::default()).unwrap();
-    // Per tick (after it): claw_x in 1/256 px, crane moving, console alarmed.
+    // Per tick (after it): claw_x in 1/256 px, crane moving, terminal alarmed.
     let mut rows = vec![(live_copy(m.world(), "crane").value("claw_x").unwrap(), false, false)];
     let mut spawned = false;
     loop {
@@ -873,7 +877,7 @@ fn the_crane_crosses_and_the_console_alarms() {
         rows.push((
             live_copy(w, "crane").value("claw_x").unwrap(),
             live_copy(w, "crane").state_name() == "Moving",
-            live_copy(w, "console").state_name() == "Alarm",
+            live_copy(w, "terminal").state_name() == "Alarm",
         ));
         if !go {
             break;
@@ -881,7 +885,7 @@ fn the_crane_crosses_and_the_console_alarms() {
     }
     assert!(m.finish().failure().is_none());
     assert!(spawned);
-    assert_eq!(rows.len(), 2001);
+    assert_eq!(rows.len(), 2801);
     // The moves: maximal runs of ticks whose claw_x differs from the tick before.
     let mut moves: Vec<(usize, usize)> = Vec::new();
     for t in 1..rows.len() {
@@ -900,7 +904,7 @@ fn the_crane_crosses_and_the_console_alarms() {
     );
     let near = |got: usize, want: usize| got.abs_diff(want) <= 2;
     for (i, &(s, e)) in moves.iter().enumerate() {
-        let (len, want) = (e - s + 1, if i == 0 { 150 } else { 170 });
+        let (len, want) = (e - s + 1, if i == 0 { 300 } else { 340 });
         assert!(near(len, want), "move {i} took {len} ticks, not {want}: {moves:?}");
         let rest = if i == 0 { s - 1 } else { s - moves[i - 1].1 - 1 };
         assert!(near(rest, 200), "the rest before move {i} was {rest} ticks: {moves:?}");
@@ -913,11 +917,11 @@ fn the_crane_crosses_and_the_console_alarms() {
             assert_eq!(row.1, moving_at(t), "tick {t}: the crane Moving");
         }
     }
-    // The console follows the crane, at most 2 ticks behind.
+    // The terminal follows the crane, at most 2 ticks behind.
     for t in 2..rows.len() {
         let crane = [rows[t - 2].1, rows[t - 1].1, rows[t].1];
         if crane.iter().all(|m| *m) || crane.iter().all(|m| !*m) {
-            assert_eq!(rows[t].2, rows[t].1, "tick {t}: the console's Alarm");
+            assert_eq!(rows[t].2, rows[t].1, "tick {t}: the terminal's Alarm");
         }
     }
     assert!(rows.iter().any(|r| r.2) && rows.iter().any(|r| !r.2));
@@ -956,8 +960,9 @@ fn rock_by_state(folder: &str) -> Vec<(String, BTreeSet<(u32, u32)>)> {
 }
 
 /// Issue #97: no state switch adds or removes a solid pixel: for the
-/// Crane, the Console, (issue #98) the Strip light and (issue #99) the
-/// Computer screen, the Lit sign, the Control desk and the Gauge, every
+/// Crane, the Console, (issue #98) the Strip light, (issue #99) the
+/// Computer screen, the Lit sign, the Control desk and the Gauge and
+/// (issue #100) the Terminal, every
 /// state's rock pixels (the stacked pictures included) are the starting
 /// state's (none for the Strip light, the screen and the desk: their
 /// layers are Background), and so are the solid pixels of each state of
@@ -965,8 +970,16 @@ fn rock_by_state(folder: &str) -> Vec<(String, BTreeSet<(u32, u32)>)> {
 #[test]
 fn live_states_keep_their_solid_pixels() {
     let backgrounds = ["strip-light", "computer-screen", "control-desk"];
-    for folder in ["crane", "console", "strip-light", "computer-screen", "lit-sign", "control-desk", "gauge"]
-    {
+    for folder in [
+        "crane",
+        "console",
+        "strip-light",
+        "computer-screen",
+        "lit-sign",
+        "control-desk",
+        "gauge",
+        "terminal",
+    ] {
         let states = rock_by_state(folder);
         assert!(states.len() >= 2, "{folder}: its states");
         for (name, rock) in &states[1..] {
@@ -1024,7 +1037,7 @@ fn the_crane_carries_and_pushes_a_worm() {
     let wm = &w.worms()[0];
     assert!(wm.alive && wm.on_ground && (wm.pos.y - 296.0).abs() < 1.0, "on the shoulder: {:?}", wm.pos);
     let x0 = wm.pos.x;
-    for _ in 0..250 {
+    for _ in 0..400 {
         w.tick(&[Keys(0), Keys(0)], &mut ev);
         crushed += ev.iter().filter(|e| matches!(e.kind, EventKind::Crushed { worm: 0, .. })).count();
     }
@@ -1036,7 +1049,7 @@ fn the_crane_carries_and_pushes_a_worm() {
     // up, ropes onto the rail above and hangs in the claw's path.
     let mut w = factory_world(&content, (845, 300));
     let mut hung = None;
-    for t in 0..360u32 {
+    for t in 0..560u32 {
         let k = match t {
             50..110 => Keys::UP,
             110..112 => Keys::ROPE,
@@ -1081,8 +1094,8 @@ fn live_snapshot(w: &olr_sim::World) -> (Vec<bool>, Vec<(u16, Vec<i64>)>) {
 
 /// Issue #97, #90's rule: an explosion never digs a live copy. Bazooka
 /// hits (the explosion of its shell striking, damage 4) on the claw, on
-/// the dirt beside it and on the console, between ticks of a match of two
-/// idle bots: the copies'
+/// the dirt beside it and on the terminal (issue #100; the console
+/// before it), between ticks of a match of two idle bots: the copies'
 /// solid pixels, states and values are unchanged, and the ground changes
 /// where the same explosions change After Dark's (outside the live
 /// copies' boxes, whose rock is the copies' here).
@@ -1093,12 +1106,12 @@ fn explosions_leave_the_factorys_live_copies_alone() {
     use olr_math::Vec2;
     let content = Content::open_bundled(&packs_dir()).unwrap();
     // The claw resting at its far end (x 847-875): its right arm's tip;
-    // the dirt pile beside it; the console's foot.
-    let hits = [Vec2::new(869.5, 319.5), Vec2::new(876.5, 328.5), Vec2::new(949.5, 333.5)];
+    // the dirt pile beside it; the terminal's foot.
+    let hits = [Vec2::new(869.5, 319.5), Vec2::new(876.5, 328.5), Vec2::new(730.5, 363.5)];
     let blast = |level: &str| {
         let spec = MatchSpec { personality: Personality::Idle, ..MatchSpec::new(CLASSIC, level, 2, 1, 2000) };
         let mut m = Match::new(&content, &spec, &Options::default()).unwrap();
-        for _ in 0..400 {
+        for _ in 0..600 {
             assert!(m.step());
         }
         let mut w = m.world().clone();
@@ -1132,7 +1145,7 @@ fn explosions_leave_the_factorys_live_copies_alone() {
 
 /// Issue #97: a 6000-tick match of 4 bots on the factory runs its scripts
 /// without a `ScriptError`, both instances still running at its end (the
-/// crane still crossing and the console still following it in its last
+/// crane still crossing and the terminal still following it in its last
 /// 1000 ticks; issue #98: each tube still switching in the last 1500),
 /// and no run or tick uses more than half its operations
 /// (`World::script_peak`, #88). #99 keeps it passing with its own.
@@ -1155,7 +1168,7 @@ fn the_factory_scripts_never_fail() {
         errors += m.events().iter().filter(|e| matches!(e.kind, EventKind::ScriptError { .. })).count();
         if m.ticks() > 5000 {
             late_moves += usize::from(claw_x(m.world()) != last);
-            late_alarms += usize::from(live_copy(m.world(), "console").state_name() == "Alarm");
+            late_alarms += usize::from(live_copy(m.world(), "terminal").state_name() == "Alarm");
         }
         last = claw_x(m.world());
         let now = tube_states(m.world());

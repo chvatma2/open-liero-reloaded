@@ -243,6 +243,8 @@ fn save_and_place_through_the_panels() {
     h.get_by_role_and_label(Role::Button, "Torch");
     // Picked, then a press on the canvas places it there.
     let before = h.state().state.document().unwrap().copies().len();
+    h.get_by_role_and_label(Role::Button, "Tunnels pit").scroll_to_me();
+    h.run();
     h.get_by_role_and_label(Role::Button, "Tunnels pit").click();
     h.run();
     assert!(h.state().state.placing());

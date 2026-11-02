@@ -44,10 +44,11 @@ fn goldens(c: &Content, dir: &str, at_least: usize, check: bool) {
                 let i = olr_cli::coverage::EVENT_KINDS.iter().position(|k| *k == kind).unwrap();
                 run.coverage.events[i]
             };
-            // Issue #97: the factory's crane arrives 8 times in 3000
-            // ticks (a rest of 2 s, then a crossing of 1.5 s or 1.7 s).
+            // Issue #97: the factory's crane arrives 5 times in 3000
+            // ticks (a rest of 2 s, then a crossing of 3 s or 3.4 s:
+            // issue #100 halved its speed).
             assert!(
-                count("LiveState") > 20 && count("LiveArrived") >= 8,
+                count("LiveState") > 20 && count("LiveArrived") >= 5,
                 "{name}: {:?}",
                 run.coverage.events
             );

@@ -436,12 +436,13 @@ fn live_beam() {
     live_golden("live-beam-turned.png", &turned);
 }
 
-/// Issue #97: Liero Factory Reloaded's crane mid-rail and its console in
-/// Alarm: idle bots, at tick 275 the claw halfway through its first
-/// crossing (resting 200 ticks, then 150 to the end of its rail), the
-/// level script having turned the console red, its lamp lit and pulsing;
-/// the view centred on the crane (`--at`). Issue #99: its warning beacon
-/// lit, end-on (the lamp flaring, the beams faded).
+/// Issue #97: Liero Factory Reloaded's crane on its rail and the terminal
+/// left of it in Alarm (issue #100; the console before it): idle bots, at
+/// tick 275 the claw a quarter through its first crossing (resting 200
+/// ticks, then 300 to the end of its rail, issue #100's half speed), the
+/// level script having turned the terminal red and pulsing; the view
+/// centred on the crane (`--at`). Issue #99: its warning beacon lit,
+/// end-on (the lamp flaring, the beams faded).
 #[test]
 fn factory_crane() {
     let Some(content) = content_dir() else { return };

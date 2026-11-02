@@ -1023,8 +1023,13 @@ fn move_and_resize_a_copy_through_the_canvas() {
     let (_t, _t2, s) = placed(&root);
     let mut h = harness(s);
     h.run();
-    // Place a built-in asset from the library.
+    // Place a built-in asset from the library (scrolled to: it holds
+    // more than its panel shows).
+    thumbnail(&h, "Torch").scroll_to_me();
+    h.run();
     thumbnail(&h, "Torch").click();
+    h.run();
+    h.get_by_role_and_label(egui::accesskit::Role::Button, labels::PLACE).scroll_to_me();
     h.run();
     h.get_by_role_and_label(egui::accesskit::Role::Button, labels::PLACE).click();
     h.run();
@@ -1055,9 +1060,9 @@ fn move_and_resize_a_copy_through_the_canvas() {
 /// the level tab: unchanged, its copies listed by id bottom first, its
 /// bake the pack's. A built-in copy opens in the asset tab as the
 /// library's asset (Edit library asset, and a double click), the ground
-/// through Edit in level. Since issue #97 its crane and console are Live
-/// (since issue #98 three of its strip lights, since issue #99 its
-/// screen, sign, desk and gauge): the bake is the pack's outside their
+/// through Edit in level. Since issue #97 its crane and (issue #100) its
+/// terminal are Live (since issue #98 three of its strip lights, since
+/// issue #99 its screen, sign, desk and gauge): the bake is the pack's outside their
 /// boxes.
 #[test]
 fn liero_factory_reloaded_opens_with_its_copies() {
@@ -1072,7 +1077,7 @@ fn liero_factory_reloaded_opens_with_its_copies() {
     run(&mut s, A::Tool(Tool::Select));
     assert!(!s.dirty(), "{:?}", s.status().message);
     let strips = (1..=9).map(|i| format!("strip-{i}"));
-    let rest = ["ceil-lamp", "screen", "desk", "beacon", "crane", "console", "sign", "gauge"];
+    let rest = ["ceil-lamp", "screen", "desk", "beacon", "terminal", "crane", "console", "sign", "gauge"];
     let want: Vec<String> =
         ["ground", "sky"].map(String::from).into_iter().chain(strips).chain(rest.map(String::from)).collect();
     assert_eq!(copy_ids(&s), want);
@@ -1085,15 +1090,15 @@ fn liero_factory_reloaded_opens_with_its_copies() {
     assert_eq!(doc.copy_box("crane"), Some(((762, 269), (114, 50))));
     let pack = olr_edit::pack::load(&level).unwrap();
     let olr_edit::pack::Source::Level(stored) = &pack.source else { panic!() };
-    // Issue #97: the crane and the console are Live (issue #98: and the
-    // tubes strip-2, strip-4 and strip-7; issue #99: the screen, the sign,
-    // the desk and the gauge), the stored bake the ground
+    // Issue #97: the crane and the terminal (issue #100; the console
+    // before it) are Live (issue #98: and the tubes strip-2, strip-4 and
+    // strip-7; issue #99: the screen, the sign, the desk and the gauge), the stored bake the ground
     // without them (issue #85's played form) while the canvas draws them
     // in place: the bake is the pack's outside their boxes.
     let l = doc.level();
     let live: [((i32, i32), (u32, u32)); 9] = [
         ((762, 269), (114, 50)),
-        ((933, 269), (33, 64)),
+        ((723, 351), (15, 14)),
         ((1004, 80), (29, 2)),
         ((984, 177), (29, 2)),
         ((427, 286), (29, 2)),
@@ -1102,7 +1107,7 @@ fn liero_factory_reloaded_opens_with_its_copies() {
         ((903, 119), (30, 11)),
         ((1059, 144), (48, 27)),
     ];
-    assert_eq!(doc.copy_box("console"), Some(live[1]));
+    assert_eq!(doc.copy_box("terminal"), Some(live[1]));
     let w = l.size.0 as usize;
     let outside = |i: usize| {
         let (x, y) = ((i % w) as i32, (i / w) as i32);

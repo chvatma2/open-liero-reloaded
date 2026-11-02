@@ -219,12 +219,12 @@ fn a_block_making_another_asset_fails_naming_its_folder() {
     assert!(e.starts_with("content/assets/strip-light: its block makes other files"), "{e}");
 }
 
-/// The three assets issue #96 adds check, and are what the README says
-/// (issue #99: the Crane's warning beacon's two lenses beside its rail
-/// and claw).
+/// The three assets issue #96 adds (and issue #100's Terminal) check, and
+/// are what the README says (issue #99: the Crane's warning beacon's two
+/// lenses beside its rail and claw).
 #[test]
 fn the_factorys_new_assets_check() {
-    let dirs = ["crane", "console", "gauge"].map(|f| assets_dir().join(f));
+    let dirs = ["crane", "console", "gauge", "terminal"].map(|f| assets_dir().join(f));
     let mut args = vec!["asset", "check"];
     args.extend(dirs.iter().map(|d| d.to_str().unwrap()));
     let o = cli(&args);
@@ -237,6 +237,7 @@ fn the_factorys_new_assets_check() {
     assert_eq!(layers("crane"), ((114, 50), crane));
     assert_eq!(layers("console"), ((33, 64), vec!["rock".to_string(), "rock-disp".into()]));
     assert_eq!(layers("gauge"), ((48, 27), vec!["rock".to_string(), "rock-scr".into(), "rock-disp".into()]));
+    assert_eq!(layers("terminal"), ((15, 14), vec!["rock".to_string(), "rock-bcn".into()]));
 }
 
 #[test]

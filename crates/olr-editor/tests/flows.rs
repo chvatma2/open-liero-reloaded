@@ -1791,15 +1791,21 @@ fn paint_an_asset(narrow: bool) {
     let level = h.state().state.active_document().unwrap().to_asset();
     // The Asset switch waits for an asset.
     assert!(h.get_by_role_and_label(Role::Button, labels::ASSET_TAB).accesskit_node().is_disabled());
-    let pick = |h: &mut Harness<'static, App>, role: Option<Role>, label: &str| {
-        let node = match role {
+    // The library scrolls (more built-in assets than its panel shows at
+    // 1280 x 720): scrolled to first, as a user would.
+    fn node<'a>(h: &'a Harness<'static, App>, role: Option<Role>, label: &'a str) -> egui_kittest::Node<'a> {
+        match role {
             Some(role) => h.get_by_role_and_label(role, label),
             None => h.get_by_label(label),
-        };
+        }
+    }
+    let pick = |h: &mut Harness<'static, App>, role: Option<Role>, label: &str| {
         if narrow {
-            node.click_accesskit()
+            node(h, role, label).click_accesskit()
         } else {
-            node.click()
+            node(h, role, label).scroll_to_me();
+            h.run();
+            node(h, role, label).click()
         }
         h.run();
     };
@@ -2157,6 +2163,8 @@ fn place_two_lamps_and_edit_their_asset() {
     assert_eq!(copies_of(&h, &builtin), 2, "{:?}", h.state().state.status().message);
     // 2. Edited: picked, then Edit asset.
     card(&h, "Strip light", false).click();
+    h.run();
+    h.get_by_label(labels::EDIT_LIBRARY_ASSET).scroll_to_me();
     h.run();
     h.get_by_label(labels::EDIT_LIBRARY_ASSET).click();
     h.run();

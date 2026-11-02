@@ -316,3 +316,8 @@
   fixtures/render/factory-screen.png
 2026-11-01 bless-regression: the factory's screen, displays and warning beacon (#99)
   fixtures/matches-live/classic-factory-live-4dm.ron
+2026-11-02 bless-render: issue #100 playtest: the crane at half speed, the alarm on the terminal left of it
+  fixtures/render/factory-beacon-side.png
+  fixtures/render/factory-crane.png
+2026-11-02 bless-regression: issue #100 playtest: the crane at half speed, the alarm on the terminal left of it
+  fixtures/matches-live/classic-factory-live-4dm.ron

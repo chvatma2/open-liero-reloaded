@@ -866,9 +866,17 @@ mod tests {
         assert!(!fs.exists(&VPath::new(SCRIPT_FILE).unwrap()));
         // Every built-in asset reads and writes byte for byte, stateless
         // but for those Liero Factory Reloaded brings alive (issues #97,
-        // #98 and #99).
-        let live =
-            ["crane", "console", "strip-light", "computer-screen", "lit-sign", "control-desk", "gauge"];
+        // #98, #99 and #100).
+        let live = [
+            "crane",
+            "console",
+            "strip-light",
+            "computer-screen",
+            "lit-sign",
+            "control-desk",
+            "gauge",
+            "terminal",
+        ];
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content/assets");
         let Ok(entries) = std::fs::read_dir(&dir) else { return };
         let mut seen = 0;
