@@ -141,6 +141,9 @@ fn a_profile_reports_every_phase_and_the_heat() {
         // first nukes, the last ones a quiet hot stretch after them.
         window: fight.first_explosion.map(|t| (t.saturating_sub(20), t + 140)),
         at: None,
+        beams: false,
+        views: 1,
+        beam_light: true,
     };
     let r = render_profile::run(&content, &fight, &cfg, &mut |_| {}).unwrap();
     let s = &r.sizes[0];
@@ -159,5 +162,55 @@ fn a_profile_reports_every_phase_and_the_heat() {
         assert!(blast.gpu_ms.is_some_and(|g| g.mean > 0.0));
     } else {
         assert!(blast.gpu_ms.is_none() && blast.groups.is_empty(), "no 0 ms rows without timestamps");
+    }
+}
+
+/// Issue #100: `--beams --views 2` draws the many-beam scene in two views,
+/// its shadow map made each frame (its flashlights turn every frame), and
+/// the scene says so; `--no-beam-light` draws no beam.
+#[test]
+fn a_profile_draws_the_many_beam_scene() {
+    use olr_cli::render_profile::{self, ProfileConfig, stage_fight};
+    use olr_render::AdapterPreference;
+    if std::env::var_os("OLR_GPU_TESTS").is_none() {
+        eprintln!("OLR_GPU_TESTS not set; skipping");
+        return;
+    }
+    if olr_render::Offscreen::new().is_err() {
+        eprintln!("no adapter; skipping");
+        return;
+    }
+    let packs = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content/packs");
+    let content = olr_content::Content::open_bundled(&packs).unwrap();
+    let fight = stage_fight(&content).unwrap();
+    let cfg = |beam_light| ProfileConfig {
+        sizes: vec![(320, 180)],
+        frames_per_tick: 2,
+        options: OffscreenOptions {
+            prefer: AdapterPreference::Software,
+            timestamps: true,
+            ..OffscreenOptions::default()
+        },
+        window: Some((0, 4)),
+        at: Some((300.0, 200.0)),
+        beams: true,
+        views: 2,
+        beam_light,
+    };
+    let shadow = |r: &render_profile::ProfileReport| {
+        r.sizes[0]
+            .phases
+            .iter()
+            .flat_map(|p| &p.groups)
+            .find(|g| g.pass == "beam shadow")
+            .map(|g| g.passes.mean)
+    };
+    let lit = render_profile::run(&content, &fight, &cfg(true), &mut |_| {}).unwrap();
+    assert!(lit.scene.contains("many-beam scene") && lit.scene.contains("2 views"), "{}", lit.scene);
+    let dark = render_profile::run(&content, &fight, &cfg(false), &mut |_| {}).unwrap();
+    assert!(dark.scene.contains("light off"), "{}", dark.scene);
+    if lit.timestamps {
+        assert_eq!(shadow(&lit), Some(1.0), "once a frame, both views");
+        assert_eq!(shadow(&dark), None);
     }
 }

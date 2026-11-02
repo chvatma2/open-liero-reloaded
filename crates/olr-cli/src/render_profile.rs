@@ -7,7 +7,7 @@
 
 use std::time::Instant;
 
-use anyhow::{Context as _, anyhow, bail};
+use anyhow::{Context as _, anyhow, bail, ensure};
 use olr_content::{Content, MatchLoadout, MatchOptions, WeaponChoice};
 use olr_present::{PresentSetup, Presentation, default_colour};
 use olr_render::{
@@ -19,7 +19,7 @@ use olr_sim::{EventKind, TickEvents, World};
 use serde::{Deserialize, Serialize};
 
 use crate::assets::LevelAssets;
-use crate::gpu_bench::{check_adapter, draw, frame_sample};
+use crate::gpu_bench::{check_adapter, frame_sample};
 use crate::runner::{Match, Options};
 use crate::spec::{Difficulty, MatchSpec};
 
@@ -241,6 +241,58 @@ pub struct ProfileConfig {
     /// A fixed camera on this world point (issue #100: a live copy's
     /// light), else worm 0 followed as the game does.
     pub at: Option<(f32, f32)>,
+    /// Issue #100: the many-beam scene ([`many_beams`]) round `at`.
+    pub beams: bool,
+    /// The views drawn, 1 or 2 (two-player split screen: both on the same
+    /// camera, so both draw every beam).
+    pub views: u32,
+    /// The glow beams' own light (off: the baseline the beam work is
+    /// measured against, `Renderer::set_glow_beam_light`).
+    pub beam_light: bool,
+}
+
+/// Issue #100's many-beam scene (the beam shadow maps design, "The
+/// many-beam scene"), appended to `look` round world point `at` at `tick`
+/// and `alpha` of the way to the next: 6 still street lamps (spread 40°,
+/// reach 120 px) along the top facing down, 2 searchlights (10°, 400 px)
+/// below sweeping once a tick, 4 flashlights (20°, 200 px) turning every
+/// frame; each kind its own group, white.
+pub fn many_beams(look: &mut olr_look::LookFrame, at: (f32, f32), tick: u32, alpha: f32) {
+    use olr_look::glow_beams::GlowBeamSource;
+    let first = look.groups.len();
+    for reach in [120.0, 400.0, 200.0] {
+        look.groups.push(olr_look::FrameGroup {
+            cast: [2.0; 3],
+            self_scale: 1.0,
+            reach,
+            ..Default::default()
+        });
+    }
+    let group = |k: usize| u8::try_from(first + k + 1).unwrap_or(u8::MAX);
+    let beam = |g: u8, p: (f32, f32), angle: f32, half: f32, deg: f32| GlowBeamSource {
+        group: g,
+        at: [at.0 + p.0, at.1 + p.1],
+        dir: [angle.cos(), angle.sin()],
+        half,
+        spread: deg.to_radians(),
+        glow: 1.0,
+        colour: [1.0; 3],
+        first: 0,
+        back: false,
+    };
+    let down = core::f32::consts::FRAC_PI_2;
+    for k in 0..6 {
+        look.push_live_beam(beam(group(0), (-100.0 + 40.0 * k as f32, -40.0), down, 3.0, 40.0));
+    }
+    for k in 0..2 {
+        let sweep = 0.7 * (tick as f32 * 0.05 + k as f32 * 2.0).sin();
+        look.push_live_beam(beam(group(1), (-80.0 + 160.0 * k as f32, 40.0), -down + sweep, 4.0, 10.0));
+    }
+    let now = tick as f32 + alpha;
+    for k in 0..4 {
+        let turn = now * 0.09 + k as f32 * down;
+        look.push_live_beam(beam(group(2), (-60.0 + 40.0 * k as f32, 10.0), turn, 1.5, 20.0));
+    }
 }
 
 /// One pass group over a phase's frames.
@@ -397,6 +449,24 @@ pub fn run(
     let fpt = cfg.frames_per_tick.max(1);
     let (from, to) = window_within(cfg.window, replay.ticks())?;
     let nukes: Vec<String> = fight.shots.iter().map(|(w, n)| format!("{w} {n}")).collect();
+    ensure!((1..=2).contains(&cfg.views), "{} views: 1 or 2", cfg.views);
+    let beams_at = match (cfg.beams, cfg.at) {
+        (false, _) => None,
+        (true, Some(at)) => Some(at),
+        (true, None) => bail!("--beams needs --at: the scene is placed round the camera"),
+    };
+    // Issue #100: the scene names what it adds, so a base compares only
+    // like with like.
+    let mut extras = String::new();
+    if cfg.beams {
+        extras.push_str("; with the many-beam scene");
+    }
+    if cfg.views == 2 {
+        extras.push_str("; 2 views");
+    }
+    if !cfg.beam_light {
+        extras.push_str("; the beams' light off");
+    }
     let mut report = ProfileReport {
         adapter: info.name.clone(),
         backend: format!("{:?}", info.backend),
@@ -408,7 +478,7 @@ pub fn run(
             replay.ticks(),
             cfg.at.map(|(x, y)| format!(", the camera at {x},{y}")).unwrap_or_default(),
             nukes.join(", ")
-        ),
+        ) + extras.as_str(),
         frames_per_tick: fpt,
         ..ProfileReport::default()
     };
@@ -443,7 +513,13 @@ pub fn run(
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let areas = [playfield_area(size)];
+        let field = playfield_area(size);
+        let areas: Vec<[u32; 4]> = crate::gpu_bench::view_areas((field[2], field[3]), cfg.views)
+            .into_iter()
+            .map(|a| [a[0] + field[0], a[1] + field[1], a[2], a[3]])
+            .collect();
+        let mut second = (cfg.views == 2).then(DrawList::new);
+        let mut scene = olr_look::LookFrame::default();
         let (mut out, mut list, mut shown) = (TickEvents::new(), DrawList::new(), 0);
         let add_worms = |present: &mut Presentation, world: &olr_sim::World, shown: &mut usize| {
             while *shown < world.worms().len() {
@@ -455,7 +531,11 @@ pub fn run(
         // A first frame makes the targets and uploads everything.
         present.build(&world, 1.0, &mut list);
         present.upload(&mut renderer);
-        draw(&mut renderer, (&list, &mut []), &areas, present.look(), &view);
+        // Once the upload has turned the lighting on (the setting is the
+        // look's).
+        renderer.set_glow_beam_light(cfg.beam_light);
+        let look = with_beams(present.look(), &mut scene, beams_at, from, 1.0);
+        draw_views(&mut renderer, (&list, &mut second), &areas, look, &view);
         gpu.device().poll(wgpu::PollType::wait_indefinitely()).context("the device")?;
         let _ = renderer.gpu_times();
         let mut phases: [Gathered; 3] = Default::default();
@@ -486,7 +566,9 @@ pub fn run(
                 present.build(&world, (k + 1) as f32 / fpt as f32, &mut list);
                 let before = renderer.uploads();
                 present.upload(&mut renderer);
-                draw(&mut renderer, (&list, &mut []), &areas, present.look(), &view);
+                let alpha = (k + 1) as f32 / fpt as f32;
+                let look = with_beams(present.look(), &mut scene, beams_at, t, alpha);
+                draw_views(&mut renderer, (&list, &mut second), &areas, look, &view);
                 let cpu = ms(t1);
                 let up = renderer.uploads().since(before);
                 gpu.device().poll(wgpu::PollType::wait_indefinitely()).context("the device")?;
@@ -525,7 +607,7 @@ pub fn run(
         let w = renderer.workload();
         report.sizes.push(SizeProfile {
             size,
-            playfield: areas[0],
+            playfield: field,
             world_targets: w.world_targets,
             glow_grid: w.glow_grid,
             cascades: w.cascades,
@@ -537,6 +619,40 @@ pub fn run(
         });
     }
     Ok(report)
+}
+
+/// `look` with the many-beam scene at `tick` and `alpha` appended (a copy
+/// in `scene`) when it is placed `at` a point (issue #100).
+fn with_beams<'a>(
+    look: Option<&'a olr_look::LookFrame>,
+    scene: &'a mut olr_look::LookFrame,
+    at: Option<(f32, f32)>,
+    tick: u32,
+    alpha: f32,
+) -> Option<&'a olr_look::LookFrame> {
+    let (look, Some(at)) = (look?, at) else { return look };
+    scene.clone_from(look);
+    many_beams(scene, at, tick, alpha);
+    Some(scene)
+}
+
+/// Draws `list` into the first of `areas` and, with a `second` list, the
+/// same camera into the second (issue #100: two players side by side, both
+/// seeing every beam).
+fn draw_views(
+    renderer: &mut olr_render::Renderer,
+    (list, second): (&DrawList, &mut Option<DrawList>),
+    areas: &[[u32; 4]],
+    look: Option<&olr_look::LookFrame>,
+    target: &wgpu::TextureView,
+) {
+    if let Some(other) = second.as_mut() {
+        other.clone_from(list);
+    }
+    let lists = std::iter::once(list).chain(second.as_ref());
+    let views: Vec<olr_render::ViewDraw> =
+        lists.zip(areas).map(|(list, &area)| olr_render::ViewDraw { list, area }).collect();
+    renderer.render_views(&views, look, target);
 }
 
 /// A cost of a phase's frames: a pass group, the gaps, or (without
@@ -724,6 +840,43 @@ mod tests {
     use olr_ui::hud::HudLayout;
 
     use super::*;
+
+    /// Issue #100: the many-beam scene is the spec's load: 6 still street
+    /// lamps (40°, 120 px), 2 searchlights sweeping each tick (10°, 400
+    /// px), 4 flashlights moving each frame (20°, 200 px), all near `at`.
+    #[test]
+    fn many_beams_carry_the_specs_load() {
+        let at = (500.0, 300.0);
+        let of = |tick, alpha| {
+            let mut look = olr_look::LookFrame::default();
+            look.groups.push(olr_look::FrameGroup::default());
+            many_beams(&mut look, at, tick, alpha);
+            look
+        };
+        let kind = |look: &olr_look::LookFrame, reach: f32| -> Vec<olr_look::glow_beams::GlowBeamSource> {
+            let group = |s: &olr_look::glow_beams::GlowBeamSource| look.groups[usize::from(s.group) - 1];
+            look.live_beams
+                .iter()
+                .filter(|s| group(s).reach == reach && group(s).cast[0] > 0.0)
+                .cloned()
+                .collect()
+        };
+        let a = of(0, 0.0);
+        assert_eq!(a.live_beams.len(), 12);
+        let dirs = |b: &[olr_look::glow_beams::GlowBeamSource]| b.iter().map(|s| s.dir).collect::<Vec<_>>();
+        let (lamps, search, flash) = (kind(&a, 120.0), kind(&a, 400.0), kind(&a, 200.0));
+        assert_eq!((lamps.len(), search.len(), flash.len()), (6, 2, 4));
+        for (b, deg) in [(&lamps, 40f32), (&search, 10.0), (&flash, 20.0)] {
+            assert!(b.iter().all(|s| (s.spread - deg.to_radians()).abs() < 1e-6), "{deg}°");
+        }
+        assert_eq!(lamps, kind(&of(50, 0.0), 120.0), "the lamps hold still");
+        assert_ne!(dirs(&search), dirs(&kind(&of(1, 0.0), 400.0)), "the searchlights sweep each tick");
+        assert_eq!(dirs(&search), dirs(&kind(&of(0, 0.5), 400.0)), "once a tick");
+        assert_ne!(dirs(&flash), dirs(&kind(&of(0, 0.5), 200.0)), "the flashlights move each frame");
+        for s in &a.live_beams {
+            assert!((s.at[0] - at.0).abs() <= 100.0 && (s.at[1] - at.1).abs() <= 45.0, "{:?} in view", s.at);
+        }
+    }
 
     #[test]
     fn frames_are_put_in_their_phase() {

@@ -49,6 +49,17 @@ pub struct Args {
     /// base compares only with a run at the same point.
     #[arg(long, value_name = "X,Y", value_parser = crate::render_match::point)]
     at: Option<(f32, f32)>,
+    /// Issue #100: adds the many-beam scene (6 street lamps, 2 searchlights,
+    /// 4 flashlights) round `--at`.
+    #[arg(long, requires = "at")]
+    beams: bool,
+    /// Views drawn: 2 is two-player split screen, both on the camera.
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..=2))]
+    views: u32,
+    /// Draws without the glow beams' own light: the baseline the beam
+    /// work is measured against.
+    #[arg(long)]
+    no_beam_light: bool,
 }
 
 fn parse_ticks(s: &str) -> Result<(u32, u32), String> {
@@ -85,6 +96,9 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         },
         window: args.ticks,
         at: args.at,
+        beams: args.beams,
+        views: args.views,
+        beam_light: !args.no_beam_light,
     };
     let report = render_profile::run(&content, &fight, &cfg, &mut |l| eprintln!("  {l}"))?;
     let against = args.against.as_deref().and_then(|p| match base(p) {
