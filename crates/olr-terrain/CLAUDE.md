@@ -62,7 +62,12 @@ and the colour image that follows it (`ColorMap`).
 - **`GlowBeamMap`** (`glow_beam.rs`, the directional-glow design): per world
   pixel and layer (front, back) two bytes, direction / 2 + 1 (0 not
   directional) and the spread 1-90; `fits(world)` also checks the byte
-  ranges; `get(layer_back, x, y)` gives `(direction degrees, spread)`.
+  ranges, a scan of every texel, and `sized(world)` the sizes alone
+  (issue #100: a map the colour map holds fitted when set, so
+  `ColorMap::ground()`, run several times a tick with live copies, and
+  the renderer's per-rectangle beam writes check `sized`; `fits` there
+  cost 0.6 ms a call on Liero Factory Reloaded);
+  `get(layer_back, x, y)` gives `(direction degrees, spread)`.
   `ColorMap::set_glow_beams(Some(map))` (another world size or a byte out
   of range refused, `false`) and `glow_beams()`, `set_haze(Some(grey))`
   (one byte per world pixel, 0 none to 255 the level's haze; another

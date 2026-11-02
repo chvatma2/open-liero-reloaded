@@ -34,13 +34,18 @@ impl GlowBeamMap {
 
     /// Whether it is of world size `world` with its layers' length and every
     /// byte in range (byte 0 up to 180, byte 1 up to 90, and 1 or more where
-    /// byte 0 is set).
+    /// byte 0 is set): a scan of every texel, for a map from outside.
     pub fn fits(&self, world: (u32, u32)) -> bool {
+        self.sized(world) && [&self.front, &self.back].iter().all(|l| Self::in_range(l))
+    }
+
+    /// Whether it is of world size `world` with its layers' length, its
+    /// bytes unread (issue #100): for a map already found to
+    /// [`fit`](Self::fits), as the colour map holds one, checked every
+    /// tick and upload.
+    pub fn sized(&self, world: (u32, u32)) -> bool {
         let n = u64::from(world.0) * u64::from(world.1) * 2;
-        self.world == world
-            && self.front.len() as u64 == n
-            && self.back.len() as u64 == n
-            && [&self.front, &self.back].iter().all(|l| Self::in_range(l))
+        self.world == world && self.front.len() as u64 == n && self.back.len() as u64 == n
     }
 
     /// Whether every texel of `layer` (two bytes each) is in range.
@@ -77,7 +82,7 @@ mod tests {
         assert_eq!(m.get(true, 1, 0), None);
         assert_eq!(m.get(false, 3, 0), None);
         m.front[2] = 181;
-        assert!(!m.fits((3, 2)));
+        assert!(!m.fits((3, 2)) && m.sized((3, 2)), "out of range, of size");
         m.front[2] = 5;
         m.front[3] = 0;
         assert!(!m.fits((3, 2)));

@@ -146,7 +146,7 @@ type Rect4 = (u32, u32, u32, u32);
 /// The beams of `map` (none without glow or a beam map, or past the cap).
 fn sources(map: &ColorMap) -> Vec<GlowBeamSource> {
     let world = (map.material().width(), map.material().height());
-    let (Some(beams), Some(glow)) = (map.glow_beams().filter(|b| b.fits(world)), map.glow_layers()) else {
+    let (Some(beams), Some(glow)) = (map.glow_beams().filter(|b| b.sized(world)), map.glow_layers()) else {
         return Vec::new();
     };
     let (front, back) = map.art_layers();
@@ -243,7 +243,7 @@ impl GlowBeams {
         let level = (map.material().width(), map.material().height());
         // A beam map counts only with beams kept (none past the cap: no
         // cones), or (issue #93) live copies' beams.
-        let has_beams = map.glow_beams().is_some_and(|m| m.fits(level)) && !self.sources.is_empty()
+        let has_beams = map.glow_beams().is_some_and(|m| m.sized(level)) && !self.sources.is_empty()
             || map.has_live_beams();
         let haze = map.haze().filter(|h| h.len() as u64 == u64::from(level.0) * u64::from(level.1));
         let size = |on: bool| if on { world } else { (1, 1) };
@@ -288,7 +288,9 @@ impl GlowBeams {
         }
         let cells_n = level.0 as usize * level.1 as usize;
         let shown = map.shown_beams().filter(|b| b.len() == 2 * cells_n);
-        let ground = map.glow_beams().filter(|b| b.fits(level));
+        // Sized only (issue #100): the colour map holds a fitting map, and
+        // this runs for every dirty rectangle.
+        let ground = map.glow_beams().filter(|b| b.sized(level));
         if shown.is_none() && ground.is_none() {
             return;
         }

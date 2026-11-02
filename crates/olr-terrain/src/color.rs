@@ -385,6 +385,9 @@ impl ColorMap {
 
     /// The level's glow beams; `None` when no glow is directional. The
     /// ground's only: live copies' are in [`ColorMap::shown_beams`].
+    /// [`set_glow_beams`](Self::set_glow_beams) took it only if it
+    /// [`fits`](GlowBeamMap::fits), so a reader checks its size alone
+    /// ([`GlowBeamMap::sized`]).
     pub fn glow_beams(&self) -> Option<&GlowBeamMap> {
         self.glow_beams.as_deref()
     }
@@ -560,7 +563,7 @@ impl ColorMap {
             beams: self
                 .glow_beams
                 .as_deref()
-                .filter(|b| b.fits((self.material.width(), self.material.height())))
+                .filter(|b| b.sized((self.material.width(), self.material.height())))
                 .map(|b| (&b.front[..], &b.back[..])),
             glass: self.glass.as_deref().filter(|g| g.fits((self.width, self.height))).map(|g| &g.texels[..]),
         }
