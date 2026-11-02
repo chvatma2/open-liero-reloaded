@@ -84,7 +84,8 @@ impl Marks {
     /// - **Green crosshair** (`CClient::LaserSight`, `:778-793`): a trace
     ///   this tick stopped at a worm. The sim reports where it stopped
     ///   (`len`); it stopped at a worm when the pixel there lets particles
-    ///   through and the trace was not cut at 9999.
+    ///   through (`World::solid`: a live rock part stops it, issue #100)
+    ///   and the trace was not cut at 9999.
     pub fn observe(&mut self, world: &World, events: &TickEvents) {
         self.muzzle = [false; MAX_WORMS];
         self.target = [false; MAX_WORMS];
@@ -228,7 +229,9 @@ impl Marks {
 }
 
 /// Redoes the end of the sim's 3-pixel trace (`len / 3` steps from `pos`)
-/// and reads the material there, wrapped like `getMaterialWrapped`.
+/// and reads the material there, wrapped like `getMaterialWrapped`, from
+/// the sim's one terrain query (`World::solid`, issue #90: a live rock
+/// part stops the trace, so it is no worm; issue #100's playtest).
 fn stopped_at_worm(world: &World, pos: Vec2, dir: Vec2, len: i16) -> bool {
     if !(0..9999).contains(&len) {
         return false;
@@ -237,8 +240,8 @@ fn stopped_at_worm(world: &World, pos: Vec2, dir: Vec2, len: i16) -> bool {
     for _ in 0..len / 3 {
         p += dir * 3.0;
     }
-    let t = world.terrain();
-    let (tw, th) = (t.width().max(1) as i64, t.height().max(1) as i64);
+    let t = world.solid();
+    let (tw, th) = (i64::from(t.width().max(1)), i64::from(t.height().max(1)));
     let (x, y) = ((p.x as i64).rem_euclid(tw), (p.y as i64).rem_euclid(th));
     t.material(x, y) == Some(Material::Background)
 }

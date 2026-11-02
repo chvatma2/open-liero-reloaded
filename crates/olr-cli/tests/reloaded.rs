@@ -1069,6 +1069,56 @@ fn the_crane_carries_and_pushes_a_worm() {
     assert!(wm.alive && wm.health == 100.0 && crushed == 0, "unhurt: {wm:?}");
 }
 
+/// Issue #100's playtest: a laser sight stopped by a live part is no
+/// worm, so the crosshair stays as it is. A worm with a rifle on the
+/// crane's left shoulder aims down into it: every trace stops in the
+/// crane, and the scene's marks never call it a target.
+#[test]
+fn a_sight_on_the_crane_finds_no_worm() {
+    use olr_cli::assets::LevelAssets;
+    use olr_cli::spec::MatchSpec;
+    use olr_content::{MatchLoadout, WeaponChoice};
+    use olr_sim::{CosmeticKind, EventKind, Keys, TickEvents};
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    let assets = LevelAssets::load(&content, CLASSIC, FACTORY).unwrap();
+    let spec = MatchSpec { locals: 1, ..MatchSpec::new(CLASSIC, FACTORY, 1, 3, 1000) };
+    let mut options = spec.match_options();
+    let rifle = MatchLoadout {
+        name: "Rifle".into(),
+        weapons: vec!["Rifle".into()],
+        loading_time: 100,
+        unique: false,
+    };
+    options.weapons = WeaponChoice::Loadout(rifle);
+    let mut w =
+        olr_content::build_match_spawning(assets.match_assets(), &options, Some((778, 296))).unwrap().world;
+    let (mut ev, mut marks) = (TickEvents::new(), olr_scene::Marks::new(1));
+    let mut in_crane = 0;
+    for t in 0..200 {
+        let k = if t < 100 { Keys::DOWN } else { 0 };
+        w.tick(&[Keys(k), Keys(0)], &mut ev);
+        marks.observe(&w, &ev);
+        let solid = w.solid();
+        for e in ev.iter() {
+            if let EventKind::SpawnCosmetic { kind: CosmeticKind::LaserSight { worm: 0, len }, pos, vel } =
+                e.kind
+            {
+                let end = (0..len / 3).fold(pos, |p, _| p + vel * 3.0);
+                let far = w.worms()[1..].iter().all(|o| (o.pos - end).length() > 30.0);
+                if t >= 100
+                    && far
+                    && solid.material(end.x as i64, end.y as i64)
+                        != Some(olr_data::level::Material::Background)
+                {
+                    in_crane += 1;
+                    assert!(!marks.target(0), "tick {t}: a sight stopped at {end:?} in the crane is no worm");
+                }
+            }
+        }
+    }
+    assert!(in_crane > 0, "the sight stopped in the crane");
+}
+
 /// The world's solid pixels over the live copies' boxes, and each copy's
 /// state and values but the tubes' (issue #98: their scripts switch them
 /// at any tick, explosion or none).
