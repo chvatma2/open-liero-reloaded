@@ -130,11 +130,14 @@ pub(super) struct BeamShadow {
     /// The frame's rows ([`BeamShadow::prepare`]).
     rows: Vec<ShadowRow>,
     words: Vec<[u32; 4]>,
-    /// The packed beams the rows are of: the map is kept while they and
-    /// the terrain stay (compared, not hashed).
+    /// The packed beams the rows are of: a beam's rows are kept while it
+    /// and the terrain stay (compared, not hashed).
     packed: Vec<f32>,
-    /// Whether the map no longer shows the rows' beams over the terrain.
-    stale: bool,
+    /// The beams (bit `i`, at most `MAX_GLOW_BEAMS` 64) whose rows no
+    /// longer show them over the terrain.
+    dirty: u64,
+    /// Rows drawn so far (tests).
+    drawn: u64,
 }
 
 impl BeamShadow {
@@ -189,7 +192,8 @@ impl BeamShadow {
             rows: Vec::with_capacity(MAX_SHADOW_ROWS as usize),
             words: Vec::with_capacity(MAX_SHADOW_ROWS as usize),
             packed: Vec::with_capacity(olr_look::glow_beams::MAX_GLOW_BEAMS * super::glow_beams::BEAM_FLOATS),
-            stale: true,
+            dirty: u64::MAX,
+            drawn: 0,
         }
     }
 
@@ -215,15 +219,21 @@ impl BeamShadow {
     }
 
     /// The frame's rows from its packed beams (none: no pass), written to
-    /// the rows' uniform when they are not the last frame's (the map is
-    /// then made again).
+    /// the rows' uniform when they are not the last frame's; each beam not
+    /// the last frame's at its place has its rows made again.
     pub(super) fn prepare(&mut self, queue: &super::uploads::Queue, packed: &[f32]) {
+        use super::glow_beams::BEAM_FLOATS;
         if packed == self.packed.as_slice() {
             return;
         }
+        let old = self.packed.as_chunks::<BEAM_FLOATS>().0;
+        for (i, b) in packed.as_chunks::<BEAM_FLOATS>().0.iter().enumerate().take(64) {
+            if old.get(i) != Some(b) {
+                self.dirty |= 1 << i;
+            }
+        }
         self.packed.clear();
         self.packed.extend_from_slice(packed);
-        self.stale = true;
         rows(packed, &mut self.rows);
         self.words.clear();
         self.words.extend(
@@ -239,22 +249,26 @@ impl BeamShadow {
     /// The terrain changed (or the level's textures were made anew): the
     /// map is made again.
     pub(super) fn stale(&mut self) {
-        self.stale = true;
+        self.dirty = u64::MAX;
     }
 
-    /// Draws the frame's rows into the map with `bind` (the level's
-    /// [`BeamShadow::bind`]) unless it already shows them; whether a pass
-    /// ran (none without rows).
+    /// Draws the rows of the frame's beams the map does not already show
+    /// with `bind` (the level's [`BeamShadow::bind`]); whether a pass ran
+    /// (none without rows, nor with every beam's kept).
     pub(super) fn encode(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         bind: &wgpu::BindGroup,
         timer: Option<&Timer>,
     ) -> bool {
-        if self.rows.is_empty() || !self.stale {
+        let beams = self.rows.len() / BEAM_POINTS as usize;
+        let mut todo = self.dirty & u64::MAX.checked_shr(64 - beams as u32).unwrap_or(0);
+        if todo == 0 {
             return false;
         }
-        self.stale = false;
+        // Beams past the frame's have no rows: a later one is new at its
+        // place, so dirty then anyway.
+        self.dirty = 0;
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("olr-render beam shadow"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -271,8 +285,20 @@ impl BeamShadow {
         });
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, bind, &[]);
-        pass.draw(0..4, 0..self.rows.len() as u32);
+        // Each run of beams to draw, one draw a run.
+        while todo != 0 {
+            let first = todo.trailing_zeros();
+            let run = (!(todo >> first)).trailing_zeros();
+            pass.draw(0..4, first * BEAM_POINTS..(first + run) * BEAM_POINTS);
+            self.drawn += u64::from(run * BEAM_POINTS);
+            todo &= !(u64::MAX.checked_shr(64 - run).unwrap_or(0) << first);
+        }
         true
+    }
+
+    /// Rows drawn so far (tests).
+    pub(super) fn drawn(&self) -> u64 {
+        self.drawn
     }
 
     /// The map's view (the composite reads it).

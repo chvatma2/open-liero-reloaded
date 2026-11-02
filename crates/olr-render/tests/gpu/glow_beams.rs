@@ -1017,3 +1017,24 @@ fn two_views_make_the_map_once() {
     }
     assert_eq!(r.beam_shadow_builds(), 3);
 }
+
+/// A still beam keeps its rows while another turns (issue #100): the
+/// level's patch beam is traced once, the turning live beam each frame,
+/// and the frame equals one drawn on a fresh map.
+#[test]
+fn a_still_beam_keeps_its_rows_while_another_turns() {
+    let Some(gpu) = offscreen() else { return };
+    let map = beam_level(|x, _| (x == 60).then_some(Material::Rock), true);
+    let turned = |deg: f32| {
+        let mut look = beam_look(0);
+        look.live_beams.push(live_at(deg, 30.0));
+        look
+    };
+    let mut r = renderer(&gpu, &map);
+    frame(&gpu, &mut r, &turned(0.0));
+    assert_eq!(r.beam_shadow_rows_drawn(), 16, "both beams' rows");
+    let kept = frame(&gpu, &mut r, &turned(20.0));
+    assert_eq!(r.beam_shadow_rows_drawn(), 16 + 8, "the live beam's rows only");
+    let mut fresh = renderer(&gpu, &map);
+    assert!(kept.img == frame(&gpu, &mut fresh, &turned(20.0)).img, "kept rows draw as fresh ones");
+}

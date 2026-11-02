@@ -1437,6 +1437,13 @@ impl Renderer {
         self.glow_light_steps
     }
 
+    /// How many rows of the beam shadow map have been drawn (tests, issue
+    /// #100: a still beam's are kept while another's change).
+    #[doc(hidden)]
+    pub fn beam_shadow_rows_drawn(&self) -> u64 {
+        self.look.as_ref().map_or(0, |l| l.shadow.drawn())
+    }
+
     /// How many times the beam shadow map has been made (tests, issue
     /// #100: at most once a frame, however many views it draws, and only
     /// when its beams or the terrain changed).

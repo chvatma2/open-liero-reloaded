@@ -193,7 +193,7 @@ on screen or offscreen.
   width + pen, |side|)`, `pen = 0.5 + 0.03 along`, falloff `(1 −
   along/reach)³`, × `region_flicker`, then the share of 8 points across
   the source (half a pixel behind its face) each pixel sees past `solid_px`
-  (`beam_sees`: an exact grid walk, Amanatides-Woo, over every world pixel
+  (`beam_sees` within the near zone, the shadow map beyond it, below: an exact grid walk, Amanatides-Woo, over every world pixel
   the segment crosses, both pixels beside a corner it passes exactly
   through, at most `BEAM_MAX_STEPS` 2048 (`renderer/glow_beams.rs`, the
   composite's prelude) then blocked; issue #100: a block of the block
@@ -214,7 +214,30 @@ on screen or offscreen.
   open texel's centre in world coordinates (camera-independent, still
   scenes steady); a solid pixel takes its beam once for the world pixel,
   at its centre, walking from its open 4-neighbour that faces the source
-  most (none: no beam), so a slanted face shows no sub-pixel stripes. **Where it shows** (judged
+  most (none: no beam), so a slanted face shows no sub-pixel stripes.
+  **The shadow map** (issue #100, spec
+  `docs/superpowers/specs/2026-11-02-beam-shadow-maps-design.md`;
+  `renderer/beam_shadow.rs`, `look/beam_shadow.wgsl`; STATUS.md "Beam
+  shadow maps"): beyond a near zone round each source point (`near(half,
+  tan)`, `beam_near` in the prelude `look/beam_walk.wgsl`: as small as
+  keeps the span within twice the wedge's angle, at most `6 half + 24`),
+  `shadow_seen` reads the map instead of walking: the two rays either
+  side of the texel's angle from the point, each seen when its stored
+  distance is past the texel (or `SHADOW_CLEAR`), blended by the angle's
+  fraction; a ray outside the row's span is dark. The map (`R16Uint`,
+  `SHADOW_WIDTH` 2002 × `MAX_SHADOW_ROWS` 512, distances × `SHADOW_SCALE`
+  8; composite group 1 bindings 3 and 4, the rows' uniform `Rows`) has a
+  row per (beam, point), beam-major: `rows` gives each its span of a
+  world-fixed fan (`rays` a circle, at most `BEAM_RAYS` 4000, as many as
+  keep neighbours `RAY_GAP` 0.8 px apart at the row's `limit`, the
+  farthest lit pixel), and `BeamShadow::encode` draws one instanced quad
+  a row (`fs_march`: the walk's rules outward from the point, the block
+  map's open blocks in one step) once a frame before the views'
+  composites, only the rows of beams not as last drawn (a `u64` of dirty
+  beams; `prepare` compares the packed beams, `LookState::write`,
+  `upload` and a beam map's sync mark all), none without beams. Hidden
+  for tests: `beam_shadow_map`, `beam_shadow_rows`, `beam_shadow_builds`,
+  `beam_shadow_rows_drawn`. **Where it shows** (judged
   on Liero Factory After Dark, 2026-10-25): the surface term adds it to the light before
   the cap and `light × art` on every in-level pixel that does not glow and
   is not a distant layer's (sky or glass); the air term adds `beam × haze / 50
@@ -231,10 +254,21 @@ on screen or offscreen.
   `a_buried_backdrop_patch_casts_no_beam_until_dug`,
   `a_backdrop_patch_draws_one_beam`, `a_diagonal_wall_stops_a_beam`,
   `an_oblique_rock_face_is_lit_evenly`, `a_long_beam_stays_smooth`,
-  `new_dirt_stops_a_beam`
+  `new_dirt_stops_a_beam`; the shadow map: `a_ray_stops_at_the_wall`,
+  `an_open_ray_runs_to_its_limit`, `a_covered_backdrop_source_sees_nothing`,
+  `rays_leaving_the_level_run_open`, `the_map_fits_a_2048_device`,
+  `shadows_hold_still_as_a_beam_turns`, `sixty_four_beams_draw`,
+  `a_frame_with_beams_runs_one_shadow_pass`,
+  `a_live_beam_on_a_level_without_a_beam_map_stops_at_walls`,
+  `a_far_wall_stops_a_beam`, `a_far_diagonal_wall_stops_a_beam`,
+  `a_still_frame_keeps_the_shadow_map`, `a_terrain_change_makes_it_again`,
+  `a_moved_beam_makes_it_again`, `two_views_make_the_map_once`,
+  `a_still_beam_keeps_its_rows_while_another_turns`
   (`set_glow_beam_light(false)`,
   hidden: the frame without the beams, their cones kept, for tests);
-  unit: `past_the_cap_a_level_has_no_beams`, `beams_pack_their_groups_cast`.
+  unit: `past_the_cap_a_level_has_no_beams`, `beams_pack_their_groups_cast`,
+  `beam_shadow.rs`' `every_lit_point_beyond_the_near_zone_has_its_rays`,
+  `a_short_beam_takes_fewer_rays_a_circle`, `a_narrow_beam_takes_few_rays`.
 - **World pass** (`frame.rs`, `world.wgsl`): a target covering the view
   plus `MARGIN` world pixels, at `scale()` texels per world pixel
   (`MIN_SCALE` 2, OLX's sprite art, or the level's art scale if larger:
