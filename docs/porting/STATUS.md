@@ -8042,8 +8042,14 @@ to this section.
   at which the ray meets what stops it; the composite reads the two rays
   either side of a texel's angle, and walks exactly only within a near
   zone round each point (as small as keeps the row's span within twice
-  the wedge's angle, at most `6 half + 24`). A beam's rows are kept while
-  it and the terrain stay. Measured with `render-profile --level
+  the wedge's angle, at most 24 px; a solid pixel whose origin falls
+  outside its row's span walks exactly too). A beam's rows are kept while
+  its geometry and the terrain stay (a pulsing beam's light may change).
+  The numbers below are from before the final review's fixes (the 24 px
+  cap, which shrinks the searchlights' near zone from 58 px, and the
+  fallback walk); after them, on the iGPU: the beacon 0.67 ms (blast;
+  the hot phase within noise of its twin), the many-beam scene in two
+  views 10.2 / 8.9 ms, the same within the runs' noise. Measured with `render-profile --level
   olr-level-liero-factory-reloaded --at 870,300 --sizes 1920x1080
   --ticks 200..500`, beam work = the GPU frame's mean against the same
   run with `--no-beam-light` (blast / hot phase):

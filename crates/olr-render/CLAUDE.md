@@ -220,11 +220,14 @@ on screen or offscreen.
   `renderer/beam_shadow.rs`, `look/beam_shadow.wgsl`; STATUS.md "Beam
   shadow maps"): beyond a near zone round each source point (`near(half,
   tan)`, `beam_near` in the prelude `look/beam_walk.wgsl`: as small as
-  keeps the span within twice the wedge's angle, at most `6 half + 24`),
+  keeps the span within twice the wedge's angle, at most `NEAR_MAX` 24
+  px, final review I-3, so a wide source's walks never cover its beam),
   `shadow_seen` reads the map instead of walking: the two rays either
   side of the texel's angle from the point, each seen when its stored
   distance is past the texel (or `SHADOW_CLEAR`), blended by the angle's
-  fraction; a ray outside the row's span is dark. The map (`R16Uint`,
+  fraction; a ray outside the row's span (a solid pixel's origin, up to a
+  pixel nearer the source than the open texels the spans are sized for:
+  final review I-1) walks exactly. The map (`R16Uint`,
   `SHADOW_WIDTH` 2002 × `MAX_SHADOW_ROWS` 512, distances × `SHADOW_SCALE`
   8; composite group 1 bindings 3 and 4, the rows' uniform `Rows`) has a
   row per (beam, point), beam-major: `rows` gives each its span of a
@@ -233,8 +236,10 @@ on screen or offscreen.
   farthest lit pixel), and `BeamShadow::encode` draws one instanced quad
   a row (`fs_march`: the walk's rules outward from the point, the block
   map's open blocks in one step) once a frame before the views'
-  composites, only the rows of beams not as last drawn (a `u64` of dirty
-  beams; `prepare` compares the packed beams, `LookState::write`,
+  composites, only the rows of beams whose shadows are not as last drawn
+  (a `u64` of dirty beams; `prepare` compares `same_shadows`: the
+  geometry bit for bit and the layer, not the light, so a pulsing group
+  keeps its rows; `LookState::write`,
   `upload` and a beam map's sync mark all), none without beams. Hidden
   for tests: `beam_shadow_map`, `beam_shadow_rows`, `beam_shadow_builds`,
   `beam_shadow_rows_drawn`. **Where it shows** (judged
@@ -263,12 +268,15 @@ on screen or offscreen.
   `a_far_wall_stops_a_beam`, `a_far_diagonal_wall_stops_a_beam`,
   `a_still_frame_keeps_the_shadow_map`, `a_terrain_change_makes_it_again`,
   `a_moved_beam_makes_it_again`, `two_views_make_the_map_once`,
-  `a_still_beam_keeps_its_rows_while_another_turns`
+  `a_still_beam_keeps_its_rows_while_another_turns`,
+  `a_rock_pixel_beside_a_wide_thin_lens_takes_its_beam`,
+  `a_pulsing_beam_keeps_its_rows`, `a_far_slanted_face_is_lit_evenly`
   (`set_glow_beam_light(false)`,
   hidden: the frame without the beams, their cones kept, for tests);
   unit: `past_the_cap_a_level_has_no_beams`, `beams_pack_their_groups_cast`,
   `beam_shadow.rs`' `every_lit_point_beyond_the_near_zone_has_its_rays`,
-  `a_short_beam_takes_fewer_rays_a_circle`, `a_narrow_beam_takes_few_rays`.
+  `a_short_beam_takes_fewer_rays_a_circle`, `a_narrow_beam_takes_few_rays`,
+  `a_wide_source_keeps_a_small_near_zone`.
 - **World pass** (`frame.rs`, `world.wgsl`): a target covering the view
   plus `MARGIN` world pixels, at `scale()` texels per world pixel
   (`MIN_SCALE` 2, OLX's sprite art, or the level's art scale if larger:
