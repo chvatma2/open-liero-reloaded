@@ -244,6 +244,35 @@ fn digging_opens_a_shadow() {
     assert!(f.light(45, 32) > 3.0 * ambient(&f), "dug: lit ({})", f.light(45, 32));
 }
 
+/// Issue #100: the shadow walk crosses open blocks of 8 × 8 pixels at
+/// once, so the block map must follow new rock or dirt: a wall of dirt one
+/// pixel thick placed in the beam's open path, at x 40 (the first pixel of
+/// its block, which a walk from the right crosses last), stops it.
+#[test]
+fn new_dirt_stops_a_beam() {
+    let Some(gpu) = offscreen() else { return };
+    let look = beam_look(0);
+    let mut map = beam_level(|_, _| None, true);
+    let mut r = renderer(&gpu, &map);
+    let f = frame(&gpu, &mut r, &look);
+    assert!(f.light(45, 32) > 3.0 * ambient(&f), "open: lit ({})", f.light(45, 32));
+    for y in (24..=40).step_by(4) {
+        map.apply(ColorEdit::Dirt { hole: 0, x: 36, y });
+    }
+    for y in (24..=40).step_by(4) {
+        map.apply(ColorEdit::Carve { hole: 0, x: 35, y });
+    }
+    let at = |x, y| map.material().material(x, y);
+    assert!((26..38).all(|y| at(40, y) == Some(Material::Dirt)), "a wall at x 40");
+    assert!(
+        (26..38).all(|y| at(39, y) == Some(Material::Background) && at(41, y) == at(39, y)),
+        "one pixel thick"
+    );
+    r.update_terrain(&mut map);
+    let f = frame(&gpu, &mut r, &look);
+    assert_eq!(f.texels(45, 32), f.texels(FAR.0, FAR.1), "behind the new dirt: the ambient");
+}
+
 #[test]
 fn still_glow_draws_steady_bytes() {
     let Some(gpu) = offscreen() else { return };

@@ -44,9 +44,20 @@ pub(super) const BEAM_MAX_STEPS: u32 = 2048;
 /// half-plane: its tangent stays finite).
 const MAX_SPREAD: f32 = 89.5 * core::f32::consts::PI / 180.0;
 
-/// The composite's prelude: the uniform's array length.
+/// The side of a block of the block map, world pixels (issue #100): `1 <<
+/// BEAM_BLOCK_SHIFT`.
+pub(super) const BEAM_BLOCK_SHIFT: u32 = 3;
+
+/// The side of a block of the block map, world pixels.
+pub(super) const BEAM_BLOCK: u32 = 1 << BEAM_BLOCK_SHIFT;
+
+/// The composite's prelude: the uniform's array length, the walk's bound
+/// and the block map's block.
 pub(super) fn wgsl() -> String {
-    format!("const MAX_GLOW_BEAMS: i32 = {MAX_GLOW_BEAMS};\nconst BEAM_MAX_STEPS: i32 = {BEAM_MAX_STEPS};\n")
+    format!(
+        "const MAX_GLOW_BEAMS: i32 = {MAX_GLOW_BEAMS};\nconst BEAM_MAX_STEPS: i32 = {BEAM_MAX_STEPS};\n\
+         const BEAM_BLOCK_SHIFT: u32 = {BEAM_BLOCK_SHIFT}u;\nconst BEAM_BLOCK: i32 = {BEAM_BLOCK};\n"
+    )
 }
 
 /// The longest reach a beam of half-width `half` and spread tangent `tan`
@@ -85,6 +96,11 @@ pub(super) struct GlowBeams {
     /// The haze map (`R8Unorm`, 0 none to 1 the level's haze) at the
     /// look's world size with a map, else 1 × 1 at 1.
     haze: wgpu::Texture,
+    /// The block map (issue #100, `R8Uint`): per [`BEAM_BLOCK`]-pixel
+    /// square of the solid map, 1 when any of its pixels is opaque rock or
+    /// dirt, so the composite's shadow walk crosses an open block at once;
+    /// at the beam map's size in blocks with one, else 1 × 1 solid.
+    blocks: wgpu::Texture,
     /// The cascades' group 1.
     pub(super) cascade_bind: wgpu::BindGroup,
     /// The composite's group 1.
@@ -176,13 +192,16 @@ impl GlowBeams {
     pub(super) fn new(device: &wgpu::Device, queue: &super::uploads::Queue, b: &BeamBinding) -> GlowBeams {
         let map = texture(device, "olr-render glow beams", (1, 1), wgpu::TextureFormat::Rg8Uint);
         let haze = texture(device, "olr-render haze", (1, 1), wgpu::TextureFormat::R8Unorm);
+        let blocks = texture(device, "olr-render beam blocks", (1, 1), wgpu::TextureFormat::R8Uint);
         write(queue, &map, &[0, 0], (0, 0, 1, 1), 2);
         write(queue, &haze, &[255], (0, 0, 1, 1), 1);
-        let (cascade_bind, composite_bind) = Self::binds(device, b, &map, &haze);
+        write(queue, &blocks, &[1], (0, 0, 1, 1), 1);
+        let (cascade_bind, composite_bind) = Self::binds(device, b, (&map, &haze, &blocks));
         GlowBeams {
             sources: Vec::new(),
             map,
             haze,
+            blocks,
             cascade_bind,
             composite_bind,
             mapped: false,
@@ -194,11 +213,10 @@ impl GlowBeams {
     fn binds(
         device: &wgpu::Device,
         b: &BeamBinding,
-        map: &wgpu::Texture,
-        haze: &wgpu::Texture,
+        (map, haze, blocks): (&wgpu::Texture, &wgpu::Texture, &wgpu::Texture),
     ) -> (wgpu::BindGroup, wgpu::BindGroup) {
         let view = |t: &wgpu::Texture| t.create_view(&wgpu::TextureViewDescriptor::default());
-        let (map, haze) = (view(map), view(haze));
+        let (map, haze, blocks) = (view(map), view(haze), view(blocks));
         let cascade = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("olr-render glow beams cascade"),
             layout: b.cascade_layout,
@@ -213,6 +231,7 @@ impl GlowBeams {
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: b.uniform.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&haze) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&blocks) },
             ],
         });
         (cascade, composite)
@@ -225,15 +244,16 @@ impl GlowBeams {
 
     /// Derives `map`'s beams and uploads its beam and haze maps when they
     /// are not the ones held (`ColorMap::beams_generation`), at `world`
-    /// (the look's world size, cropped); whether they changed (the glow
-    /// light is then made again).
+    /// (the look's world size, cropped), and the block map of `solid` (the
+    /// solid map's cells as written, a row's width); whether they changed
+    /// (the glow light is then made again).
     pub(super) fn sync(
         &mut self,
         device: &wgpu::Device,
         queue: &super::uploads::Queue,
         b: &BeamBinding,
         map: &ColorMap,
-        world: (u32, u32),
+        (world, solid): ((u32, u32), (&[u8], u32)),
     ) -> bool {
         if self.generation == Some(map.beams_generation()) {
             return false;
@@ -249,17 +269,24 @@ impl GlowBeams {
         let size = |on: bool| if on { world } else { (1, 1) };
         let sized = |t: &wgpu::Texture, s: (u32, u32)| (t.width(), t.height()) == (s.0.max(1), s.1.max(1));
         let (map_size, haze_size) = (size(has_beams), size(haze.is_some()));
-        let remake = !sized(&self.map, map_size) || !sized(&self.haze, haze_size);
+        let blocks_size = (map_size.0.div_ceil(BEAM_BLOCK), map_size.1.div_ceil(BEAM_BLOCK));
+        let remake =
+            !sized(&self.map, map_size) || !sized(&self.haze, haze_size) || !sized(&self.blocks, blocks_size);
         self.mapped = has_beams;
         if remake {
             self.map = texture(device, "olr-render glow beams", map_size, wgpu::TextureFormat::Rg8Uint);
             self.haze = texture(device, "olr-render haze", haze_size, wgpu::TextureFormat::R8Unorm);
-            (self.cascade_bind, self.composite_bind) = Self::binds(device, b, &self.map, &self.haze);
+            self.blocks = texture(device, "olr-render beam blocks", blocks_size, wgpu::TextureFormat::R8Uint);
+            (self.cascade_bind, self.composite_bind) =
+                Self::binds(device, b, (&self.map, &self.haze, &self.blocks));
         }
+        let whole = Rect { x: 0, y: 0, w: level.0, h: level.1 };
         if has_beams {
-            self.write(queue, map, Rect { x: 0, y: 0, w: level.0, h: level.1 });
+            self.write(queue, map, whole);
+            self.write_blocks(queue, solid, whole);
         } else {
             write(queue, &self.map, &[0, 0], (0, 0, 1, 1), 2);
+            write(queue, &self.blocks, &[1], (0, 0, 1, 1), 1);
         }
         match haze {
             Some(h) => {
@@ -315,6 +342,45 @@ impl GlowBeams {
             }
         }
         write(queue, &self.map, &self.scratch, (x0, y0, x1 - x0, y1 - y0), 2);
+    }
+
+    /// Writes the blocks of the block map covering world rectangle `r`
+    /// from `cells` (the solid map's bytes as written, `width` a row; a
+    /// cell other than background is opaque): nothing without a beam map.
+    /// Past the beam map's size is open, as the composite's `solid_px`
+    /// reads it.
+    pub(super) fn write_blocks(
+        &mut self,
+        queue: &super::uploads::Queue,
+        (cells, width): (&[u8], u32),
+        r: Rect,
+    ) {
+        if !self.mapped || width == 0 {
+            return;
+        }
+        let world =
+            (self.map.width().min(width), self.map.height().min((cells.len() / width as usize) as u32));
+        let (bw, bh) = (self.blocks.width(), self.blocks.height());
+        let (bx0, by0) = ((r.x / BEAM_BLOCK).min(bw), (r.y / BEAM_BLOCK).min(bh));
+        let bx1 = r.x.saturating_add(r.w).div_ceil(BEAM_BLOCK).min(bw);
+        let by1 = r.y.saturating_add(r.h).div_ceil(BEAM_BLOCK).min(bh);
+        if bx1 <= bx0 || by1 <= by0 {
+            return;
+        }
+        self.scratch.clear();
+        for by in by0..by1 {
+            let rows = (by * BEAM_BLOCK)..((by + 1) * BEAM_BLOCK).min(world.1);
+            for bx in bx0..bx1 {
+                let (x0, x1) = ((bx * BEAM_BLOCK) as usize, (((bx + 1) * BEAM_BLOCK).min(world.0)) as usize);
+                let solid = x0 < x1
+                    && rows.clone().any(|y| {
+                        let row = y as usize * width as usize;
+                        cells[row + x0..row + x1].iter().any(|&c| c != Material::Background as u8)
+                    });
+                self.scratch.push(u8::from(solid));
+            }
+        }
+        write(queue, &self.blocks, &self.scratch, (bx0, by0, bx1 - bx0, by1 - by0), 1);
     }
 
     /// Packs the frame's beams into `out` ([`pack`]); returns the count.

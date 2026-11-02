@@ -64,6 +64,10 @@ struct GlowBeams {
 // The haze map (the directional-glow design): per world pixel, 0 none to
 // 1 the level's haze; 1 x 1 at 1 without a map.
 @group(1) @binding(1) var haze_tex: texture_2d<f32>;
+// The block map (issue #100): per BEAM_BLOCK-pixel square of the solid map
+// (BEAM_BLOCK and BEAM_BLOCK_SHIFT prepended from Rust), 1 when any of its
+// pixels is opaque, else 0; past it open, as `solid_px`.
+@group(1) @binding(2) var solid_blocks: texture_2d<u32>;
 
 // A beam's edge widens by this much of its distance, world pixels (the
 // picked look's "softest edge").
@@ -98,14 +102,6 @@ fn solid_px(w: vec2<i32>) -> bool {
     return textureLoad(solid_tex, w, 0).r != 1u;
 }
 
-// Whether nothing opaque lies between `o` and source point `e` of beam
-// `b`: an exact grid walk (Amanatides-Woo) over every world pixel the
-// segment crosses (both pixels beside a corner it passes exactly through
-// too), never `o`'s own. A front source's walk ends at the first pixel
-// wholly behind the source's face (`behind_face`), so its own rock never
-// shadows it at any angle, however long the walk; a
-// backdrop source's (`back`) goes into its source's pixel, so rock or dirt
-// over the patch hides it. At most BEAM_MAX_STEPS pixels, then blocked.
 // Whether world pixel `c` lies wholly behind beam `b`'s face: its farthest
 // corner along the beam (as `derive` finds the face from its patch's
 // corners) not past it. Exact for the pixel, unlike a point summed along a
@@ -115,9 +111,36 @@ fn behind_face(c: vec2<i32>, b: GlowBeam) -> bool {
     return far <= 1e-3;
 }
 
+// Whether block `k` of the block map holds no opaque pixel.
+fn block_open(k: vec2<i32>) -> bool {
+    let size = vec2<i32>(textureDimensions(solid_blocks));
+    if any(k < vec2<i32>(0)) || any(k >= size) {
+        return true;
+    }
+    return textureLoad(solid_blocks, k, 0).r == 0u;
+}
+
+// Whether any pixel of block `k` lies wholly behind beam `b`'s face
+// (`behind_face`, linear in the pixel: its least corner decides).
+fn block_behind_face(k: vec2<i32>, b: GlowBeam) -> bool {
+    let lo = k * BEAM_BLOCK;
+    let c = select(lo + vec2<i32>(BEAM_BLOCK - 1), lo, b.dir >= vec2<f32>(0.0));
+    return behind_face(c, b);
+}
+
+// Whether nothing opaque lies between `o` and source point `e` of beam
+// `b`: an exact grid walk (Amanatides-Woo) over every world pixel the
+// segment crosses (both pixels beside a corner it passes exactly through
+// too), never `o`'s own. A front source's walk ends at the first pixel
+// wholly behind the source's face (`behind_face`), so its own rock never
+// shadows it at any angle, however long the walk; a
+// backdrop source's (`back`) goes into its source's pixel, so rock or dirt
+// over the patch hides it. At most BEAM_MAX_STEPS steps, then blocked;
+// issue #100: an open block of the block map is one step, so a walk
+// through open air costs a step a block, not a pixel.
 fn beam_sees(o: vec2<f32>, e: vec2<f32>, b: GlowBeam, back: bool) -> bool {
     let d = e - o;
-    var cell = vec2<i32>(floor(o));
+    let start = vec2<i32>(floor(o));
     let end = vec2<i32>(floor(e));
     let step = vec2<i32>(select(-1, 1, d.x > 0.0), select(-1, 1, d.y > 0.0));
     let far = 1e30;
@@ -126,20 +149,43 @@ fn beam_sees(o: vec2<f32>, e: vec2<f32>, b: GlowBeam, back: bool) -> bool {
         select(far, abs(1.0 / d.y), d.y != 0.0),
     );
     let edge = vec2<f32>(
-        select(f32(cell.x), f32(cell.x + 1), d.x > 0.0),
-        select(f32(cell.y), f32(cell.y + 1), d.y > 0.0),
+        select(f32(start.x), f32(start.x + 1), d.x > 0.0),
+        select(f32(start.y), f32(start.y + 1), d.y > 0.0),
     );
-    var next = vec2<f32>(
+    // Where the walk crosses its first pixel edge each way; it has crossed
+    // `n` edges each way, so it is in pixel `start + step * n` and crosses
+    // the next at `first + n * delta`.
+    let first = vec2<f32>(
         select(far, (edge.x - o.x) / d.x, d.x != 0.0),
         select(far, (edge.y - o.y) / d.y, d.y != 0.0),
     );
-    for (var n = 0; n < BEAM_MAX_STEPS; n++) {
+    var n = vec2<i32>(0);
+    for (var i = 0; i < BEAM_MAX_STEPS; i++) {
+        let cell = start + step * n;
         if all(cell == end) {
             return true;
         }
-        let t = min(next.x, next.y);
-        if t > 1.0 {
+        let next = first + vec2<f32>(n) * delta;
+        if min(next.x, next.y) > 1.0 {
             return true;
+        }
+        // Issue #100: a block with no opaque pixel (none behind a front
+        // source's face) is crossed at once, to the last pixel before the
+        // edge it leaves by, which the pixel step below crosses.
+        let k = cell >> vec2<u32>(BEAM_BLOCK_SHIFT);
+        if block_open(k) && (back || !block_behind_face(k, b)) {
+            let lo = k * BEAM_BLOCK;
+            let left = abs(select(lo, lo + vec2<i32>(BEAM_BLOCK - 1), step > vec2<i32>(0)) - cell);
+            let leave = first + vec2<f32>(n + left) * delta;
+            let out = min(leave.x, leave.y);
+            if out > 1.0 {
+                return true;
+            }
+            let to = clamp(vec2<i32>(ceil((vec2<f32>(out) - first) / delta)), n, n + left);
+            if any(to != n) {
+                n = to;
+                continue;
+            }
         }
         if abs(next.x - next.y) < 1e-6 {
             // Exactly through a corner: both pixels beside it (but those of
@@ -149,19 +195,17 @@ fn beam_sees(o: vec2<f32>, e: vec2<f32>, b: GlowBeam, back: bool) -> bool {
             if (solid_px(a) && (back || !behind_face(a, b))) || (solid_px(c) && (back || !behind_face(c, b))) {
                 return false;
             }
-            cell += step;
-            next += delta;
+            n += vec2<i32>(1);
         } else if next.x < next.y {
-            cell.x += step.x;
-            next.x += delta.x;
+            n.x += 1;
         } else {
-            cell.y += step.y;
-            next.y += delta.y;
+            n.y += 1;
         }
-        if !back && behind_face(cell, b) {
+        let now = start + step * n;
+        if !back && behind_face(now, b) {
             return true;
         }
-        if solid_px(cell) {
+        if solid_px(now) {
             return false;
         }
     }

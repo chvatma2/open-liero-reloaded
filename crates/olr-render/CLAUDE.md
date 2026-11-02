@@ -196,7 +196,16 @@ on screen or offscreen.
   (`beam_sees`: an exact grid walk, Amanatides-Woo, over every world pixel
   the segment crosses, both pixels beside a corner it passes exactly
   through, at most `BEAM_MAX_STEPS` 2048 (`renderer/glow_beams.rs`, the
-  composite's prelude) then blocked; a front source's
+  composite's prelude) then blocked; issue #100: a block of the block
+  map (`GlowBeams::blocks`, `R8Uint`, one texel per `BEAM_BLOCK` 8 × 8
+  world pixels of the solid map as written, 1 when any is opaque; group 1
+  binding 2; written whole by `sync` with a beam map and per dirty
+  rectangle by `LookState::write` through `write_blocks`, after the solid
+  map) that holds no opaque pixel, and for a front source none behind its
+  face, is one step, to its last pixel before the edge the walk leaves
+  by (the walk's state is its crossings each way, `first + n × delta`, so
+  a jump is a count; Liero Factory Reloaded's beacon end-on, 1080p, RTX
+  5070 Ti: GPU frame p99 27 → 5.5 ms; `new_dirt_stops_a_beam`); a front source's
   walk stops on entering a pixel whose farthest corner is behind the
   face plane (`behind_face`, per pixel, not the accumulated point, so a
   long walk's float drift never stops it early), so its own rock never
@@ -221,7 +230,8 @@ on screen or offscreen.
   `a_wall_touching_the_face_stops_a_beam`,
   `a_buried_backdrop_patch_casts_no_beam_until_dug`,
   `a_backdrop_patch_draws_one_beam`, `a_diagonal_wall_stops_a_beam`,
-  `an_oblique_rock_face_is_lit_evenly`, `a_long_beam_stays_smooth`
+  `an_oblique_rock_face_is_lit_evenly`, `a_long_beam_stays_smooth`,
+  `new_dirt_stops_a_beam`
   (`set_glow_beam_light(false)`,
   hidden: the frame without the beams, their cones kept, for tests);
   unit: `past_the_cap_a_level_has_no_beams`, `beams_pack_their_groups_cast`.

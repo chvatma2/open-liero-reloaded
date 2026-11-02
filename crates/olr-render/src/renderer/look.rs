@@ -675,7 +675,11 @@ impl LookState {
         });
         let beam_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("olr-render glow beams"),
-            entries: &[entry(0, frag, super::UNIFORM), entry(1, frag, FLOAT_TEXTURE)],
+            entries: &[
+                entry(0, frag, super::UNIFORM),
+                entry(1, frag, FLOAT_TEXTURE),
+                entry(2, frag, UINT_TEXTURE),
+            ],
         });
         let beams = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("olr-render glow beams"),
@@ -1044,7 +1048,11 @@ impl LookState {
         };
         let Some(t) = &mut self.textures else { return };
         let world = (t.solid.width(), t.solid.height());
-        if t.glow_beams.sync(device, queue, &binding, map, world) {
+        let cells = map.material().cells();
+        // The solid map as written (`write`): with clear solids or live
+        // copies its own cells.
+        let solid = if t.light_cells.len() == cells.len() { &t.light_cells[..] } else { cells };
+        if t.glow_beams.sync(device, queue, &binding, map, (world, (solid, t.level.0))) {
             t.gi.stale();
         }
     }
@@ -1119,6 +1127,7 @@ impl LookState {
         let live = map.live_solid().filter(|l| l.len() == cells.len());
         if clear.is_none() && live.is_none() {
             write_bytes(queue, &t.solid, (cells, t.level.0), wr);
+            t.glow_beams.write_blocks(queue, (cells, t.level.0), wr);
             if let Some(h) = &mut t.heat {
                 h.relayer(queue, (cells, t.level.0), wr);
             }
@@ -1142,6 +1151,7 @@ impl LookState {
             }
         }
         write_bytes(queue, &t.solid, (&t.light_cells, t.level.0), wr);
+        t.glow_beams.write_blocks(queue, (&t.light_cells, t.level.0), wr);
         if let Some(h) = &mut t.heat {
             h.relayer(queue, (&t.light_cells, t.level.0), wr);
         }
