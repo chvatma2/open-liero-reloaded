@@ -43,7 +43,13 @@ pub const NUKE_LOADING_TIME: i32 = 20;
 /// The fight's match: the scripted player and Medium bots, no time or
 /// kill limit.
 pub fn fight_spec() -> MatchSpec {
-    let mut spec = MatchSpec::new(FIGHT_MOD, FIGHT_LEVEL, FIGHT_BOTS, FIGHT_SEED, FIGHT_TICKS);
+    fight_spec_on(FIGHT_LEVEL)
+}
+
+/// [`fight_spec`] on another level (`render-profile --level`: the same
+/// fight on, say, Liero Factory Reloaded and After Dark).
+pub fn fight_spec_on(level: &str) -> MatchSpec {
+    let mut spec = MatchSpec::new(FIGHT_MOD, level, FIGHT_BOTS, FIGHT_SEED, FIGHT_TICKS);
     (spec.locals, spec.difficulty) = (FIGHT_LOCALS, Difficulty::Medium);
     (spec.time_limit, spec.kill_limit) = (0.0, 0);
     spec
@@ -98,6 +104,11 @@ pub fn stage_fight(content: &Content) -> anyhow::Result<Fight> {
     stage_with_weapons(content, &NUKES)
 }
 
+/// [`stage_fight`] on `level`.
+pub fn stage_fight_on(content: &Content, level: &str) -> anyhow::Result<Fight> {
+    stage_spec(content, &fight_spec_on(level), &NUKES)
+}
+
 /// [`stage_fight`] with the worms carrying `weapons` (tests).
 #[doc(hidden)]
 pub fn stage_with_weapons(content: &Content, weapons: &[&str]) -> anyhow::Result<Fight> {
@@ -108,7 +119,7 @@ pub fn stage_with_weapons(content: &Content, weapons: &[&str]) -> anyhow::Result
 #[doc(hidden)]
 pub fn stage_spec(content: &Content, spec: &MatchSpec, weapons: &[&str]) -> anyhow::Result<Fight> {
     let spec = spec.clone();
-    let assets = LevelAssets::load(content, FIGHT_MOD, FIGHT_LEVEL)?;
+    let assets = LevelAssets::load(content, FIGHT_MOD, &spec.level_id)?;
     let mut game =
         Match::with_match_options(&assets, &spec, options_with(&spec, weapons), &Options::default())
             .context("setting up the nuke fight")?;

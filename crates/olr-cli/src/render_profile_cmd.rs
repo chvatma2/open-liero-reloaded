@@ -40,6 +40,10 @@ pub struct Args {
     /// Write the fight's replay (for the game's `--replay`).
     #[arg(long)]
     save_replay: Option<PathBuf>,
+    /// The fight's level: the same fight elsewhere (a base compares only
+    /// with a run on its own level).
+    #[arg(long, default_value = render_profile::FIGHT_LEVEL)]
+    level: String,
 }
 
 fn parse_ticks(s: &str) -> Result<(u32, u32), String> {
@@ -61,7 +65,7 @@ fn base(path: &std::path::Path) -> Result<ProfileReport, String> {
 pub fn run(args: &Args) -> anyhow::Result<bool> {
     let content = olr_content::Content::open_bundled(&args.content)?;
     eprintln!("  staging the nuke fight");
-    let fight = render_profile::stage_fight(&content)?;
+    let fight = render_profile::stage_fight_on(&content, &args.level)?;
     if let Some(path) = &args.save_replay {
         std::fs::write(path, fight.replay.encode()).with_context(|| format!("writing {}", path.display()))?;
     }

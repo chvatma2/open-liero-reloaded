@@ -967,7 +967,7 @@ The headless command-line tool. Its commands:
 - `olr-cli render-profile [--sizes 1920x1080,3440x1440,3840x2160]
   [--frames-per-tick 2] [--ticks FROM..TO] [--adapter hardware|integrated|software]
   [--backend auto|gl|vulkan|dx12] [--content DIR] [--out F.ron] [--against F.ron]
-  [--save-replay F.olrp]` (`render_profile.rs`, the command in
+  [--save-replay F.olrp] [--level ID]` (`render_profile.rs`, the command in
   `render_profile_cmd.rs`; spec
   `docs/superpowers/specs/2026-10-24-render-profile-design.md`): where a
   heavy lit frame's time goes. `stage_fight` plays a nuke fight headless
@@ -975,7 +975,10 @@ The headless command-line tool. Its commands:
   scripted local player (`local_keys`) and three Medium bots carrying only
   `NUKES` (Big and Mini Nuke, `fight_options`' loadout, loading 20 %),
   seed 7, 2000 ticks (27 nukes, the first going off at tick 200; Medium
-  bots alone fire 3, chaos bots rotate the whole mod's weapons); no nuke
+  bots alone fire 3, chaos bots rotate the whole mod's weapons; issue
+  #100: `--level` stages the same fight elsewhere, `stage_fight_on`,
+  such as Liero Factory Reloaded against After Dark, the base compared
+  only on its own level's scene); no nuke
   going off is an error (`the staged fight set off no nukes`); `Fight`
   holds the replay, each nuke's tick (`blasts`: explosions of the
   projectiles `NUKES` fire, `nuke_projectiles`/`has_blast`; their
