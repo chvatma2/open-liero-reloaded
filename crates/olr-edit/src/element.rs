@@ -676,6 +676,42 @@ pub fn paint_glow(pack: &mut Pack, id: &str, shape: &Shape, strength: u8) -> Res
     })
 }
 
+/// Makes grey PNG `png` (0 no glow to 255 full, the element's box at art
+/// resolution) element `id`'s glow mask, each value at `strength` percent:
+/// for a glow too scattered for shapes (the factory's skyline windows). The
+/// element must glow already.
+pub fn glow_mask(pack: &mut Pack, id: &str, png: &[u8], strength: u8) -> Result<(), ElementError> {
+    let l = level(pack)?;
+    let (size, s) = (l.size, l.art_scale);
+    if strength > 100 {
+        return Err(ElementError::BadValue(format!("strength {strength}: 0 to 100")));
+    }
+    let (w, h, values) = image_io::decode_grey_within(png, olr_format::image_io::LEVEL_ART)
+        .map_err(|m| ElementError::BadValue(format!("the mask: {m}")))?;
+    commit(pack, "", |src| {
+        let i = unlocked(src, id)?;
+        let e = &src.composition.elements[i];
+        let Some(glow) = e.glow.clone() else {
+            return Err(ElementError::BadValue(format!("element {id:?} has no glow: set its glow first")));
+        };
+        let Some((_, b)) = element_box(&e.kind, size) else {
+            return Err(ElementError::WrongKind { id: id.into(), want: "an image or drawn element" });
+        };
+        let art = (b.0.saturating_mul(s), b.1.saturating_mul(s));
+        if (w, h) != art {
+            return Err(ElementError::BadValue(format!(
+                "the mask is {w}x{h}, {id:?}'s box is {}x{} art pixels",
+                art.0, art.1
+            )));
+        }
+        let mask: Vec<u8> =
+            values.iter().map(|&v| ((u32::from(v) * u32::from(strength) + 50) / 100) as u8).collect();
+        src.files.insert(glow_file(id), image_io::encode_grey(art.0, art.1, &mask));
+        src.composition.elements[i].glow = Some(ElementGlow { mask: true, ..glow });
+        Ok(())
+    })
+}
+
 /// Lights the connected pixels of element `id` alike in colour to the one
 /// at world pixel `at` (`tolerance` percent) at `strength` percent of its
 /// glow (the user's request, 2026-10-19). A glow without a mask starts

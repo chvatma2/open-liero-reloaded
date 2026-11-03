@@ -463,6 +463,56 @@ fn cli_glows_pixels_by_colour() {
     ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
 }
 
+/// `glow --mask` takes a grey PNG of the element's art box as its glow
+/// mask, scaled by `--strength`, for glows too scattered for shapes (the
+/// factory's skyline windows).
+#[test]
+fn cli_glows_from_a_mask_png() {
+    let Some((tmp, pack, content)) = dirt_level() else { return };
+    compose(tmp.path(), &pack, &content);
+    add_look(&pack);
+    let run = |args: &[&str]| {
+        let mut all = vec!["level", "element"];
+        all.extend_from_slice(args);
+        all.extend_from_slice(&["--content", "{content}"]);
+        cli(&all, &pack, &content)
+    };
+    ok(&run(&["split", "{pack}", "base"]));
+    ok(&run(&["set", "{pack}", "dirt", "--glow", "100", "--glow-group", "lava"]));
+    let level = std::fs::read_to_string(pack.join("level.ron")).unwrap();
+    let size = level.split("size: (").nth(1).unwrap().split(')').next().unwrap();
+    let (w, h): (u32, u32) = {
+        let mut it = size.split(',').map(|v| v.trim().parse().unwrap());
+        (it.next().unwrap(), it.next().unwrap())
+    };
+    let mut values = vec![0u8; (w * h) as usize];
+    values[(7 * w + 5) as usize] = 200;
+    values[(30 * w + 40) as usize] = 255;
+    let png = tmp.path().join("mask.png");
+    std::fs::write(&png, olr_format::image_io::encode_grey(w, h, &values)).unwrap();
+    let png = png.to_str().unwrap();
+    ok(&run(&["glow", "{pack}", "dirt", "--mask", png, "--strength", "50"]));
+    let bytes = std::fs::read(pack.join("editor/glow/dirt.png")).unwrap();
+    let (mw, mh, mask) =
+        olr_format::image_io::decode_grey_within(&bytes, olr_format::image_io::LEVEL_ART).unwrap();
+    assert_eq!((mw, mh), (w, h));
+    let v = |x: u32, y: u32| mask[(y * w + x) as usize];
+    assert_eq!((v(5, 7), v(40, 30), v(6, 7), v(100, 100)), (100, 128, 0, 0), "the PNG at 50 %");
+    ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
+
+    // Refusals change nothing.
+    let before = tree(&pack);
+    let small = tmp.path().join("small.png");
+    std::fs::write(&small, olr_format::image_io::encode_grey(4, 4, &[0; 16])).unwrap();
+    let e = run(&["glow", "{pack}", "dirt", "--mask", small.to_str().unwrap(), "--strength", "100"]);
+    assert!(!e.status.success() && String::from_utf8_lossy(&e.stderr).contains("4x4"), "{e:?}");
+    let e = run(&["glow", "{pack}", "dirt", "--mask", png, "--rect", "0,0,4,4", "--strength", "100"]);
+    assert!(!e.status.success(), "a mask and a shape");
+    let e = run(&["glow", "{pack}", "dirt", "--mask", "/nowhere/mask.png", "--strength", "100"]);
+    assert!(!e.status.success() && String::from_utf8_lossy(&e.stderr).contains("mask.png"), "{e:?}");
+    assert!(tree(&pack) == before, "a refused mask wrote something");
+}
+
 /// Plan 15a's final review: a level resize moves a level-sized layer's
 /// painted glow mask with its art (it was refused, or left behind with an
 /// offset).

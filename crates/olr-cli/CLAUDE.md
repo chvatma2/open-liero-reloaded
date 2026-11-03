@@ -92,8 +92,12 @@ The headless command-line tool. Its commands:
   first mask whole; 0 erases) or lighting the connected pixels alike in
   colour (`element::glow_colour`, the user's playtest, 2026-10-19:
   tolerance 10 by default, `--tolerance` only with `--colour-at`, a glow
-  without a mask then dark but for them); an element without a glow is
-  refused, "set its glow first"): the
+  without a mask then dark but for them), or (`--mask <png>`, the
+  factory's night shift, `element::glow_mask`) taking a grey PNG of the
+  element's box at art resolution as its whole mask, each value at
+  `--strength` (another size, an unreadable file or a shape with it
+  refused, nothing written; `cli_glows_from_a_mask_png`); an element
+  without a glow is refused, "set its glow first"): the
   `olr_edit::element` operations on a level's composition. Each loads the
   pack, applies, bakes (`compose::bake`, the back tile of the level's
   theme in `--content`, `content/packs` by default) and saves; the first

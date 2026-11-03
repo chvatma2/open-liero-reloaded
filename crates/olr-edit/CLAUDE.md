@@ -284,7 +284,10 @@ operations.
     `glow_colour(pack, id, at, tolerance, strength)` (the user's playtest,
     2026-10-19; `olr-cli level element glow --colour-at`) lights the region
     alike in colour to world pixel `at` (a glow without a mask starts
-    dark: only the region lights). Both need the element to glow already,
+    dark: only the region lights); `glow_mask(pack, id, png, strength)`
+    sets the whole mask from a grey PNG of the box at art resolution, each
+    value at `strength` percent (another size refused; `olr-cli level
+    element glow --mask`). All three need the element to glow already,
     refuse a locked one, write `editor/glow/<id>.png` and set its `mask`.
     `merge_down` and `split` results lose their glow (Task 5 ruling);
     `duplicate` copies the mask and `remove` drops it, with the element's

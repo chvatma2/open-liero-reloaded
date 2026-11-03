@@ -60,6 +60,33 @@ impl MaskTarget {
     }
 }
 
+/// What `glow` paints: `mask`'s targets, or a whole grey PNG as the mask.
+/// A group of its own for the same reason as `MaskTarget`'s.
+#[derive(clap::Args)]
+#[group(required = true, multiple = false)]
+pub(crate) struct GlowTarget {
+    /// A rectangle X,Y,W,H, world pixels.
+    #[arg(long, value_parser = parse_ints::<4>, allow_hyphen_values = true)]
+    rect: Option<[i32; 4]>,
+    /// A circle X,Y,R, world pixels.
+    #[arg(long, value_parser = parse_ints::<3>, allow_hyphen_values = true)]
+    circle: Option<[i32; 3]>,
+    /// The connected region of similar colour around world pixel X,Y.
+    #[arg(long, value_parser = parse_point, allow_hyphen_values = true)]
+    colour_at: Option<(i32, i32)>,
+    /// A grey PNG of the element's box at art resolution (0 no glow, 255
+    /// full) as its whole glow mask, at --strength.
+    #[arg(long)]
+    mask: Option<PathBuf>,
+}
+
+impl GlowTarget {
+    /// The shape or colour region, when no PNG is given.
+    fn shape(&self) -> MaskTarget {
+        MaskTarget { rect: self.rect, circle: self.circle, colour_at: self.colour_at }
+    }
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 pub(crate) enum DitherArg {
     None,
@@ -264,12 +291,13 @@ pub(crate) enum ElementCommand {
     },
     /// Paint a glowing element's glow mask over a shape, or over the
     /// connected pixels alike in colour (--colour-at; the rest of a glow
-    /// without a mask then dark); 0 erases.
+    /// without a mask then dark), or set it whole from a grey PNG (--mask);
+    /// 0 erases.
     Glow {
         pack: PathBuf,
         id: String,
         #[command(flatten)]
-        target: MaskTarget,
+        target: GlowTarget,
         /// How alike a colour must be for --colour-at, 0 to 100 percent (default 10).
         #[arg(long, value_parser = clap::value_parser!(u8).range(0..=100))]
         tolerance: Option<u8>,
@@ -745,11 +773,25 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
                 Ok(vec![format!("{n} pixels matched")])
             })
         }
-        ElementCommand::Glow { tolerance: Some(_), target: MaskTarget { colour_at: None, .. }, .. } => {
+        ElementCommand::Glow { tolerance: Some(_), target: GlowTarget { colour_at: None, .. }, .. } => {
             anyhow::bail!("--tolerance takes --colour-at")
         }
+        ElementCommand::Glow {
+            pack,
+            id,
+            target: GlowTarget { mask: Some(png), .. },
+            strength,
+            content,
+            ..
+        } => {
+            let bytes = std::fs::read(png).map_err(|e| anyhow::anyhow!("{}: {e}", png.display()))?;
+            edit(pack, content, |p| {
+                element::glow_mask(p, id, &bytes, *strength)?;
+                Ok(Vec::new())
+            })
+        }
         ElementCommand::Glow { pack, id, target, tolerance, strength, content } => edit(pack, content, |p| {
-            match target.op(tolerance.unwrap_or(DEFAULT_TOLERANCE)) {
+            match target.shape().op(tolerance.unwrap_or(DEFAULT_TOLERANCE)) {
                 element::MaskOp::Shape(shape) => element::paint_glow(p, id, &shape, *strength)?,
                 element::MaskOp::ColourAt { at, tolerance } => {
                     element::glow_colour(p, id, at, tolerance, *strength)?
