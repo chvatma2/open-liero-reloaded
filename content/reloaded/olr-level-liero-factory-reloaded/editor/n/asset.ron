@@ -1,0 +1,32 @@
+(
+    name: "Night city",
+    size: (1200, 480),
+    elements: [
+        (
+            id: "city",
+            name: "City",
+            kind: Image(
+                material: Background,
+                source: "city.png",
+                at: (0, 0),
+                size: (1200, 480),
+            ),
+            glow: (
+                strength: 100,
+                group: "city",
+                mask: true,
+            ),
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "city",
+            intensity: 120,
+            reach: Pixels(8),
+            animation: Flicker(
+                speed: 1,
+                depth: 25,
+            ),
+        ),
+    ],
+)

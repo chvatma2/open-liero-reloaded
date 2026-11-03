@@ -1,0 +1,35 @@
+(
+    name: "Night industry",
+    size: (1200, 480),
+    elements: [
+        (
+            id: "industry",
+            name: "Industry",
+            kind: Image(
+                material: Background,
+                source: "industry.png",
+                at: (0, 0),
+                size: (1200, 480),
+            ),
+            glow: (
+                strength: 100,
+                group: "pylon",
+                mask: true,
+            ),
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "pylon",
+            colour: Tint("#ff3020"),
+            intensity: 200,
+            reach: Pixels(10),
+            animation: Pulse(
+                period_ms: 2000,
+                low: 0,
+                high: 100,
+                shape: Square,
+            ),
+        ),
+    ],
+)

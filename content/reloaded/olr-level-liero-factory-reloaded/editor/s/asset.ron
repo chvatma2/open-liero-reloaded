@@ -88,6 +88,13 @@
             ],
         ),
     ],
+    exposed: [
+        (
+            name: "colour",
+            property: GlowColour("lamps"),
+            default: Colour("#ffe6c0"),
+        ),
+    ],
     sounds: [
         "buzz.wav",
         "tick.wav",

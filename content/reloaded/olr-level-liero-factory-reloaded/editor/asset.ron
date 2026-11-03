@@ -30,6 +30,20 @@
             surface_map: true,
         ),
         (
+            id: "flue",
+            name: "Flue",
+            locked: true,
+            kind: Drawn(
+                material: Rock,
+            ),
+            glow: (
+                strength: 59,
+                group: "flue",
+            ),
+            surface: "stone",
+            surface_map: true,
+        ),
+        (
             id: "lamps",
             name: "Lamps",
             locked: true,
@@ -39,6 +53,19 @@
             glow: (
                 strength: 100,
                 group: "lamps",
+            ),
+            surface: "glass",
+        ),
+        (
+            id: "lab-strips",
+            name: "Lab strips",
+            locked: true,
+            kind: Drawn(
+                material: Background,
+            ),
+            glow: (
+                strength: 100,
+                group: "cool",
             ),
             surface: "glass",
         ),
@@ -153,6 +180,44 @@
             ),
             surface: "metal",
         ),
+        (
+            id: "mine-lamps",
+            name: "Mine lamps",
+            locked: true,
+            kind: Drawn(
+                material: Background,
+            ),
+            glow: (
+                strength: 100,
+                group: "mine",
+                mask: true,
+            ),
+        ),
+        (
+            id: "high-bays",
+            name: "High-bays",
+            locked: true,
+            kind: Drawn(
+                material: Rock,
+            ),
+            glow: (
+                strength: 100,
+                group: "sodium",
+                mask: true,
+            ),
+        ),
+        (
+            id: "aviation",
+            name: "Aviation",
+            locked: true,
+            kind: Drawn(
+                material: Background,
+            ),
+            glow: (
+                strength: 100,
+                group: "aviation",
+            ),
+        ),
     ],
     glow_groups: [
         (
@@ -213,6 +278,51 @@
             colour: Tint("#fff0c8"),
             intensity: 1000,
             reach: Pixels(120),
+        ),
+        (
+            id: "mine",
+            colour: Tint("#ffb060"),
+            intensity: 1000,
+            reach: Pixels(110),
+            animation: Flicker(
+                speed: 3,
+                depth: 10,
+            ),
+        ),
+        (
+            id: "cool",
+            colour: Tint("#dce8ff"),
+            intensity: 500,
+            reach: Pixels(90),
+        ),
+        (
+            id: "sodium",
+            colour: Tint("#ffb050"),
+            intensity: 520,
+            reach: Pixels(95),
+        ),
+        (
+            id: "flue",
+            colour: Tint("#ff5a20"),
+            intensity: 320,
+            reach: Pixels(70),
+            animation: Pulse(
+                period_ms: 4200,
+                low: 35,
+                high: 100,
+            ),
+        ),
+        (
+            id: "aviation",
+            colour: Tint("#ff2a14"),
+            intensity: 400,
+            reach: Pixels(22),
+            animation: Pulse(
+                period_ms: 1500,
+                low: 0,
+                high: 100,
+                shape: Square,
+            ),
         ),
     ],
     materials: [

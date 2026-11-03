@@ -58,6 +58,11 @@ LIVE_ASSETS = ["crane", "terminal", "strip-light", "computer-screen", "lit-sign"
 # Issue #98: the faulty tubes: the hall's top floor's middle strip, the
 # hall's strip left of the gauge and the lowest office floor's middle one.
 LIVE_STRIPS = ["strip-2", "strip-4", "strip-7"]
+# The night shift: the strips' colours by area (the Strip light's exposed
+# `colour`): sodium in the warehouse and on the dock, cool white along the
+# upper hall's top; the lounge's (`strip-4`, `strip-5`) stay warm.
+STRIP_COLOURS = [("#ffb050", ["strip-6", "strip-7", "strip-8", "strip-9"]),
+                 ("#dce8ff", ["strip-1", "strip-2", "strip-3"])]
 # Issue #99: the copies whose displays change.
 LIVE_DISPLAYS = ["screen", "sign", "desk", "gauge"]
 # Issue #99: the security camera's parts of After Dark, each drawn full
@@ -102,7 +107,8 @@ NOTES = (
     "ceiling strips fail like faulty tubes, stuttering, buzzing and ticking; since issue #99 the "
     "control room's screen is a security camera, the 13-37 sign, the desk's lamps and the gauge "
     "change now and then, and an orange warning beacon under the crane's trolley turns while it "
-    "moves."
+    "moves. The night shift lights the mine's back wall, the lower hall, the red duct and the "
+    "chimney, colours the strips by area and sets a city and its industry before the stars."
 )
 
 # The Console's `rock-disp` box in the level (After Dark's place): its LED
@@ -320,6 +326,9 @@ def make_level(cli):
     run(cli, "level", "copy", "set", OUT, "terminal", "--live")
     for copy in LIVE_STRIPS + LIVE_DISPLAYS:
         run(cli, "level", "copy", "set", OUT, copy, "--live")
+    for colour, strips in STRIP_COLOURS:
+        for copy in strips:
+            run(cli, "level", "copy", "set", OUT, copy, "--value", f"colour={colour}")
     run(cli, "level", "script", OUT, "--set", "tools/levels/factory/level.rhai")
     run(cli, "level", "notes", OUT, NOTES)
     run(cli, "level", "bake", OUT)

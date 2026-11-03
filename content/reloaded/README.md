@@ -425,6 +425,35 @@ Remade OLX content is named "<Old name> Reloaded".
     played on each entry to `On`): synthesised for OLR by
     `tools/sounds/factory_sounds.py`, CC0; the maintainer may replace
     them.
+  - **The night shift** (2026-11-03, drawn as real frames with the
+    maintainer and kept; look only, `material.png` as before): light
+    where After Dark had none and colour by area. `factory_assets.py`
+    adds, on the ground while it is alone, each in a group of its own:
+    9 mine lamps on the tunnels' back wall (a `#28282e` plate round a
+    2 × 2 `#ffd890` bulb, only the bulb glowing, `level element glow
+    --mask`; group `mine`, `#ffb060`, 1000, reach 110, a slow flicker;
+    every lamp pixel at least 3 px from rock and dirt, none hanging from
+    dirt), the lab floor's three one-row strips moved out of `lamps`
+    (`level element extract`) into group `cool` (`#dce8ff`, 500, 90),
+    two high-bay faces on the deck's lowest rock rows over the lower hall
+    (x 895 and 1010, a Rock layer; group `sodium`, `#ffb050`, 520, 95),
+    the red duct's elbow (its saturated red rock pixels, extracted)
+    breathing at 59 % in group `flue` (`#ff5a20`, 320, 70, a 4.2 s
+    pulse), and a red aviation light on the chimney (1082, 36; group
+    `aviation`, `#ff2a14`, 400, 22, a 1.5 s blink). Then the skyline
+    (`tools/levels/factory_skyline.py`, seeded): the far city (towers,
+    masts, water towers, lit floors; its windows and mast tips glowing
+    in `city`, `Own`, 120, 8, a slow flicker) and the near industry
+    (sheds, chimneys, a cooling tower, pylons and their wires; the red
+    tops glowing in `pylon`, `#ff3020`, 200, 10, a 2 s blink), each a
+    level-sized image made the level's own asset and placed after the
+    sky at depth 75 and 45. `factory_live.py` sets the Strip light's
+    exposed `colour` per copy: sodium (`#ffb050`) on `strip-6` to
+    `strip-9` (the warehouse and the dock), cool white (`#dce8ff`) on
+    `strip-1` to `strip-3` (the upper hall's top); a static copy of
+    another colour bakes in a group of its own (`lamps-2`, …). Ruled
+    out: beams from the big window, glinting dirt, glow on the bonus-box
+    stock, ambient occlusion.
 
   ```sh
   cargo build -p olr-cli

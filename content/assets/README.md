@@ -65,7 +65,9 @@ is gone.
   maintainer may replace them); its default script
   `tools/levels/factory/tube.rhai` stays On 3-12 s, then stutters in a
   burst of 2-6 flickers, now and then staying dark or Dim a while after
-  (`content/reloaded/README.md`). A static copy bakes steady On.
+  (`content/reloaded/README.md`). A static copy bakes steady On. The
+  night shift exposes its glow colour as `colour` (default `#ffe6c0`,
+  the group's), which Liero Factory Reloaded sets by area.
 
       olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 778,80,29,2 --layers lamps --name "Strip light" --out content/assets/strip-light
       olr-cli asset state set content/assets/strip-light Normal --name On
@@ -80,6 +82,7 @@ is gone.
       olr-cli asset state set content/assets/strip-light On --loop-sound buzz.wav --enter-sound tick.wav
       olr-cli asset state set content/assets/strip-light Dim --loop-sound buzz.wav
       olr-cli asset script content/assets/strip-light --set tools/levels/factory/tube.rhai
+      olr-cli asset expose content/assets/strip-light colour lamps.glow-colour --default "#ffe6c0"
 
 - `computer-screen/`: **Computer screen**, the control room's upper
   screen on its wall, group `control` (blue-white, `Tint("#d0e0ff")`;

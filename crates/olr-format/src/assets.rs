@@ -89,7 +89,10 @@ pub struct AssetFile {
     pub folders: Vec<Folder>,
     /// The glow groups its elements name, each named by one at least.
     /// Placed in a level, a group the level has (by id) is joined, its own
-    /// settings kept; a missing one is added with these. Default none.
+    /// settings kept; a missing one is added with these. A copy's values
+    /// that change a group's settings (an exposed glow colour, say) bake
+    /// it as a group of its own, its id numbered (`lamps-2`, …). Default
+    /// none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub glow_groups: Vec<GlowGroupSource>,
     /// The surface materials its elements name (issue #38), at most 255,

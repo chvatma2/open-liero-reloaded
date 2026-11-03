@@ -253,6 +253,15 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   under the crane's trolley turns, two beams sweeping the hall, while
   the crane moves. The built-in Computer screen, Lit sign, Control desk
   and Gauge carry these states and scripts, and the Crane its beacon.
+- Liero Factory Reloaded's night shift: small lamps on the mine tunnels'
+  back wall, sodium high-bays over the lower hall, the red duct glowing
+  like a furnace flue, a blinking red light on the chimney, the strip
+  lights coloured by area (sodium in the warehouse and on the dock, cool
+  white along the upper hall and in the lab) and a night skyline (a far
+  city with lit windows, near chimneys and pylons with blinking red
+  tops) standing before the stars. The built-in Strip light exposes its
+  colour. `olr-cli level element glow --mask` takes a grey PNG as an
+  element's whole glow mask.
 
 ### Changed
 

@@ -7823,6 +7823,15 @@ to this section.
   `the_new_factory_plays_as_after_dark` is retired: the crane moves its
   rock, carrying and pushing worms and stopping shots where it is now,
   so play differs from After Dark's by design.
+- **The night shift (2026-11-03): `the_new_factory_draws_as_after_dark`
+  retired.** Liero Factory Reloaded's look now differs from After Dark's
+  by design everywhere (the skyline before the sky, the mine lamps, the
+  strips coloured by area), so no view draws alike any more;
+  `the_new_factory_bakes_as_after_dark` names the night shift's
+  differences exactly instead (its new art, the flue, the recoloured
+  lamps, its groups, the skyline's light where the back is see-through)
+  and `material.png` stays After Dark's. `the_mine_lamps_keep_clear_of_rock_and_dirt`
+  holds every lamp pixel 3 px from rock and dirt.
 - **Tests (#97)** (`olr-cli`'s `tests/reloaded.rs`):
   `the_live_factory_has_its_live_copies`,
   `the_crane_crosses_and_the_console_alarms` (the timings above, 2

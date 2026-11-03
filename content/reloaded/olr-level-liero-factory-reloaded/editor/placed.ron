@@ -9,6 +9,14 @@
             origin: Own,
         ),
         (
+            key: "n",
+            origin: Own,
+        ),
+        (
+            key: "p",
+            origin: Own,
+        ),
+        (
             key: "s",
             origin: Builtin("strip-light"),
         ),
@@ -61,20 +69,39 @@
             distant: 90,
         ),
         (
+            id: "city",
+            asset: "n",
+            distant: 75,
+        ),
+        (
+            id: "industry",
+            asset: "p",
+            distant: 45,
+        ),
+        (
             id: "strip-1",
             asset: "s",
             at: (778, 80),
+            values: {
+                "colour": Colour("#dce8ff"),
+            },
         ),
         (
             id: "strip-2",
             asset: "s",
             at: (1004, 80),
             live: true,
+            values: {
+                "colour": Colour("#dce8ff"),
+            },
         ),
         (
             id: "strip-3",
             asset: "s",
             at: (1119, 80),
+            values: {
+                "colour": Colour("#dce8ff"),
+            },
         ),
         (
             id: "strip-4",
@@ -91,22 +118,34 @@
             id: "strip-6",
             asset: "s",
             at: (314, 286),
+            values: {
+                "colour": Colour("#ffb050"),
+            },
         ),
         (
             id: "strip-7",
             asset: "s",
             at: (427, 286),
             live: true,
+            values: {
+                "colour": Colour("#ffb050"),
+            },
         ),
         (
             id: "strip-8",
             asset: "s",
             at: (524, 286),
+            values: {
+                "colour": Colour("#ffb050"),
+            },
         ),
         (
             id: "strip-9",
             asset: "s",
             at: (187, 342),
+            values: {
+                "colour": Colour("#ffb050"),
+            },
         ),
         (
             id: "ceil-lamp",

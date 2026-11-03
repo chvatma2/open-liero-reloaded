@@ -7,6 +7,13 @@
             size: (29, 2),
             props: [
                 (
+                    name: "colour",
+                    drives: GlowColour(0),
+                    min: -1,
+                    max: 16777215,
+                    default: 16770752,
+                ),
+                (
                     drives: GlowStrength(0),
                     min: 0,
                     max: 100,
@@ -34,7 +41,7 @@
                 (
                     name: "On",
                     values: [
-                        (0, 100),
+                        (1, 100),
                     ],
                     parts: [
                         (
@@ -50,7 +57,7 @@
                 (
                     name: "Dim",
                     values: [
-                        (0, 35),
+                        (1, 35),
                     ],
                     parts: [
                         (
@@ -65,7 +72,7 @@
                 (
                     name: "Off",
                     values: [
-                        (0, 0),
+                        (1, 0),
                     ],
                     parts: [
                         (
@@ -76,6 +83,9 @@
                         ),
                     ],
                 ),
+            ],
+            start_values: [
+                (0, 14477567),
             ],
             groups: [
                 (
@@ -100,6 +110,13 @@
             size: (29, 2),
             props: [
                 (
+                    name: "colour",
+                    drives: GlowColour(0),
+                    min: -1,
+                    max: 16777215,
+                    default: 16770752,
+                ),
+                (
                     drives: GlowStrength(0),
                     min: 0,
                     max: 100,
@@ -127,7 +144,7 @@
                 (
                     name: "On",
                     values: [
-                        (0, 100),
+                        (1, 100),
                     ],
                     parts: [
                         (
@@ -143,7 +160,7 @@
                 (
                     name: "Dim",
                     values: [
-                        (0, 35),
+                        (1, 35),
                     ],
                     parts: [
                         (
@@ -158,7 +175,7 @@
                 (
                     name: "Off",
                     values: [
-                        (0, 0),
+                        (1, 0),
                     ],
                     parts: [
                         (
@@ -193,6 +210,13 @@
             size: (29, 2),
             props: [
                 (
+                    name: "colour",
+                    drives: GlowColour(0),
+                    min: -1,
+                    max: 16777215,
+                    default: 16770752,
+                ),
+                (
                     drives: GlowStrength(0),
                     min: 0,
                     max: 100,
@@ -220,7 +244,7 @@
                 (
                     name: "On",
                     values: [
-                        (0, 100),
+                        (1, 100),
                     ],
                     parts: [
                         (
@@ -236,7 +260,7 @@
                 (
                     name: "Dim",
                     values: [
-                        (0, 35),
+                        (1, 35),
                     ],
                     parts: [
                         (
@@ -251,7 +275,7 @@
                 (
                     name: "Off",
                     values: [
-                        (0, 0),
+                        (1, 0),
                     ],
                     parts: [
                         (
@@ -262,6 +286,9 @@
                         ),
                     ],
                 ),
+            ],
+            start_values: [
+                (0, 16756816),
             ],
             groups: [
                 (

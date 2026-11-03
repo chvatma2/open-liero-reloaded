@@ -34,7 +34,21 @@ byte for byte, and running one again changes nothing.
   paints the ground's `backdrop` behind the crane's claw (`paint_wall`:
   the pixels the ground lost in the crane's box and `WALL_EDGE` 2 around
   them, blended along each row), before any copy is placed (ground
-  edits need the ground alone, issue #75).
+  edits need the ground alone, issue #75). The night shift (2026-11-03):
+  `night_shift` adds the groups `GROUPS` and, on new ground layers
+  (`added` reads each new id), the `MINE_LAMPS` (plates and bulbs drawn,
+  the bulbs' glow by `level element glow --mask`), the `LAB_STRIPS`
+  extracted from `lamps` into `cool`, the `HIGH_BAYS` (a Rock layer on
+  the deck's rows 267-268), the flue (the rock's saturated reds in
+  `FLUE_BOX`, extracted, glow `FLUE_GLOW`) and the `AVIATION` light; and
+  `make_skyline` makes `SKYLINE`'s two layers the level's own assets (an
+  `add-image` on a fresh After Dark with its group and mask, `asset
+  save`) placed after the sky, distant 75 and 45.
+- `factory_skyline.py` (the night shift): the skyline's pictures and
+  glow masks (`write(out)`: `city.png`, `city-glow.png`, `industry.png`,
+  `industry-glow.png`, level-sized, alpha 0 the sky), drawn from fixed
+  seeds (23 and 9); `factory_assets.py` imports it (into
+  `target/factory-assets/skyline/`).
 - `factory_live.py` (issue #97; #98 and #99 extend it): brings Liero
   Factory Reloaded alive after `factory_assets.py`: the Console's state
   pictures into `tools/levels/factory/art/` (from After Dark's
@@ -60,4 +74,5 @@ byte for byte, and running one again changes nothing.
   the Lit sign, the Control desk and the Gauge again by their blocks
   (scripts `screen.rhai`, `sign.rhai`, `desk.rhai`, `gauge.rhai`;
   `crane.rhai` turns the beacon), updates `c t d g` and switches
-  `LIVE_DISPLAYS` live.
+  `LIVE_DISPLAYS` live. The night shift: the Strip light's block exposes
+  `colour` (`lamps.glow-colour`), and `STRIP_COLOURS` sets it per copy.

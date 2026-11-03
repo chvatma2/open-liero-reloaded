@@ -1218,7 +1218,16 @@ the console's boxes: the ground leaves live copies out), the drawing to
 the truck's camera, the one of four holding no live copy, and retires
 `the_new_factory_plays_as_after_dark` (the crane changes play;
 `docs/porting/STATUS.md`); issue #98 adds the three faulty tubes' boxes
-(`strip-2`, `strip-4`, `strip-7`, `TUBES`). Its live factory (`factory_world` places
+(`strip-2`, `strip-4`, `strip-7`, `TUBES`). The night shift
+(2026-11-03) names its differences in the bake test (`night_art`: the
+mine lamps, high-bays and aviation light; `FLUE_BOX`'s red rock in
+`flue`; `RECOLOURED`'s lamps of a new colour; its groups; the skyline's
+two distant layers and their light baked where the back is see-through;
+two transparent pixels alike whatever colour they hold), adds the
+skyline's copies and the strips' `colour` values (`RECOLOURED_STRIPS`)
+to the copies test and `the_mine_lamps_keep_clear_of_rock_and_dirt`
+(`MINE_LAMPS`, every lamp pixel 3 px from rock and dirt), and retires
+`the_new_factory_draws_as_after_dark` (no view draws alike now). Its live factory (`factory_world` places
 worm 0, a human, where a test wants): `the_live_factory_has_its_live_copies`
 (the crane, the terminal (issue #100; the console before it) and,
 issue #98, the tubes Live in their starting states, the Crane's and

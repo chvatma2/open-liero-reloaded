@@ -321,3 +321,9 @@
   fixtures/render/factory-crane.png
 2026-11-02 bless-regression: issue #100 playtest: the crane at half speed, the alarm on the terminal left of it
   fixtures/matches-live/classic-factory-live-4dm.ron
+2026-11-03 bless-render: the factory's night shift: mine lamps, high-bays, flue, aviation light, strips coloured by area and a night skyline
+  fixtures/render/factory-beacon-side.png
+  fixtures/render/factory-crane.png
+  fixtures/render/factory-screen.png
+2026-11-03 bless-regression: the factory's night shift: the Strip light exposes its colour, a hashed value
+  fixtures/matches-live/classic-factory-live-4dm.ron

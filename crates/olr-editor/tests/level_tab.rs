@@ -1063,7 +1063,8 @@ fn move_and_resize_a_copy_through_the_canvas() {
 /// through Edit in level. Since issue #97 its crane and (issue #100) its
 /// terminal are Live (since issue #98 three of its strip lights, since
 /// issue #99 its screen, sign, desk and gauge): the bake is the pack's outside their
-/// boxes.
+/// boxes. The night shift (2026-11-03) adds its skyline's two own copies
+/// after the sky.
 #[test]
 fn liero_factory_reloaded_opens_with_its_copies() {
     let Some(root) = content() else { return };
@@ -1078,8 +1079,12 @@ fn liero_factory_reloaded_opens_with_its_copies() {
     assert!(!s.dirty(), "{:?}", s.status().message);
     let strips = (1..=9).map(|i| format!("strip-{i}"));
     let rest = ["ceil-lamp", "screen", "desk", "beacon", "terminal", "crane", "console", "sign", "gauge"];
-    let want: Vec<String> =
-        ["ground", "sky"].map(String::from).into_iter().chain(strips).chain(rest.map(String::from)).collect();
+    let want: Vec<String> = ["ground", "sky", "city", "industry"]
+        .map(String::from)
+        .into_iter()
+        .chain(strips)
+        .chain(rest.map(String::from))
+        .collect();
     assert_eq!(copy_ids(&s), want);
     use olr_format::levels::AssetOrigin;
     let doc = s.document().unwrap();

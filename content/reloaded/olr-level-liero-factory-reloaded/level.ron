@@ -1,6 +1,6 @@
 (
     name: "Liero Factory Reloaded",
-    notes: "Liero Factory After Dark rebuilt from assets (issue #96): the ground is the level\'s own asset, the night sky a copy of its own at depth 90, and the strip lights, the ceiling lamp, the control room\'s screen and desk, the lit sign, a roof beacon, the terminal, the crane, the console and the gauge are copies of the built-in assets where After Dark has them. Since issue #97 the crane\'s claw crosses its rail every couple of seconds, humming and pushing worms in its way, and the terminal left of it goes red while it moves (issue #100); since issue #98 three of the ceiling strips fail like faulty tubes, stuttering, buzzing and ticking; since issue #99 the control room\'s screen is a security camera, the 13-37 sign, the desk\'s lamps and the gauge change now and then, and an orange warning beacon under the crane\'s trolley turns while it moves.",
+    notes: "Liero Factory After Dark rebuilt from assets (issue #96): the ground is the level\'s own asset, the night sky a copy of its own at depth 90, and the strip lights, the ceiling lamp, the control room\'s screen and desk, the lit sign, a roof beacon, the terminal, the crane, the console and the gauge are copies of the built-in assets where After Dark has them. Since issue #97 the crane\'s claw crosses its rail every couple of seconds, humming and pushing worms in its way, and the terminal left of it goes red while it moves (issue #100); since issue #98 three of the ceiling strips fail like faulty tubes, stuttering, buzzing and ticking; since issue #99 the control room\'s screen is a security camera, the 13-37 sign, the desk\'s lamps and the gauge change now and then, and an orange warning beacon under the crane\'s trolley turns while it moves. The night shift lights the mine\'s back wall, the lower hall, the red duct and the chimney, colours the strips by area and sets a city and its industry before the stars.",
     size: (1200, 480),
     theme: "olx-theme-dirt",
     look: (
@@ -75,6 +75,84 @@
                 colour: Tint("#fff0c8"),
                 intensity: 1000,
                 reach: Pixels(120),
+            ),
+            (
+                id: "mine",
+                colour: Tint("#ffb060"),
+                intensity: 1000,
+                reach: Pixels(110),
+                animation: Flicker(
+                    speed: 3,
+                    depth: 10,
+                ),
+            ),
+            (
+                id: "cool",
+                colour: Tint("#dce8ff"),
+                intensity: 500,
+                reach: Pixels(90),
+            ),
+            (
+                id: "sodium",
+                colour: Tint("#ffb050"),
+                intensity: 520,
+                reach: Pixels(95),
+            ),
+            (
+                id: "flue",
+                colour: Tint("#ff5a20"),
+                intensity: 320,
+                reach: Pixels(70),
+                animation: Pulse(
+                    period_ms: 4200,
+                    low: 35,
+                    high: 100,
+                ),
+            ),
+            (
+                id: "aviation",
+                colour: Tint("#ff2a14"),
+                intensity: 400,
+                reach: Pixels(22),
+                animation: Pulse(
+                    period_ms: 1500,
+                    low: 0,
+                    high: 100,
+                    shape: Square,
+                ),
+            ),
+            (
+                id: "city",
+                intensity: 120,
+                reach: Pixels(8),
+                animation: Flicker(
+                    speed: 1,
+                    depth: 25,
+                ),
+            ),
+            (
+                id: "pylon",
+                colour: Tint("#ff3020"),
+                intensity: 200,
+                reach: Pixels(10),
+                animation: Pulse(
+                    period_ms: 2000,
+                    low: 0,
+                    high: 100,
+                    shape: Square,
+                ),
+            ),
+            (
+                id: "lamps-2",
+                colour: Tint("#dce8ff"),
+                intensity: 500,
+                reach: Pixels(90),
+            ),
+            (
+                id: "lamps-3",
+                colour: Tint("#ffb050"),
+                intensity: 500,
+                reach: Pixels(90),
             ),
         ],
         materials: [
@@ -193,6 +271,18 @@
             at: (0, 0),
             glow: 35,
             glow_group: "sky",
+        ),
+        (
+            depth: 75,
+            at: (0, 0),
+            glow: 100,
+            glow_group: "city",
+        ),
+        (
+            depth: 45,
+            at: (0, 0),
+            glow: 100,
+            glow_group: "pylon",
         ),
     ],
 )

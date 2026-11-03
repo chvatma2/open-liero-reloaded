@@ -508,6 +508,52 @@ fn in_live_box(x: u32, y: u32) -> bool {
     LIVE_BOXES.iter().any(|&(bx, by, w, h)| (bx..bx + w).contains(&x) && (by..by + h).contains(&y))
 }
 
+/// A box of world pixels: x, y, width, height.
+type Box4 = (u32, u32, u32, u32);
+
+/// Whether `(x, y)` lies in box `(bx, by, w, h)`.
+fn in_box((bx, by, w, h): Box4, x: u32, y: u32) -> bool {
+    (bx..bx + w).contains(&x) && (by..by + h).contains(&y)
+}
+
+/// The night shift's mine lamps' bulbs' top-left pixels
+/// (`tools/levels/factory_assets.py`'s `MINE_LAMPS`); a lamp's art is the
+/// 4 x 3 box from one pixel up and left of it.
+const MINE_LAMPS: [(u32, u32); 9] = [
+    (70, 457),
+    (205, 443),
+    (340, 434),
+    (475, 436),
+    (610, 433),
+    (745, 420),
+    (880, 421),
+    (1015, 403),
+    (1150, 441),
+];
+
+/// The night shift's new art (x, y, width, height): the mine lamps, the
+/// two high-bays and the aviation light. The bake differs from After
+/// Dark's art only there, and its material nowhere.
+fn night_art(x: u32, y: u32) -> bool {
+    MINE_LAMPS.iter().any(|&(lx, ly)| in_box((lx - 1, ly - 1, 4, 3), x, y))
+        || [(895, 267, 24, 2), (1010, 267, 24, 2), (1082, 36, 2, 2)].into_iter().any(|b| in_box(b, x, y))
+}
+
+/// The red duct's elbow, whose red rock glows in the night shift's `flue`.
+const FLUE_BOX: Box4 = (1080, 250, 120, 42);
+
+/// The night shift's lamps of a new colour, keeping their strength and
+/// their group's other settings: the static strips by area (the Strip
+/// light's exposed `colour`) and the lab floor's strips in the ground.
+const RECOLOURED: [(Box4, &str); 6] = [
+    ((778, 80, 29, 2), "#dce8ff"),
+    ((1119, 80, 29, 2), "#dce8ff"),
+    ((318, 183, 248, 1), "#dce8ff"),
+    ((314, 286, 29, 2), "#ffb050"),
+    ((524, 286, 29, 2), "#ffb050"),
+    ((187, 342, 29, 2), "#ffb050"),
+];
+
 /// Issue #96: Liero Factory Reloaded, built from assets, bakes as Liero
 /// Factory After Dark; since issue #97 outside its live copies' boxes
 /// ([`LIVE_BOXES`]), which the ground leaves out. `material.png`,
@@ -517,7 +563,12 @@ fn in_live_box(x: u32, y: u32) -> bool {
 /// assets, so the bake may number or name them otherwise) and the surface
 /// materials (by their settings, not their numbers); the beams'
 /// direction and spread and the glass everywhere; and the look but for
-/// its groups and materials, which hold the same settings.
+/// its groups and materials, which hold the same settings. The night
+/// shift (2026-11-03) is named exactly: its new art ([`night_art`]: art,
+/// glow and surface its own), the flue's red rock in [`FLUE_BOX`]
+/// glowing in `flue`, the [`RECOLOURED`] lamps' groups of a new colour,
+/// its groups among the look's, and the skyline's two distant layers;
+/// `material.png` stays After Dark's everywhere outside the live boxes.
 #[test]
 fn the_new_factory_bakes_as_after_dark() {
     use olr_format::look::GlowGroupSource;
@@ -532,18 +583,27 @@ fn the_new_factory_bakes_as_after_dark() {
         let (a, b) = (decode(&ours), decode(&theirs));
         assert_eq!((a.width(), a.height()), (1200, 480), "{file}: at art scale 1");
         assert_eq!((b.width(), b.height()), (1200, 480), "{file}");
-        let mut inside = 0;
+        // Two transparent pixels are alike, whatever colour the bake left
+        // in them (the night shift's new pixels move it).
+        let alike = |x, y| {
+            let (p, q) = (a.get(x, y), b.get(x, y));
+            p == q || (p.a == 0 && q.a == 0)
+        };
+        let (mut inside, mut night) = (0, 0);
         for y in 0..a.height() {
             for x in 0..a.width() {
                 if in_live_box(x, y) {
                     inside += usize::from(a.get(x, y) != b.get(x, y));
+                } else if file != "material.png" && night_art(x, y) {
+                    night += usize::from(!alike(x, y));
                 } else {
-                    assert!(a.get(x, y) == b.get(x, y), "{file} at ({x}, {y}) differs from After Dark's");
+                    assert!(alike(x, y), "{file} at ({x}, {y}) differs from After Dark's");
                 }
             }
         }
         if file == "front.png" {
             assert!(inside > 0, "the live copies are left out of the ground's front");
+            assert!(night > 0, "the night shift's lamps are in the ground's front");
         }
     }
     let (a, b) = (baked(FACTORY), baked(AFTER_DARK));
@@ -570,9 +630,58 @@ fn the_new_factory_bakes_as_after_dark() {
         m.sort();
         (g, m)
     };
-    assert_eq!(settings(la), settings(lb), "the groups' and materials' settings");
+    // The night shift's groups (`factory_assets.py`'s `GROUPS`, the
+    // skyline's) and the recoloured strips' (gathered as groups of their
+    // own) join After Dark's.
+    let night = |id: &str, colour: &str, intensity: u16, reach: u32, animation: &str| {
+        let ron = format!(
+            r#"(id: "{id}", colour: {colour}, intensity: {intensity}, reach: Pixels({reach}){animation})"#
+        );
+        let g: GlowGroupSource = ron::from_str(&ron).unwrap();
+        format!("{:?}", Some(GlowGroupSource { id: String::new(), ..g }))
+    };
+    let mut want = settings(lb);
+    want.0.extend([
+        night("mine", r##"Tint("#ffb060")"##, 1000, 110, ", animation: Flicker(speed: 3, depth: 10)"),
+        night("cool", r##"Tint("#dce8ff")"##, 500, 90, ""),
+        night("sodium", r##"Tint("#ffb050")"##, 520, 95, ""),
+        night(
+            "flue",
+            r##"Tint("#ff5a20")"##,
+            320,
+            70,
+            ", animation: Pulse(period_ms: 4200, low: 35, high: 100)",
+        ),
+        night(
+            "aviation",
+            r##"Tint("#ff2a14")"##,
+            400,
+            22,
+            ", animation: Pulse(period_ms: 1500, low: 0, high: 100, shape: Square)",
+        ),
+        night("city", "Own", 120, 8, ", animation: Flicker(speed: 1, depth: 25)"),
+        night(
+            "pylon",
+            r##"Tint("#ff3020")"##,
+            200,
+            10,
+            ", animation: Pulse(period_ms: 2000, low: 0, high: 100, shape: Square)",
+        ),
+        night("lamps", r##"Tint("#dce8ff")"##, 500, 90, ""),
+        night("lamps", r##"Tint("#ffb050")"##, 500, 90, ""),
+    ]);
+    want.0.sort();
+    assert_eq!(settings(la), want, "the groups' and materials' settings");
+    // The skyline: the far city at 75 and the near industry at 45, after
+    // the sky, each glowing whole in its group through a painted mask.
+    assert_eq!(a.distant.len(), 3, "the sky and the skyline's two layers");
+    for (d, depth, id) in [(&a.distant[1], 75, "city"), (&a.distant[2], 45, "pylon")] {
+        assert_eq!((d.at, d.depth), ((0, 0), depth), "{id}");
+        let g = d.glow.as_ref().unwrap();
+        assert!(g.strength == 100 && g.mask.is_some(), "{id}: its glow");
+        assert_eq!(la.glow_groups[usize::from(g.group) - 1].id, id);
+    }
     // The distant sky's glow.
-    assert_eq!(a.distant.len(), 1);
     let (da, db) = (&a.distant[0], &b.distant[0]);
     assert_eq!((da.at, da.depth), (db.at, db.depth));
     let (ga, gb) = (da.glow.as_ref().unwrap(), db.glow.as_ref().unwrap());
@@ -587,20 +696,57 @@ fn the_new_factory_bakes_as_after_dark() {
     assert_eq!((wa.art, wa.world), (wb.art, wb.world));
     assert_eq!(wa.art, wa.world, "art scale 1");
     let (w, h) = a.size;
-    let mut groups = BTreeSet::new();
+    let (mut groups, mut flue, mut skyline) = (BTreeSet::new(), 0, 0);
+    let see_through =
+        olr_pack::image_io::decode_rgba(&std::fs::read(ours.join("back.png")).unwrap()).unwrap();
     for i in 0..(w * h) as usize {
         let (x, y) = (i as u32 % w, i as u32 / w);
         if in_live_box(x, y) {
             continue;
         }
-        assert!(wa.front[i] == wb.front[i] && wa.back[i] == wb.back[i], "({x}, {y}): the glow's strength");
-        for (ga, gb, side) in
-            [(wa.groups[i], wb.groups[i], "front"), (wa.groups_back[i], wb.groups_back[i], "back")]
-        {
-            assert_eq!(group(la, ga), group(lb, gb), "({x}, {y}): the {side} glow group");
+        if night_art(x, y) {
+            continue;
+        }
+        // Issue #62: where the back is see-through, the nearest skyline
+        // layer opaque at its placement bakes its light (its mask, at 100)
+        // in its group over the sky's.
+        let seen = (see_through.get(x, y).a == 0)
+            .then_some(())
+            .and_then(|()| a.distant[1..].iter().rev().find(|d| d.image.get(x, y).a != 0));
+        if let Some(d) = seen {
+            let g = d.glow.as_ref().unwrap();
+            let want = g.mask.as_ref().unwrap()[i];
+            for (sa, ga) in [(wa.front[i], wa.groups[i]), (wa.back[i], wa.groups_back[i])] {
+                assert_eq!(sa, want, "({x}, {y}): the skyline's glow");
+                assert!(want == 0 || ga == g.group, "({x}, {y}): the skyline's group");
+            }
+            skyline += 1;
+            continue;
+        }
+        let recolour = RECOLOURED.iter().find(|(b, _)| in_box(*b, x, y)).map(|&(_, c)| c);
+        for (sa, sb, ga, gb, side) in [
+            (wa.front[i], wb.front[i], wa.groups[i], wb.groups[i], "front"),
+            (wa.back[i], wb.back[i], wa.groups_back[i], wb.groups_back[i], "back"),
+        ] {
+            if in_box(FLUE_BOX, x, y) && sa != sb {
+                assert_eq!(sb, 0, "({x}, {y}): the flue glows where After Dark did not");
+                assert_eq!(la.glow_groups[usize::from(ga) - 1].id, "flue", "({x}, {y}): the flue's group");
+                flue += 1;
+                continue;
+            }
+            assert_eq!(sa, sb, "({x}, {y}): the {side} glow's strength");
+            let theirs = match (recolour, group(lb, gb)) {
+                (Some(c), Some(g)) => {
+                    Some(GlowGroupSource { colour: ron::from_str(&format!("Tint(\"{c}\")")).unwrap(), ..g })
+                }
+                (_, g) => g,
+            };
+            assert_eq!(group(la, ga), theirs, "({x}, {y}): the {side} glow group");
             groups.insert(ga);
         }
     }
+    assert_eq!(flue, 605, "the duct's red rock glows in front");
+    assert!(skyline > 10_000, "the skyline stands before the sky: {skyline}");
     // Issue #99: the screen's `control`, the displays' and the screens'
     // groups glow only inside live copies now.
     assert!(groups.len() >= 7, "every group of the ground glows somewhere: {groups:?}");
@@ -612,7 +758,7 @@ fn the_new_factory_bakes_as_after_dark() {
     assert_eq!(ma.world, mb.world);
     for i in 0..(w * h) as usize {
         let (x, y) = (i as u32 % w, i as u32 / w);
-        if in_live_box(x, y) {
+        if in_live_box(x, y) || night_art(x, y) {
             continue;
         }
         assert_eq!(material(la, ma.front[i]), material(lb, mb.front[i]), "({x}, {y}): the front material");
@@ -621,6 +767,13 @@ fn the_new_factory_bakes_as_after_dark() {
     assert_eq!((a.clear.is_some(), a.haze.is_some(), a.live.is_some()), (false, false, true));
     assert_eq!((b.clear.is_some(), b.haze.is_some()), (false, false));
 }
+
+/// The night shift's strip colours (the Strip light's exposed `colour`),
+/// as `factory_live.py`'s `STRIP_COLOURS` sets them.
+const RECOLOURED_STRIPS: [(&[&str], &str); 2] = [
+    (&["strip-1", "strip-2", "strip-3"], "#dce8ff"),
+    (&["strip-6", "strip-7", "strip-8", "strip-9"], "#ffb050"),
+];
 
 /// A copy as `the_new_factory_is_made_of_assets` reads it: its id, its
 /// asset's key, its built-in folder (`None` the level's own), its place
@@ -654,6 +807,8 @@ fn the_new_factory_is_made_of_assets() {
     let mut want: Vec<CopyRow> = vec![
         ("ground".into(), "ground", None, (0, 0), (1200, 480)),
         ("sky".into(), "y", None, (0, 0), (1200, 480)),
+        ("city".into(), "n", None, (0, 0), (1200, 480)),
+        ("industry".into(), "p", None, (0, 0), (1200, 480)),
     ];
     for (i, at) in strips.into_iter().enumerate() {
         want.push((format!("strip-{}", i + 1), "s", Some("strip-light"), at, (29, 2)));
@@ -689,10 +844,20 @@ fn the_new_factory_is_made_of_assets() {
     assert_eq!(got, want);
     for c in &file.copies {
         assert_eq!(c.live, LIVE_COPIES.contains(&c.id.as_str()), "{}: live", c.id);
-        assert!(c.state.is_none() && c.values.is_empty(), "{}: its start and defaults", c.id);
+        assert!(c.state.is_none(), "{}: its start", c.id);
+        // The night shift's strip colours by area (`factory_live.py`'s
+        // `STRIP_COLOURS`); every other value its default.
+        let colour = RECOLOURED_STRIPS.iter().find(|(ids, _)| ids.contains(&c.id.as_str())).map(|&(_, v)| v);
+        let values: Vec<String> = c.values.iter().map(|(k, v)| format!("{k}={v:?}")).collect();
+        let want: Vec<String> = colour
+            .map(|v| format!("colour={:?}", olr_edit::asset::parse_value(v).unwrap()))
+            .into_iter()
+            .collect();
+        assert_eq!(values, want, "{}: its values", c.id);
         assert!(!c.script && c.default_script, "{}: no script of its own", c.id);
         assert!(!c.free_aspect, "{}: its aspect kept", c.id);
-        assert_eq!(c.distant, (c.id == "sky").then_some(90), "{}", c.id);
+        let distant = [("sky", 90), ("city", 75), ("industry", 45)].into_iter().find(|&(id, _)| id == c.id);
+        assert_eq!(c.distant, distant.map(|(_, d)| d), "{}", c.id);
     }
     assert!(placed.level_script.is_some() && placed.scripts.is_empty(), "the level script, no copy's own");
     let o = cli(&["level", "library", dir.to_str().unwrap(), "--content", packs_dir().to_str().unwrap()]);
@@ -706,38 +871,33 @@ fn the_new_factory_is_made_of_assets() {
     }
 }
 
-/// Issue #96, on the GPU tier: `olr-cli look-preview` of Liero Factory
-/// Reloaded and of After Dark gives the same PNG at the truck. Since
-/// issue #97 only there: `look-preview` draws the bake, which leaves the
-/// live copies out (#87), and the truck's view (100, 420) holds none
-/// (the offices', the crane's and the control room's did; issue #96's
-/// `the_new_factory_plays_as_after_dark` is retired too, the crane
-/// changing play: `docs/porting/STATUS.md`).
+/// The night shift (2026-11-03): every mine lamp sits on the tunnels'
+/// back wall in open air, each of its pixels at least 3 px (in x and in
+/// y) from any rock or dirt pixel, so none hangs from dirt or a ceiling.
 #[test]
-fn the_new_factory_draws_as_after_dark() {
-    if std::env::var_os("OLR_GPU_TESTS").is_none() {
-        return;
-    }
-    let tmp = tempfile::tempdir().unwrap();
-    let packs = packs_dir();
-    let at = "100,420";
-    let draw = |level: &str| {
-        let out = tmp.path().join(format!("{level}-{at}.png"));
-        let dir = reloaded_dir().join(level);
-        let o = cli(&[
-            "look-preview",
-            dir.to_str().unwrap(),
-            "--at",
-            at,
-            "--content",
-            packs.to_str().unwrap(),
-            "--out",
-            out.to_str().unwrap(),
-        ]);
-        assert!(o.status.success(), "{level} at {at}: {}", String::from_utf8_lossy(&o.stderr));
-        std::fs::read(&out).unwrap()
+fn the_mine_lamps_keep_clear_of_rock_and_dirt() {
+    let dir = reloaded_dir().join(FACTORY);
+    let decode = |f: &str| olr_pack::image_io::decode_rgba(&std::fs::read(dir.join(f)).unwrap()).unwrap();
+    let (lamps, material) = (decode("editor/layers/mine-lamps.png"), decode("material.png"));
+    let open = |x: i64, y: i64| {
+        let inside = (0..1200).contains(&x) && (0..480).contains(&y);
+        inside && material.get(x as u32, y as u32).r == 0
     };
-    assert!(draw(FACTORY) == draw(AFTER_DARK), "at {at}: the new factory draws otherwise");
+    let mut pixels = 0;
+    for y in 0..lamps.height() {
+        for x in 0..lamps.width() {
+            if lamps.get(x, y).a == 0 {
+                continue;
+            }
+            pixels += 1;
+            assert!(MINE_LAMPS.iter().any(|&(lx, ly)| in_box((lx - 1, ly - 1, 4, 3), x, y)), "({x}, {y})");
+            let (x, y) = (i64::from(x), i64::from(y));
+            for (dx, dy) in (-3..=3).flat_map(|dx| (-3..=3).map(move |dy| (dx, dy))) {
+                assert!(open(x + dx, y + dy), "the lamp pixel ({x}, {y}) is within 3 px of rock or dirt");
+            }
+        }
+    }
+    assert_eq!(pixels, MINE_LAMPS.len() * 12, "9 lamps of a 2 x 2 bulb and a plate of 8");
 }
 
 /// The factory's live copy `id` as the world has it now.
