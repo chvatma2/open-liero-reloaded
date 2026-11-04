@@ -87,6 +87,35 @@
                 ),
             ],
         ),
+        (
+            name: "Dark",
+            own: [
+                "lamps",
+            ],
+            values: [
+                (
+                    property: GlowStrength("lamps"),
+                    value: Int(0),
+                ),
+            ],
+        ),
+        (
+            name: "Broken",
+            own: [
+                "lamps",
+            ],
+            values: [
+                (
+                    property: GlowStrength("lamps"),
+                    value: Int(0),
+                ),
+            ],
+            enter_sound: "pop.wav",
+        ),
+        (
+            name: "Steady",
+            enter_sound: "tick.wav",
+        ),
     ],
     exposed: [
         (
@@ -94,9 +123,21 @@
             property: GlowColour("lamps"),
             default: Colour("#ffe6c0"),
         ),
+        (
+            name: "hp",
+            property: Health,
+            default: Int(20),
+            min: 0,
+            max: 20,
+        ),
     ],
     sounds: [
         "buzz.wav",
+        "pop.wav",
         "tick.wav",
     ],
+    health: (
+        points: 20,
+        at_zero: "Broken",
+    ),
 )

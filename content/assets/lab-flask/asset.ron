@@ -1,0 +1,64 @@
+(
+    name: "Lab flask",
+    size: (22, 17),
+    elements: [
+        (
+            id: "liquid",
+            name: "Liquid",
+            kind: Drawn(
+                material: Background,
+                at: (3, 3),
+                size: (6, 12),
+            ),
+            glow: (
+                strength: 80,
+                group: "flask",
+            ),
+        ),
+        (
+            id: "burner",
+            name: "Burner",
+            kind: Drawn(
+                material: Background,
+                at: (12, 12),
+                size: (8, 1),
+            ),
+            glow: (
+                strength: 100,
+                group: "burner",
+            ),
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "flask",
+            colour: Tint("#70ff90"),
+            intensity: 220,
+            reach: Pixels(26),
+            animation: Pulse(
+                period_ms: 2600,
+                low: 50,
+                high: 100,
+            ),
+        ),
+        (
+            id: "burner",
+            colour: Tint("#5080ff"),
+            intensity: 260,
+            reach: Pixels(20),
+            animation: Flicker(
+                speed: 8,
+                depth: 40,
+            ),
+        ),
+    ],
+    states: [
+        (
+            name: "Normal",
+            loop_sound: "bubble.wav",
+        ),
+    ],
+    sounds: [
+        "bubble.wav",
+    ],
+)

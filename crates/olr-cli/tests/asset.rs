@@ -240,6 +240,49 @@ fn the_factorys_new_assets_check() {
     assert_eq!(layers("terminal"), ((15, 14), vec!["rock".to_string(), "rock-bcn".into()]));
 }
 
+/// The plant works (2026-11-04): Liero Factory Reloaded's new built-in
+/// assets check, each with its layers in order.
+#[test]
+fn the_plant_works_assets_check() {
+    let want: [(&str, (u32, u32), &[&str]); 8] = [
+        (
+            "ball-line",
+            (150, 88),
+            &[
+                "ram",
+                "stripe",
+                "die",
+                "housing",
+                "leds",
+                "drive-lamp",
+                "ball-1",
+                "ball-2",
+                "ball-3",
+                "ball-4",
+                "ball-5",
+                "ball-6",
+            ],
+        ),
+        ("lift", (12, 104), &["cage-floor", "cage"]),
+        ("mine-cart", (187, 17), &["cart", "lamp", "lamp-b"]),
+        ("forklift", (52, 30), &["forklift", "fork-light"]),
+        ("generator", (72, 25), &["housing", "leds", "vent"]),
+        ("siren", (62, 28), &["backdrop", "beacons", "lens-a", "lens-b", "lens-c", "lens-d"]),
+        ("lab-flask", (22, 17), &["liquid", "burner"]),
+        ("window-pane", (19, 22), &["glass"]),
+    ];
+    let dirs = want.map(|w| assets_dir().join(w.0));
+    let mut args = vec!["asset", "check"];
+    args.extend(dirs.iter().map(|d| d.to_str().unwrap()));
+    let o = cli(&args);
+    assert!(o.status.success(), "{}", text(&o));
+    for (folder, size, layers) in want {
+        let a = olr_edit::asset::load_dir(&assets_dir().join(folder)).unwrap();
+        let ids: Vec<&str> = a.pieces.iter().map(|p| p.element.id.as_str()).collect();
+        assert_eq!((a.size, ids.as_slice()), (size, layers), "{folder}");
+    }
+}
+
 #[test]
 fn the_torch_carries_flames_not_sky() {
     let torch = olr_edit::asset::load_dir(&assets_dir().join("torch")).unwrap();

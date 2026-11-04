@@ -2157,7 +2157,9 @@ fn place_two_lamps_and_edit_their_asset() {
         let d = h.state().state.document().unwrap();
         d.copies().iter().filter(|c| d.copy_origin(&c.id).as_ref() == Some(o)).count()
     };
-    // 1. Dragged twice.
+    // 1. Dragged twice (found by a search: the library is taller than
+    // the window).
+    crate::level_tab::search_assets(&mut h, "Strip light");
     drop_card(&mut h, "Strip light", false, (40, 40));
     drop_card(&mut h, "Strip light", false, (40, 80));
     assert_eq!(copies_of(&h, &builtin), 2, "{:?}", h.state().state.status().message);

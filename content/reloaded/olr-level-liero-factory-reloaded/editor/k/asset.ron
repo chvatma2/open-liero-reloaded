@@ -130,6 +130,31 @@
             name: "Moving",
             loop_sound: "hum.wav",
         ),
+        (
+            name: "Off",
+            values: [
+                (
+                    property: GlowStrength("lens"),
+                    value: Int(0),
+                ),
+                (
+                    property: GlowStrength("lens-b"),
+                    value: Int(0),
+                ),
+                (
+                    property: LightIntensity("lens"),
+                    value: Int(0),
+                ),
+                (
+                    property: GlowStrength("claw"),
+                    value: Int(0),
+                ),
+                (
+                    property: LightIntensity("claw"),
+                    value: Int(0),
+                ),
+            ],
+        ),
     ],
     exposed: [
         (

@@ -50,6 +50,15 @@ pub fn thumbnail<'a, S>(h: &'a Harness<'static, S>, name: &'a str) -> egui_kitte
         .expect(name)
 }
 
+/// The library searched for `text`, as a user finds a card below the
+/// panel's fold (the built-in library is taller than the window).
+pub fn search_assets<S>(h: &mut Harness<'static, S>, text: &str) {
+    h.get_by_role_and_label(egui::accesskit::Role::TextInput, labels::SEARCH_ASSETS).click();
+    h.run();
+    h.get_by_role_and_label(egui::accesskit::Role::TextInput, labels::SEARCH_ASSETS).type_text(text);
+    h.run();
+}
+
 fn click(s: &mut EditorState, world: (i32, i32)) {
     for kind in [PointerKind::Down, PointerKind::Up] {
         run(s, A::Pointer { kind, world, shift: false, toggle: false });
@@ -1078,7 +1087,25 @@ fn liero_factory_reloaded_opens_with_its_copies() {
     run(&mut s, A::Tool(Tool::Select));
     assert!(!s.dirty(), "{:?}", s.status().message);
     let strips = (1..=9).map(|i| format!("strip-{i}"));
-    let rest = ["ceil-lamp", "screen", "desk", "beacon", "terminal", "crane", "console", "sign", "gauge"];
+    let rest = [
+        "ceil-lamp",
+        "screen",
+        "desk",
+        "siren",
+        "terminal",
+        "crane",
+        "line",
+        "sign",
+        "generator",
+        "gauge",
+        "lab-flask",
+        "pane-1",
+        "pane-3",
+        "pane-4",
+        "lift",
+        "cart",
+        "forklift",
+    ];
     let want: Vec<String> = ["ground", "sky", "city", "industry"]
         .map(String::from)
         .into_iter()
@@ -1096,23 +1123,16 @@ fn liero_factory_reloaded_opens_with_its_copies() {
     let pack = olr_edit::pack::load(&level).unwrap();
     let olr_edit::pack::Source::Level(stored) = &pack.source else { panic!() };
     // Issue #97: the crane and the terminal (issue #100; the console
-    // before it) are Live (issue #98: and the tubes strip-2, strip-4 and
-    // strip-7; issue #99: the screen, the sign, the desk and the gauge), the stored bake the ground
-    // without them (issue #85's played form) while the canvas draws them
-    // in place: the bake is the pack's outside their boxes.
+    // before it) are Live (issue #98: and the tubes; issue #99: the
+    // screen, the sign, the desk and the gauge; the plant works: every
+    // strip and the works' copies), the stored bake the ground without
+    // them (issue #85's played form) while the canvas draws them in
+    // place: the bake is the pack's outside their boxes.
     let l = doc.level();
-    let live: [((i32, i32), (u32, u32)); 9] = [
-        ((762, 269), (114, 50)),
-        ((723, 351), (15, 14)),
-        ((1004, 80), (29, 2)),
-        ((984, 177), (29, 2)),
-        ((427, 286), (29, 2)),
-        ((906, 83), (14, 14)),
-        ((934, 299), (31, 21)),
-        ((903, 119), (30, 11)),
-        ((1059, 144), (48, 27)),
-    ];
-    assert_eq!(doc.copy_box("terminal"), Some(live[1]));
+    let live: Vec<((i32, i32), (u32, u32))> =
+        doc.copies().iter().filter(|c| c.live).map(|c| doc.copy_box(&c.id).unwrap()).collect();
+    assert_eq!(live.len(), 25);
+    assert_eq!(doc.copy_box("terminal"), Some(((723, 351), (15, 14))));
     let w = l.size.0 as usize;
     let outside = |i: usize| {
         let (x, y) = ((i % w) as i32, (i / w) as i32);

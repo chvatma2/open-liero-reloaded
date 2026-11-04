@@ -469,10 +469,10 @@ fn factory_crane() {
 }
 
 /// A render of Liero Factory Reloaded (idle bots, seed 1) at tick `ticks`,
-/// the view centred on `at` (issue #99).
-fn factory_golden(name: &str, ticks: &str, at: &str) {
+/// the view centred on `at` (issue #99), `extra` flags after.
+fn factory_golden(name: &str, ticks: &str, at: &str, extra: &[&str]) {
     let Some(content) = content_dir() else { return };
-    let args = [
+    let mut args = vec![
         "render-match",
         "--mod",
         "olx-classic",
@@ -491,6 +491,7 @@ fn factory_golden(name: &str, ticks: &str, at: &str) {
         "--content",
         &content,
     ];
+    args.extend_from_slice(extra);
     compare(name, &args, &[]);
 }
 
@@ -498,7 +499,7 @@ fn factory_golden(name: &str, ticks: &str, at: &str) {
 /// (ticks 251-500), the desk's lamps below it.
 #[test]
 fn factory_screen() {
-    factory_golden("factory-screen.png", "300", "930,110");
+    factory_golden("factory-screen.png", "300", "930,110", &[]);
 }
 
 /// Issue #99: the crane's warning beacon nearly side-on (its 139th moving
@@ -507,7 +508,23 @@ fn factory_screen() {
 /// lamp flaring.
 #[test]
 fn factory_beacon_side() {
-    factory_golden("factory-beacon-side.png", "340", "870,300");
+    factory_golden("factory-beacon-side.png", "340", "870,300", &[]);
+}
+
+/// The plant works (2026-11-04): the Dirt-ball line running in its first
+/// shift (tick 2600), its belt white, the drive's lamp green, a dirt ball
+/// on the belt and one on the incline.
+#[test]
+fn factory_line() {
+    factory_golden("factory-line.png", "2600", "990,330", &[]);
+}
+
+/// The plant works: the blackout, the generator Wrecked before the first
+/// tick (`--live`): the strips and the lamp groups out, the red emergency
+/// lamps lit (tick 60).
+#[test]
+fn factory_blackout() {
+    factory_golden("factory-blackout.png", "60", "900,200", &["--live", "generator=Wrecked"]);
 }
 
 /// Issue #34, byte identity: chaos bots on Castle Strike Reloaded (its

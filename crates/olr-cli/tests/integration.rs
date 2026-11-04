@@ -21,6 +21,7 @@ mod corpus;
 mod deaths;
 mod digest;
 mod element;
+mod factory_works;
 mod feel;
 mod hits;
 mod level;

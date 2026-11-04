@@ -454,6 +454,53 @@ Remade OLX content is named "<Old name> Reloaded".
     another colour bakes in a group of its own (`lamps-2`, …). Ruled
     out: beams from the big window, glinting dirt, glow on the bonus-box
     stock, ambient occlusion.
+  - **The plant works** (2026-11-04, the maintainer's go on the "Factory
+    Pass Mockups" page; `tools/levels/factory_works.py`, the new assets'
+    entries in `content/assets/README.md`, a playtest still to tune
+    each). The lower hall's **Dirt-ball line** in the Console's place:
+    the stamp under the 13-37 sign counts down on its LED column, drops
+    its die 18 px onto the belt (crushing a worm under it), thumps and
+    rises, and a dirt ball rides the belt, through the drive and up the
+    incline into the crate (the balls a Background layer lit at least at
+    60 % by a group that casts nothing, as front dirt is by the solid
+    floor; After Dark's painted balls on the incline erased); the belt's red stripe is the line's status
+    light, red while it stands, white while it runs, the drive's lamp
+    green. The **shift** (the level script): 15 s standing, the horn,
+    30 s running. A **lift** in a new shaft at the hall's far right (x
+    1186-1197, right of the ramp's mouth) between the hall floor and a
+    landing in the mine's big chamber; a **mine cart** on new rails along
+    the left tunnel, its lamp ahead lit; a **forklift** at the
+    warehouse's right end backing away from the crate stack and driving
+    up to it again, beeping, its beacon turning and a work light on its
+    mast (the doorway's threshold plate behind it made flush with the
+    floor, its art on the backdrop, so its wheels roll back); the **generator** (the gauge's mounting: status lamps and a
+    vent, health 40): wrecked, it **blacks the plant out** (the lamps'
+    groups `lamps`, `cool`, `sodium` and `mine` at 0, every strip Dark,
+    the line, the crane, the lift and the cart stopped, the red
+    **emergency lamps** lit) until it is repaired 30 s later. The
+    **alarm**: a blast of 5 damage or more (Classic's heaviest: its
+    bullets do 1), or three kills within 10 s,
+    sounds the roof's **siren** (the two speaker rings, two turning
+    beams each, a klaxon) for 10 s and tints the lamps red, then rests
+    20 s before it may sound again. Every strip is live: health 20,
+    **Broken** when shot (a pop), a blast of 2 or more within 40 px of it
+    flickers it (the level script sets it Off: one handler for every
+    blast, not one a strip), and maintenance mends one every 20 s; the three faulty
+    tubes keep their stutter and buzz, the others run `steady.rhai` in
+    `Steady` (lit, silent). Three panes of
+    the big window **shatter** (health 5, a smash) and show the sky.
+    The lab's flask glows green and bubbles over a blue burner; the
+    truck's hazard lights blink (a Rock layer: the truck stays solid) and its cab glows; the security screen
+    cuts to the camera nearest each kill for 4 s. Sounds
+    (`tools/sounds/factory_sounds.py`, CC0): `thump`, `rumble`,
+    `horn`, `whine`, `cart`, `engine`, `beep`, `idle`, `bubble`,
+    `klaxon`, `smash`, `pop`. Ruled out on the way: the mockups' work
+    lamp over the bonus boxes (the strip above them already lights
+    them: two lamps side by side), the mockups' lift shaft right of the
+    crates (it would have cut through the ramp beside it), the displays
+    going dark in a blackout (the control room on its battery), the
+    truck's idling (all match long at a parked truck), and the painted
+    particles (no particles in the engine yet).
 
   ```sh
   cargo build -p olr-cli

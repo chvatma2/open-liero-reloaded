@@ -196,7 +196,7 @@ fn live_is_hidden_disabled_or_offered_as_call_2_says() {
 fn strip_with_states() -> Asset {
     let mut a = olr_edit::asset::load_dir(&built_in_assets().join("strip-light")).unwrap();
     a.name = "Strip two".into();
-    olr_edit::asset::add_state(&mut a, "Broken", None).unwrap();
+    olr_edit::asset::add_state(&mut a, "Spare", None).unwrap();
     a
 }
 

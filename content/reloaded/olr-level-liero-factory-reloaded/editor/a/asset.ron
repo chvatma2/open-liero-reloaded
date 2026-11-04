@@ -1,0 +1,82 @@
+(
+    name: "Window pane",
+    size: (19, 22),
+    elements: [
+        (
+            id: "glass",
+            name: "Glass",
+            kind: Drawn(
+                material: Background,
+                size: (19, 22),
+            ),
+            glow: (
+                strength: 67,
+                group: "glass",
+            ),
+            glass: (
+                opacity: 35,
+                frost: 10,
+            ),
+            surface: "glass",
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "glass",
+            colour: Tint("#c8d4f0"),
+            intensity: 220,
+            reach: Pixels(160),
+        ),
+    ],
+    materials: [
+        (
+            id: "glass",
+            name: "Glass",
+            notes: "Glows amber when hot and lights little around it.",
+            heat: (
+                capacity: 90,
+                conductivity: 40,
+                cooling: 70,
+                look: (
+                    ramp: [
+                        (
+                            temperature: 120,
+                            colour: "#401800",
+                            glow: 0,
+                        ),
+                        (
+                            temperature: 400,
+                            colour: "#d06010",
+                            glow: 60,
+                        ),
+                        (
+                            temperature: 1000,
+                            colour: "#ffd890",
+                            glow: 100,
+                        ),
+                    ],
+                    light: 50,
+                ),
+            ),
+        ),
+    ],
+    states: [
+        (
+            name: "Intact",
+        ),
+        (
+            name: "Broken",
+            own: [
+                "glass",
+            ],
+            enter_sound: "smash.wav",
+        ),
+    ],
+    sounds: [
+        "smash.wav",
+    ],
+    health: (
+        points: 5,
+        at_zero: "Broken",
+    ),
+)

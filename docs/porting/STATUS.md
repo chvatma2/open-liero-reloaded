@@ -8097,6 +8097,32 @@ idea of the "Factory Pass Mockups" page but the painted particles.
   group has no reach value (its reach stays the look's), and no
   animation switch: a blackout dims, an alarm recolours.
   `this.centre_x()`/`centre_y()` give a copy's centre (blast reactions).
+- **The level** (`tools/levels/factory_works.py`, `factory_assets.py`,
+  `factory_live.py`; scripts in `tools/levels/factory/`; no OLX
+  counterpart). 25 live copies of 64. The stamp, the belt, the drive and
+  the balls are one copy (the Dirt-ball line), so one script keeps them
+  in step; the level script starts and stops it (the shift), sounds the
+  alarm and cuts the power through states the copies' generic default
+  scripts follow (`Off`, `Dark`), so the built-in assets stay usable
+  elsewhere. Rulings made on the way (each a first guess for the
+  playtest, `docs/deferred-verification.md`):
+  - the mockups' work lamp is left out: strip-4 already hangs above the
+    bonus boxes, and two lamps side by side read as a mistake;
+  - the lift's shaft is at x 1186-1197, right of the ramp's mouth, not
+    where the mockups had it (it would have cut the ramp);
+  - the control room's displays stay lit in a blackout (a UPS), so the
+    camera screen keeps working;
+  - the truck does not idle (no sound carrier where it stands), and no
+    roar, drip or crickets were made for the same reason;
+  - the balls are a Background layer that cannot be dug (no live asset
+    holds dirt), lit at least at 60 % by a group that casts nothing
+    (`balls`, intensity 0), as front dirt is by the solid floor; they
+    vanish at the crate's rim instead of landing (turning parts into
+    projectiles is a later idea);
+  - the siren replaces the Warning beacon copy on the roof and turns both
+    rings' beams; the six strips that are no faulty tubes run
+    `steady.rhai` (a blast nearby flickers them) instead of the Strip
+    light's default script.
 
 ## Kept OLX quirks
 

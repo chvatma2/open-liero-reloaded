@@ -1,0 +1,107 @@
+(
+    name: "Lift",
+    size: (12, 104),
+    elements: [
+        (
+            id: "cage-floor",
+            name: "Cage floor",
+            kind: Drawn(
+                material: Rock,
+                at: (1, 14),
+                size: (10, 3),
+            ),
+            glow: (
+                strength: 100,
+                group: "lift",
+                mask: true,
+            ),
+        ),
+        (
+            id: "cage",
+            name: "Cage",
+            kind: Drawn(
+                material: Background,
+                at: (1, 0),
+                size: (10, 14),
+            ),
+            glow: (
+                strength: 100,
+                group: "cage",
+                mask: true,
+            ),
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "cage",
+            colour: Tint("#fff0d0"),
+            intensity: 380,
+            reach: Pixels(30),
+        ),
+        (
+            id: "lift",
+            colour: Tint("#ffb040"),
+            intensity: 300,
+            reach: Pixels(26),
+            animation: Pulse(
+                period_ms: 1000,
+                low: 30,
+                high: 100,
+                shape: Square,
+            ),
+        ),
+    ],
+    states: [
+        (
+            name: "Idle",
+            values: [
+                (
+                    property: GlowStrength("cage-floor"),
+                    value: Int(0),
+                ),
+            ],
+        ),
+        (
+            name: "Moving",
+            values: [
+                (
+                    property: GlowStrength("cage-floor"),
+                    value: Int(100),
+                ),
+            ],
+            loop_sound: "whine.wav",
+        ),
+        (
+            name: "Off",
+            values: [
+                (
+                    property: GlowStrength("cage-floor"),
+                    value: Int(0),
+                ),
+                (
+                    property: GlowStrength("cage"),
+                    value: Int(0),
+                ),
+            ],
+        ),
+    ],
+    exposed: [
+        (
+            name: "floor_y",
+            property: OffsetY("cage-floor"),
+            default: Int(0),
+            min: 0,
+            max: 87,
+        ),
+        (
+            name: "cage_y",
+            property: OffsetY("cage"),
+            default: Int(0),
+            min: 0,
+            max: 87,
+        ),
+    ],
+    sounds: [
+        "whine.wav",
+    ],
+)

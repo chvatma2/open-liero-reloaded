@@ -533,7 +533,11 @@ The headless command-line tool. Its commands:
   end-on, flaring), `--at 870,300`. Issue #99's (`factory_golden`):
   `factory-screen.png` (tick 300, `--at 930,110`: the security screen on
   `Crane`) and `factory-beacon-side.png` (tick 340, `--at 870,300`: the
-  beacon nearly side-on, both beams).
+  beacon nearly side-on, both beams). The plant works' (2026-11-04):
+  `factory-line.png` (tick 2600, `--at 990,330`: the Dirt-ball line
+  running, a ball on the belt and one on the incline) and
+  `factory-blackout.png` (tick 60, `--at 900,200`, `--live
+  generator=Wrecked`: the lamps out, the emergency lamps lit).
 - `olr-cli frame-hashes <match flags> [--frames 30] [--content DIR] [--out f.ron]`
   (issue #34, `frame_hash.rs`, the command in `frame_hashes_cmd.rs`):
   byte identity. Plays a headless bot match as `render-match` does (the
@@ -1263,7 +1267,21 @@ desk and gauge more than 10 changes each, the same seed alike, seed 2
 otherwise) and `the_beacon_follows_the_pick` (the Crane's lenses beam 0°
 and 180° and ride the claw every tick, out while `Idle`, and at the 8
 phases of its 3-s turn the design's spread and reach within 1° and 1
-px), `bots_play_the_live_factory` (both
+px), The plant works (2026-11-04) changes them to 25 live copies (every
+strip; the steady ones `Steady` with `steady.rhai` of their own), and
+`tests/factory_works.rs` checks its behaviour on the factory's world
+(`World::explode_for_test` for the blasts): `the_line_runs_its_shift`
+(the horn at 1500, Lit 1 to Lit 7 a 40-tick step apart, the die down 18
+px, a ball shown and vanished into the crate, Stopped 3000 ticks on),
+`the_generator_cuts_the_power_until_it_is_repaired` (every strip Dark,
+the lamp groups at 0, the emergency group at 1000, the line, crane, lift
+and cart stopped; repaired after 3000 ticks, all at rest again),
+`a_big_blast_sounds_the_alarm` (the siren in Alarm with turning beams,
+the groups and strips red, calm after 1000 ticks, not again for 2000),
+`a_broken_strip_is_mended`, `a_pane_shatters`,
+`the_lift_cart_and_forklift_work` (their states and travels) and
+`a_blast_near_a_strip_flickers_it`.
+`bots_play_the_live_factory` (both
 mods, 3000 ticks, invariants every tick) and
 `the_live_factory_stays_in_sync` (`netsim`: 3 clients, the `bad`
 profile, a late spectator, an `Ok` verdict with rollbacks). `tests/digest.rs` pins a SHA-256 of what

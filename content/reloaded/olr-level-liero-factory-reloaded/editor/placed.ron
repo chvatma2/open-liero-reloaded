@@ -34,7 +34,7 @@
         ),
         (
             key: "w",
-            origin: Builtin("warning-beacon"),
+            origin: Builtin("siren"),
         ),
         (
             key: "e",
@@ -46,15 +46,39 @@
         ),
         (
             key: "o",
-            origin: Builtin("console"),
+            origin: Builtin("ball-line"),
         ),
         (
             key: "t",
             origin: Builtin("lit-sign"),
         ),
         (
+            key: "r",
+            origin: Builtin("generator"),
+        ),
+        (
             key: "g",
             origin: Builtin("gauge"),
+        ),
+        (
+            key: "b",
+            origin: Builtin("lab-flask"),
+        ),
+        (
+            key: "a",
+            origin: Builtin("window-pane"),
+        ),
+        (
+            key: "f",
+            origin: Builtin("lift"),
+        ),
+        (
+            key: "m",
+            origin: Builtin("mine-cart"),
+        ),
+        (
+            key: "x",
+            origin: Builtin("forklift"),
         ),
     ],
     copies: [
@@ -82,9 +106,13 @@
             id: "strip-1",
             asset: "s",
             at: (778, 80),
+            live: true,
+            state: "Steady",
             values: {
                 "colour": Colour("#dce8ff"),
             },
+            script: true,
+            default_script: false,
         ),
         (
             id: "strip-2",
@@ -99,9 +127,13 @@
             id: "strip-3",
             asset: "s",
             at: (1119, 80),
+            live: true,
+            state: "Steady",
             values: {
                 "colour": Colour("#dce8ff"),
             },
+            script: true,
+            default_script: false,
         ),
         (
             id: "strip-4",
@@ -113,14 +145,22 @@
             id: "strip-5",
             asset: "s",
             at: (1067, 177),
+            live: true,
+            state: "Steady",
+            script: true,
+            default_script: false,
         ),
         (
             id: "strip-6",
             asset: "s",
             at: (314, 286),
+            live: true,
+            state: "Steady",
             values: {
                 "colour": Colour("#ffb050"),
             },
+            script: true,
+            default_script: false,
         ),
         (
             id: "strip-7",
@@ -135,17 +175,25 @@
             id: "strip-8",
             asset: "s",
             at: (524, 286),
+            live: true,
+            state: "Steady",
             values: {
                 "colour": Colour("#ffb050"),
             },
+            script: true,
+            default_script: false,
         ),
         (
             id: "strip-9",
             asset: "s",
             at: (187, 342),
+            live: true,
+            state: "Steady",
             values: {
                 "colour": Colour("#ffb050"),
             },
+            script: true,
+            default_script: false,
         ),
         (
             id: "ceil-lamp",
@@ -165,9 +213,10 @@
             live: true,
         ),
         (
-            id: "beacon",
+            id: "siren",
             asset: "w",
             at: (951, 45),
+            live: true,
         ),
         (
             id: "terminal",
@@ -182,9 +231,10 @@
             live: true,
         ),
         (
-            id: "console",
+            id: "line",
             asset: "o",
-            at: (933, 269),
+            at: (909, 269),
+            live: true,
         ),
         (
             id: "sign",
@@ -193,9 +243,57 @@
             live: true,
         ),
         (
+            id: "generator",
+            asset: "r",
+            at: (1046, 146),
+            live: true,
+        ),
+        (
             id: "gauge",
             asset: "g",
             at: (1059, 144),
+            live: true,
+        ),
+        (
+            id: "lab-flask",
+            asset: "b",
+            at: (370, 205),
+            live: true,
+        ),
+        (
+            id: "pane-1",
+            asset: "a",
+            at: (719, 151),
+            live: true,
+        ),
+        (
+            id: "pane-3",
+            asset: "a",
+            at: (759, 151),
+            live: true,
+        ),
+        (
+            id: "pane-4",
+            asset: "a",
+            at: (779, 151),
+            live: true,
+        ),
+        (
+            id: "lift",
+            asset: "f",
+            at: (1186, 352),
+            live: true,
+        ),
+        (
+            id: "cart",
+            asset: "m",
+            at: (12, 456),
+            live: true,
+        ),
+        (
+            id: "forklift",
+            asset: "x",
+            at: (536, 374),
             live: true,
         ),
     ],

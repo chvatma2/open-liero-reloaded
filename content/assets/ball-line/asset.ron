@@ -1,0 +1,539 @@
+(
+    name: "Dirt-ball line",
+    size: (150, 88),
+    elements: [
+        (
+            id: "ram",
+            name: "Ram",
+            kind: Drawn(
+                material: Background,
+                at: (32, 39),
+                size: (17, 18),
+            ),
+            surface: "concrete",
+        ),
+        (
+            id: "stripe",
+            name: "Stripe",
+            kind: Drawn(
+                material: Rock,
+                at: (0, 57),
+                size: (142, 31),
+            ),
+            glow: (
+                strength: 100,
+                group: "belt",
+                mask: true,
+            ),
+            surface: "stone",
+            surface_map: true,
+        ),
+        (
+            id: "die",
+            name: "Die",
+            kind: Drawn(
+                material: Rock,
+                at: (26, 57),
+                size: (29, 7),
+            ),
+            surface: "stone",
+            surface_map: true,
+        ),
+        (
+            id: "housing",
+            name: "Housing",
+            kind: Drawn(
+                material: Rock,
+                at: (24, 0),
+                size: (33, 57),
+            ),
+            surface: "stone",
+            surface_map: true,
+        ),
+        (
+            id: "leds",
+            name: "Leds",
+            kind: Drawn(
+                material: Rock,
+                at: (33, 10),
+                size: (1, 19),
+            ),
+            glow: (
+                strength: 100,
+                group: "displays",
+                mask: true,
+            ),
+            surface: "glass",
+        ),
+        (
+            id: "drive-lamp",
+            name: "Drive lamp",
+            kind: Drawn(
+                material: Background,
+                at: (106, 76),
+                size: (2, 1),
+            ),
+            glow: (
+                strength: 100,
+                group: "running",
+            ),
+        ),
+        (
+            id: "ball-1",
+            name: "Ball 1",
+            kind: Drawn(
+                material: Background,
+                at: (49, 77),
+                size: (4, 4),
+            ),
+            glow: (
+                strength: 60,
+                group: "balls",
+            ),
+        ),
+        (
+            id: "ball-2",
+            name: "Ball 2",
+            kind: Drawn(
+                material: Background,
+                at: (53, 77),
+                size: (4, 4),
+            ),
+            glow: (
+                strength: 60,
+                group: "balls",
+            ),
+        ),
+        (
+            id: "ball-3",
+            name: "Ball 3",
+            kind: Drawn(
+                material: Background,
+                at: (57, 77),
+                size: (4, 4),
+            ),
+            glow: (
+                strength: 60,
+                group: "balls",
+            ),
+        ),
+        (
+            id: "ball-4",
+            name: "Ball 4",
+            kind: Drawn(
+                material: Background,
+                at: (61, 77),
+                size: (4, 4),
+            ),
+            glow: (
+                strength: 60,
+                group: "balls",
+            ),
+        ),
+        (
+            id: "ball-5",
+            name: "Ball 5",
+            kind: Drawn(
+                material: Background,
+                at: (65, 77),
+                size: (4, 4),
+            ),
+            glow: (
+                strength: 60,
+                group: "balls",
+            ),
+        ),
+        (
+            id: "ball-6",
+            name: "Ball 6",
+            kind: Drawn(
+                material: Background,
+                at: (69, 77),
+                size: (4, 4),
+            ),
+            glow: (
+                strength: 60,
+                group: "balls",
+            ),
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "displays",
+            intensity: 180,
+            reach: Pixels(28),
+            animation: Flicker(
+                speed: 6,
+                depth: 25,
+            ),
+        ),
+        (
+            id: "belt",
+            colour: Tint("#ff2a18"),
+            intensity: 300,
+            reach: Pixels(26),
+        ),
+        (
+            id: "running",
+            colour: Tint("#50ff70"),
+            intensity: 160,
+            reach: Pixels(12),
+        ),
+        (
+            id: "balls",
+            intensity: 0,
+            reach: Pixels(1),
+        ),
+    ],
+    materials: [
+        (
+            id: "stone",
+            name: "Stone",
+            notes: "Grey rock: the reference every heat value is a percent of. A blast leaves the rim glowing like lava, cooling slowly.",
+            light_soak: 2,
+            heat: (
+                capacity: 100,
+                conductivity: 100,
+                cooling: 100,
+            ),
+        ),
+        (
+            id: "concrete",
+            name: "Concrete",
+            notes: "Heavy and dense: slow to warm, slow to cool.",
+            light_soak: 2,
+            heat: (
+                capacity: 140,
+                conductivity: 80,
+                cooling: 80,
+            ),
+        ),
+        (
+            id: "metal",
+            name: "Metal",
+            notes: "Steel: heat runs far through it, so a blast warms a wide patch less; it sheds heat fast to the air.",
+            heat: (
+                capacity: 80,
+                conductivity: 600,
+                cooling: 150,
+            ),
+        ),
+        (
+            id: "glass",
+            name: "Glass",
+            notes: "Glows amber when hot and lights little around it.",
+            heat: (
+                capacity: 90,
+                conductivity: 40,
+                cooling: 70,
+                look: (
+                    ramp: [
+                        (
+                            temperature: 120,
+                            colour: "#401800",
+                            glow: 0,
+                        ),
+                        (
+                            temperature: 400,
+                            colour: "#d06010",
+                            glow: 60,
+                        ),
+                        (
+                            temperature: 1000,
+                            colour: "#ffd890",
+                            glow: 100,
+                        ),
+                    ],
+                    light: 50,
+                ),
+            ),
+        ),
+    ],
+    states: [
+        (
+            name: "Stopped",
+            values: [
+                (
+                    property: GlowStrength("drive-lamp"),
+                    value: Int(0),
+                ),
+            ],
+        ),
+        (
+            name: "Lit 1",
+            own: [
+                "drive-lamp",
+                "leds",
+                "stripe",
+            ],
+            values: [
+                (
+                    property: GlowStrength("drive-lamp"),
+                    value: Int(100),
+                ),
+                (
+                    property: GlowColour("stripe"),
+                    value: Colour("#f4f0ff"),
+                ),
+            ],
+            loop_sound: "rumble.wav",
+            enter_sound: "tick.wav",
+        ),
+        (
+            name: "Lit 2",
+            own: [
+                "drive-lamp",
+                "leds",
+                "stripe",
+            ],
+            values: [
+                (
+                    property: GlowStrength("drive-lamp"),
+                    value: Int(100),
+                ),
+                (
+                    property: GlowColour("stripe"),
+                    value: Colour("#f4f0ff"),
+                ),
+            ],
+            loop_sound: "rumble.wav",
+            enter_sound: "tick.wav",
+        ),
+        (
+            name: "Lit 3",
+            own: [
+                "drive-lamp",
+                "leds",
+                "stripe",
+            ],
+            values: [
+                (
+                    property: GlowStrength("drive-lamp"),
+                    value: Int(100),
+                ),
+                (
+                    property: GlowColour("stripe"),
+                    value: Colour("#f4f0ff"),
+                ),
+            ],
+            loop_sound: "rumble.wav",
+            enter_sound: "tick.wav",
+        ),
+        (
+            name: "Lit 4",
+            own: [
+                "drive-lamp",
+                "leds",
+                "stripe",
+            ],
+            values: [
+                (
+                    property: GlowStrength("drive-lamp"),
+                    value: Int(100),
+                ),
+                (
+                    property: GlowColour("stripe"),
+                    value: Colour("#f4f0ff"),
+                ),
+            ],
+            loop_sound: "rumble.wav",
+            enter_sound: "tick.wav",
+        ),
+        (
+            name: "Lit 5",
+            own: [
+                "drive-lamp",
+                "leds",
+                "stripe",
+            ],
+            values: [
+                (
+                    property: GlowStrength("drive-lamp"),
+                    value: Int(100),
+                ),
+                (
+                    property: GlowColour("stripe"),
+                    value: Colour("#f4f0ff"),
+                ),
+            ],
+            loop_sound: "rumble.wav",
+            enter_sound: "tick.wav",
+        ),
+        (
+            name: "Lit 6",
+            own: [
+                "drive-lamp",
+                "leds",
+                "stripe",
+            ],
+            values: [
+                (
+                    property: GlowStrength("drive-lamp"),
+                    value: Int(100),
+                ),
+                (
+                    property: GlowColour("stripe"),
+                    value: Colour("#f4f0ff"),
+                ),
+            ],
+            loop_sound: "rumble.wav",
+            enter_sound: "tick.wav",
+        ),
+        (
+            name: "Lit 7",
+            own: [
+                "drive-lamp",
+                "leds",
+                "stripe",
+            ],
+            values: [
+                (
+                    property: GlowStrength("drive-lamp"),
+                    value: Int(100),
+                ),
+                (
+                    property: GlowColour("stripe"),
+                    value: Colour("#f4f0ff"),
+                ),
+            ],
+            loop_sound: "rumble.wav",
+            enter_sound: "tick.wav",
+        ),
+    ],
+    exposed: [
+        (
+            name: "die_y",
+            property: OffsetY("die"),
+            default: Int(0),
+            min: 0,
+            max: 18,
+        ),
+        (
+            name: "ram_y",
+            property: OffsetY("ram"),
+            default: Int(0),
+            min: 0,
+            max: 18,
+        ),
+        (
+            name: "b1_x",
+            property: OffsetX("ball-1"),
+            default: Int(0),
+            min: 0,
+            max: 96,
+        ),
+        (
+            name: "b1_y",
+            property: OffsetY("ball-1"),
+            default: Int(0),
+            min: -29,
+            max: 0,
+        ),
+        (
+            name: "b1_on",
+            property: LayerVisible("ball-1"),
+            default: Bool(false),
+        ),
+        (
+            name: "b2_x",
+            property: OffsetX("ball-2"),
+            default: Int(0),
+            min: -4,
+            max: 92,
+        ),
+        (
+            name: "b2_y",
+            property: OffsetY("ball-2"),
+            default: Int(0),
+            min: -29,
+            max: 0,
+        ),
+        (
+            name: "b2_on",
+            property: LayerVisible("ball-2"),
+            default: Bool(false),
+        ),
+        (
+            name: "b3_x",
+            property: OffsetX("ball-3"),
+            default: Int(0),
+            min: -8,
+            max: 88,
+        ),
+        (
+            name: "b3_y",
+            property: OffsetY("ball-3"),
+            default: Int(0),
+            min: -29,
+            max: 0,
+        ),
+        (
+            name: "b3_on",
+            property: LayerVisible("ball-3"),
+            default: Bool(false),
+        ),
+        (
+            name: "b4_x",
+            property: OffsetX("ball-4"),
+            default: Int(0),
+            min: -12,
+            max: 84,
+        ),
+        (
+            name: "b4_y",
+            property: OffsetY("ball-4"),
+            default: Int(0),
+            min: -29,
+            max: 0,
+        ),
+        (
+            name: "b4_on",
+            property: LayerVisible("ball-4"),
+            default: Bool(false),
+        ),
+        (
+            name: "b5_x",
+            property: OffsetX("ball-5"),
+            default: Int(0),
+            min: -16,
+            max: 80,
+        ),
+        (
+            name: "b5_y",
+            property: OffsetY("ball-5"),
+            default: Int(0),
+            min: -29,
+            max: 0,
+        ),
+        (
+            name: "b5_on",
+            property: LayerVisible("ball-5"),
+            default: Bool(false),
+        ),
+        (
+            name: "b6_x",
+            property: OffsetX("ball-6"),
+            default: Int(0),
+            min: -20,
+            max: 76,
+        ),
+        (
+            name: "b6_y",
+            property: OffsetY("ball-6"),
+            default: Int(0),
+            min: -29,
+            max: 0,
+        ),
+        (
+            name: "b6_on",
+            property: LayerVisible("ball-6"),
+            default: Bool(false),
+        ),
+    ],
+    sounds: [
+        "horn.wav",
+        "rumble.wav",
+        "thump.wav",
+        "tick.wav",
+    ],
+)

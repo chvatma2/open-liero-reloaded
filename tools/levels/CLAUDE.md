@@ -76,3 +76,32 @@ byte for byte, and running one again changes nothing.
   `crane.rhai` turns the beacon), updates `c t d g` and switches
   `LIVE_DISPLAYS` live. The night shift: the Strip light's block exposes
   `colour` (`lamps.glow-colour`), and `STRIP_COLOURS` sets it per copy.
+- `factory_works.py` (the plant works, 2026-11-04; imported by
+  `factory_assets.py`): `make_art()` writes the pass's new assets' inputs
+  into `tools/levels/factory/art/` from After Dark's layers (level-sized
+  `<name>-mask.png`/`<name>-tile.png` pairs for `level element draw
+  --mask … --tile …`, level-sized grey `<name>-glow.png` masks, and state
+  pictures the size of their layer's box); `ground(run, out)` edits the
+  ground while it is alone (the belt's stripe and the incline's painted
+  dirt balls, which the Dirt-ball line takes; the lab flask's liquid; the
+  lift's shaft right of the ramp's mouth, x 1186-1197, from the hall
+  floor through the mine's big chamber's wall to a landing; the mine
+  cart's rails on the left tunnel's floor, row 473; the doorway's
+  threshold plate behind the forklift, `THRESHOLD`, its art moved onto
+  the backdrop so the wheels roll over it; the emergency lamps, group
+  `emergency` at intensity 0; the truck's hazard lights, a Rock layer on
+  the truck's own rock, and lit cab); `place(run, out, assets)` places the Lift, the Mine cart and the
+  Forklift. `factory_assets.py` makes the Dirt-ball line, Lift, Mine cart,
+  Forklift, Generator, Siren, Lab flask and Window pane by their blocks
+  (`NEW_ASSETS`); its `PIECES` give the line the Console's place (placed
+  at its own top-left, the third item of a copy), the Siren the Warning
+  beacon's, and add the Generator, the Lab flask and three window panes.
+  `factory_live.py` switches every strip live (`STRIPS`: the faulty
+  `LIVE_STRIPS` run `tube.rhai`, the others start `Steady` with
+  `steady.rhai` as their own script) and the pass's copies
+  (`LIVE_WORKS`); `level.rhai` runs the shift, the alarm, the blackout,
+  the maintenance and the strips' flicker on blasts (one `exploded`
+  handler for all, the scripts' tick budget). A copy script that takes
+  orders from it (`Off`, `Dark`, `Stopped`) sets the state again when a
+  step of its own overwrote it in the same tick, and ignores a resume in
+  that tick (`mem.cut`).

@@ -1,0 +1,90 @@
+(
+    name: "Forklift",
+    size: (52, 30),
+    elements: [
+        (
+            id: "forklift",
+            name: "Forklift",
+            kind: Drawn(
+                material: Rock,
+                at: (2, 4),
+                size: (34, 26),
+            ),
+            glow: (
+                strength: 100,
+                group: "forkbeacon",
+                mask: true,
+            ),
+        ),
+        (
+            id: "fork-light",
+            name: "Fork light",
+            kind: Drawn(
+                material: Background,
+                at: (17, 3),
+                size: (1, 2),
+            ),
+            glow: (
+                strength: 100,
+                group: "forklight",
+                beam: (
+                    direction: 160,
+                    spread: 24,
+                ),
+            ),
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "forkbeacon",
+            colour: Tint("#ffa020"),
+            intensity: 350,
+            reach: Pixels(30),
+            animation: Pulse(
+                period_ms: 800,
+                low: 0,
+                high: 100,
+                shape: Square,
+            ),
+        ),
+        (
+            id: "forklight",
+            colour: Tint("#fff0c8"),
+            intensity: 700,
+            reach: Pixels(80),
+        ),
+    ],
+    states: [
+        (
+            name: "Idle",
+        ),
+        (
+            name: "Driving",
+            loop_sound: "engine.wav",
+        ),
+        (
+            name: "Reversing",
+            loop_sound: "beep.wav",
+        ),
+    ],
+    exposed: [
+        (
+            name: "fork_x",
+            property: OffsetX("forklift"),
+            default: Int(0),
+            min: 0,
+            max: 14,
+        ),
+        (
+            name: "light_x",
+            property: OffsetX("fork-light"),
+            default: Int(0),
+            min: 0,
+            max: 14,
+        ),
+    ],
+    sounds: [
+        "beep.wav",
+        "engine.wav",
+    ],
+)

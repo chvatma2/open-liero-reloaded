@@ -1,6 +1,8 @@
 // The Crane's default script (issue #97): its claw rests at one end of
 // the rail, then crosses to the other, humming (Moving) while it moves.
 // Issue #99: its warning beacon, under the trolley, turns while it moves.
+// The plant works (2026-11-04): Off (a power cut) stops the claw where it
+// is; Idle again sets it resting and crossing.
 // Its constants (ticks are 10 ms; tuned in issue #100):
 fn REST() { 200 }   // ticks the claw rests at each end (2 s)
 fn SPEED() { 25 }   // world px a second (0.25 a tick; halved in issue #100)
@@ -11,12 +13,15 @@ fn WAIT() { 50 }    // ticks stopped by something before heading back
 // direction of travel is `mem.up` (towards the max), the max first.
 fn start() {
   this.mem.up = true;
+  this.mem.off = false;
+  this.mem.cut = -1;
   this.mem.turn = 0;
   this.after(REST(), "cross");
 }
 
 // Heads for the end `mem.up` names, Moving.
 fn cross() {
+  if this.mem.off { return; }
   if this.state() != "Moving" { this.set_state("Moving"); }
   let to = if this.mem.up { this.max("claw_x") } else { this.min("claw_x") };
   this.move_to("claw_x", to, SPEED());
@@ -24,6 +29,7 @@ fn cross() {
 
 // At an end: Idle, a rest, then the other end.
 fn arrived(name) {
+  if this.mem.off { return; }
   this.set_state("Idle");
   this.mem.up = !this.mem.up;
   this.after(REST(), "cross");
@@ -33,8 +39,24 @@ fn arrived(name) {
 // holds it, #90): still Moving, it waits, then heads back to the end it
 // came from.
 fn blocked(name) {
+  if this.mem.off { return; }
   this.mem.up = !this.mem.up;
   this.after(WAIT(), "cross");
+}
+
+// Off and Idle are the level script's orders; a step of this script's own
+// in the same tick may have overwritten Off: it is set again.
+fn entered(s) {
+  if s == "Off" {
+    this.mem.off = true;
+    this.mem.cut = this.time();
+    this.cancel("cross");
+    this.stop("claw_x");
+    if this.state() != "Off" { this.set_state("Off"); }
+  } else if s == "Idle" && this.mem.off && this.time() != this.mem.cut {
+    this.mem.off = false;
+    this.after(REST(), "cross");
+  }
 }
 
 // Issue #99, the warning beacon (issue #95's pick: two deep orange beams

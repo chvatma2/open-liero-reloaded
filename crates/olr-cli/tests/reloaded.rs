@@ -19,13 +19,13 @@ use olr_data::manifest::PackKind;
 use olr_vfs::DirFs;
 
 const AFTER_DARK: &str = "olr-level-liero-factory-after-dark";
-const FACTORY: &str = "olr-level-liero-factory-reloaded";
+pub(crate) const FACTORY: &str = "olr-level-liero-factory-reloaded";
 const CASTLE: &str = "olr-level-castlestrike-reloaded";
 const RELOADED_MOD: &str = "olr-mod-liero-v1-reloaded";
-const CLASSIC: &str = "olx-classic";
+pub(crate) const CLASSIC: &str = "olx-classic";
 const FIREFLY: &str = "olr-skin-firefly";
 
-fn repo() -> PathBuf {
+pub(crate) fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
@@ -35,7 +35,7 @@ fn reloaded_dir() -> PathBuf {
 
 /// The committed imported content they ship beside (not `OLR_CONTENT_DIR`:
 /// what a release holds, offline too).
-fn packs_dir() -> PathBuf {
+pub(crate) fn packs_dir() -> PathBuf {
     repo().join("content/packs")
 }
 
@@ -466,33 +466,74 @@ fn baked(level: &str) -> olr_format::levels::LevelSource {
 }
 
 /// Issue #97: Liero Factory Reloaded's live copies' boxes (x, y, width,
-/// height): the crane's and the terminal's (issue #100; the console's
-/// before it), (issue #98) the faulty
-/// tubes' and (issue #99) the screen's, the sign's, the desk's and the
-/// gauge's. The ground leaves live copies out (#85), so its bake differs
-/// from After Dark's only inside them.
-const LIVE_BOXES: [(u32, u32, u32, u32); 9] = [
-    (762, 269, 114, 50),
-    (723, 351, 15, 14),
+/// height), in [`LIVE_COPIES`]' order: since the plant works (2026-11-04)
+/// every strip, the screen, the desk, the siren, the terminal (issue #100;
+/// the console before it), the crane, the Dirt-ball line, the sign, the
+/// generator, the gauge, the lab flask, three window panes, the lift, the
+/// mine cart and the forklift. The ground leaves live copies out (#85), so
+/// its bake differs from After Dark's only inside them (and where
+/// [`works_ground`] says).
+const LIVE_BOXES: [(u32, u32, u32, u32); 25] = [
+    (778, 80, 29, 2),
     (1004, 80, 29, 2),
+    (1119, 80, 29, 2),
     (984, 177, 29, 2),
+    (1067, 177, 29, 2),
+    (314, 286, 29, 2),
     (427, 286, 29, 2),
+    (524, 286, 29, 2),
+    (187, 342, 29, 2),
     (906, 83, 14, 14),
-    (934, 299, 31, 21),
     (903, 119, 30, 11),
+    (951, 45, 62, 28),
+    (723, 351, 15, 14),
+    (762, 269, 114, 50),
+    (909, 269, 150, 88),
+    (934, 299, 31, 21),
+    (1046, 146, 72, 25),
     (1059, 144, 48, 27),
+    (370, 205, 22, 17),
+    (719, 151, 19, 22),
+    (759, 151, 19, 22),
+    (779, 151, 19, 22),
+    (1186, 352, 12, 104),
+    (12, 456, 187, 17),
+    (536, 374, 52, 30),
 ];
 
-/// Issue #98: the ceiling strips that fail like faulty tubes (live copies
-/// of the Strip light), in copy order; the other six stay static.
+/// Issue #98: the ceiling strips that fail like faulty tubes, in copy
+/// order, running the Strip light's default script; the plant works
+/// makes the other six live too, each running `steady.rhai` of its own.
 const TUBES: [&str; 3] = ["strip-2", "strip-4", "strip-7"];
 
-/// Liero Factory Reloaded's live copies in copy order (issue #98's tubes
-/// come first: they are placed before the crane; issue #99's screen and
-/// desk before it too, its sign and gauge after the static console; issue
-/// #100's terminal just before the crane).
-const LIVE_COPIES: [&str; 9] =
-    ["strip-2", "strip-4", "strip-7", "screen", "desk", "terminal", "crane", "sign", "gauge"];
+/// Liero Factory Reloaded's live copies in copy order.
+const LIVE_COPIES: [&str; 25] = [
+    "strip-1",
+    "strip-2",
+    "strip-3",
+    "strip-4",
+    "strip-5",
+    "strip-6",
+    "strip-7",
+    "strip-8",
+    "strip-9",
+    "screen",
+    "desk",
+    "siren",
+    "terminal",
+    "crane",
+    "line",
+    "sign",
+    "generator",
+    "gauge",
+    "lab-flask",
+    "pane-1",
+    "pane-3",
+    "pane-4",
+    "lift",
+    "cart",
+    "forklift",
+];
 
 /// Issue #99: the copies whose displays change, with their assets' names,
 /// starting states and default scripts (`tools/levels/factory/`).
@@ -501,6 +542,22 @@ const DISPLAYS: [(&str, &str, &str, &str); 4] = [
     ("sign", "Lit sign", "Normal", "sign.rhai"),
     ("desk", "Control desk", "A", "desk.rhai"),
     ("gauge", "Gauge", "A", "gauge.rhai"),
+];
+
+/// The plant works' (2026-11-04) live copies: id, asset name, starting
+/// state and default script (`tools/levels/factory/`, none for an asset
+/// without one).
+const WORKS: [(&str, &str, &str, Option<&str>); 10] = [
+    ("siren", "Siren", "Normal", Some("siren.rhai")),
+    ("line", "Dirt-ball line", "Stopped", Some("line.rhai")),
+    ("generator", "Generator", "Running", Some("generator.rhai")),
+    ("lab-flask", "Lab flask", "Normal", None),
+    ("pane-1", "Window pane", "Intact", None),
+    ("pane-3", "Window pane", "Intact", None),
+    ("pane-4", "Window pane", "Intact", None),
+    ("lift", "Lift", "Idle", Some("lift.rhai")),
+    ("cart", "Mine cart", "Stopped", Some("cart.rhai")),
+    ("forklift", "Forklift", "Idle", Some("forklift.rhai")),
 ];
 
 /// Whether world pixel `(x, y)` lies in one of [`LIVE_BOXES`].
@@ -539,20 +596,40 @@ fn night_art(x: u32, y: u32) -> bool {
         || [(895, 267, 24, 2), (1010, 267, 24, 2), (1082, 36, 2, 2)].into_iter().any(|b| in_box(b, x, y))
 }
 
+/// The plant works' (2026-11-04) ground outside the live copies
+/// (`tools/levels/factory_works.py`): the emergency lamps (a 4 x 3 housing
+/// from a pixel up and left of each bulb), the truck's hazard lights, the
+/// lift's landing and the mine cart's rails (rock, so the material differs
+/// there too).
+const WORKS_ART: [Box4; 10] = [
+    (711, 107, 4, 3),
+    (1149, 107, 4, 3),
+    (799, 291, 4, 3),
+    (1159, 299, 4, 3),
+    (179, 329, 4, 3),
+    (469, 329, 4, 3),
+    (43, 405, 1, 2),
+    (175, 404, 2, 2),
+    (1186, 456, 12, 3),
+    (10, 473, 181, 1),
+];
+/// Where the plant works' ground is rock After Dark's is not: the landing
+/// and the rails.
+const WORKS_ROCK: [Box4; 2] = [(1186, 456, 12, 3), (10, 473, 181, 1)];
+/// The truck's cab window, glowing dimly in `cab`.
+const CAB_BOX: Box4 = (50, 378, 23, 16);
+
+fn works_art(x: u32, y: u32) -> bool {
+    WORKS_ART.iter().any(|&b| in_box(b, x, y))
+}
+
 /// The red duct's elbow, whose red rock glows in the night shift's `flue`.
 const FLUE_BOX: Box4 = (1080, 250, 120, 42);
 
 /// The night shift's lamps of a new colour, keeping their strength and
-/// their group's other settings: the static strips by area (the Strip
-/// light's exposed `colour`) and the lab floor's strips in the ground.
-const RECOLOURED: [(Box4, &str); 6] = [
-    ((778, 80, 29, 2), "#dce8ff"),
-    ((1119, 80, 29, 2), "#dce8ff"),
-    ((318, 183, 248, 1), "#dce8ff"),
-    ((314, 286, 29, 2), "#ffb050"),
-    ((524, 286, 29, 2), "#ffb050"),
-    ((187, 342, 29, 2), "#ffb050"),
-];
+/// their group's other settings: the lab floor's strips in the ground (the
+/// strips are all live copies since the plant works).
+const RECOLOURED: [(Box4, &str); 1] = [((318, 183, 248, 1), "#dce8ff")];
 
 /// Issue #96: Liero Factory Reloaded, built from assets, bakes as Liero
 /// Factory After Dark; since issue #97 outside its live copies' boxes
@@ -594,8 +671,10 @@ fn the_new_factory_bakes_as_after_dark() {
             for x in 0..a.width() {
                 if in_live_box(x, y) {
                     inside += usize::from(a.get(x, y) != b.get(x, y));
-                } else if file != "material.png" && night_art(x, y) {
+                } else if file != "material.png" && (night_art(x, y) || works_art(x, y)) {
                     night += usize::from(!alike(x, y));
+                } else if file == "material.png" && WORKS_ROCK.iter().any(|&r| in_box(r, x, y)) {
+                    continue;
                 } else {
                     assert!(alike(x, y), "{file} at ({x}, {y}) differs from After Dark's");
                 }
@@ -667,8 +746,24 @@ fn the_new_factory_bakes_as_after_dark() {
             10,
             ", animation: Pulse(period_ms: 2000, low: 0, high: 100, shape: Square)",
         ),
-        night("lamps", r##"Tint("#dce8ff")"##, 500, 90, ""),
-        night("lamps", r##"Tint("#ffb050")"##, 500, 90, ""),
+        // The plant works' (`factory_works.py`'s `EMERGENCY_GROUP`,
+        // `HAZARD_GROUP`, `CAB_GROUP`); the strips are all live copies now,
+        // so no static strip brings a group of a new colour.
+        night(
+            "emergency",
+            r##"Tint("#ff2010")"##,
+            0,
+            70,
+            ", animation: Pulse(period_ms: 2000, low: 50, high: 100)",
+        ),
+        night(
+            "hazard",
+            r##"Tint("#ffa020")"##,
+            300,
+            24,
+            ", animation: Pulse(period_ms: 1000, low: 0, high: 100, shape: Square)",
+        ),
+        night("cab", r##"Tint("#ffd8a0")"##, 140, 22, ""),
     ]);
     want.0.sort();
     assert_eq!(settings(la), want, "the groups' and materials' settings");
@@ -704,7 +799,7 @@ fn the_new_factory_bakes_as_after_dark() {
         if in_live_box(x, y) {
             continue;
         }
-        if night_art(x, y) {
+        if night_art(x, y) || works_art(x, y) || in_box(CAB_BOX, x, y) {
             continue;
         }
         // Issue #62: where the back is see-through, the nearest skyline
@@ -752,13 +847,25 @@ fn the_new_factory_bakes_as_after_dark() {
     assert!(groups.len() >= 7, "every group of the ground glows somewhere: {groups:?}");
     let (ba, bb) = (a.glow_beams.as_ref().unwrap(), b.glow_beams.as_ref().unwrap());
     assert!(ba.world == bb.world && ba.front == bb.front && ba.back == bb.back, "the beams");
+    // The glass outside the live copies (the plant works' panes are).
     let (sa, sb) = (a.glass.as_ref().unwrap(), b.glass.as_ref().unwrap());
-    assert!(sa.art == sb.art && sa.texels == sb.texels, "the glass");
+    assert_eq!(sa.art, sb.art, "the glass");
+    let (mut panes, mut glass) = (0, 0);
+    for (i, (ta, tb)) in sa.texels.chunks(4).zip(sb.texels.chunks(4)).enumerate() {
+        let (x, y) = (i as u32 % sa.art.0, i as u32 / sa.art.0);
+        if in_live_box(x, y) {
+            panes += usize::from(ta != tb);
+        } else {
+            assert_eq!(ta, tb, "({x}, {y}): the glass");
+            glass += usize::from(ta != [255, 255, 255, 0]);
+        }
+    }
+    assert!(panes > 0 && glass > 0, "the panes are the copies', the rest the ground's: {panes}, {glass}");
     let (ma, mb) = (a.surface.as_ref().unwrap(), b.surface.as_ref().unwrap());
     assert_eq!(ma.world, mb.world);
     for i in 0..(w * h) as usize {
         let (x, y) = (i as u32 % w, i as u32 / w);
-        if in_live_box(x, y) || night_art(x, y) {
+        if in_live_box(x, y) || night_art(x, y) || works_art(x, y) {
             continue;
         }
         assert_eq!(material(la, ma.front[i]), material(lb, mb.front[i]), "({x}, {y}): the front material");
@@ -817,12 +924,20 @@ fn the_new_factory_is_made_of_assets() {
         ("ceil-lamp", "l", "ceiling-lamp", (319, 137), (13, 6)),
         ("screen", "c", "computer-screen", (906, 83), (14, 14)),
         ("desk", "d", "control-desk", (903, 119), (30, 11)),
-        ("beacon", "w", "warning-beacon", (951, 45), (25, 28)),
+        ("siren", "w", "siren", (951, 45), (62, 28)),
         ("terminal", "e", "terminal", (723, 351), (15, 14)),
         ("crane", "k", "crane", (762, 269), (114, 50)),
-        ("console", "o", "console", (933, 269), (33, 64)),
+        ("line", "o", "ball-line", (909, 269), (150, 88)),
         ("sign", "t", "lit-sign", (934, 299), (31, 21)),
+        ("generator", "r", "generator", (1046, 146), (72, 25)),
         ("gauge", "g", "gauge", (1059, 144), (48, 27)),
+        ("lab-flask", "b", "lab-flask", (370, 205), (22, 17)),
+        ("pane-1", "a", "window-pane", (719, 151), (19, 22)),
+        ("pane-3", "a", "window-pane", (759, 151), (19, 22)),
+        ("pane-4", "a", "window-pane", (779, 151), (19, 22)),
+        ("lift", "f", "lift", (1186, 352), (12, 104)),
+        ("cart", "m", "mine-cart", (12, 456), (187, 17)),
+        ("forklift", "x", "forklift", (536, 374), (52, 30)),
     ] {
         want.push((id.into(), key, Some(folder), at, size));
     }
@@ -844,7 +959,10 @@ fn the_new_factory_is_made_of_assets() {
     assert_eq!(got, want);
     for c in &file.copies {
         assert_eq!(c.live, LIVE_COPIES.contains(&c.id.as_str()), "{}: live", c.id);
-        assert!(c.state.is_none(), "{}: its start", c.id);
+        // The plant works: the strips that are no faulty tubes start
+        // Steady (`On` without the buzz).
+        let steady = c.id.starts_with("strip-") && !TUBES.contains(&c.id.as_str());
+        assert_eq!(c.state.as_deref(), steady.then_some("Steady"), "{}: its start", c.id);
         // The night shift's strip colours by area (`factory_live.py`'s
         // `STRIP_COLOURS`); every other value its default.
         let colour = RECOLOURED_STRIPS.iter().find(|(ids, _)| ids.contains(&c.id.as_str())).map(|&(_, v)| v);
@@ -854,12 +972,22 @@ fn the_new_factory_is_made_of_assets() {
             .into_iter()
             .collect();
         assert_eq!(values, want, "{}: its values", c.id);
-        assert!(!c.script && c.default_script, "{}: no script of its own", c.id);
+        // And they run `steady.rhai` of their own instead of their asset's.
+        assert_eq!((c.script, c.default_script), (steady, !steady), "{}: its scripts", c.id);
         assert!(!c.free_aspect, "{}: its aspect kept", c.id);
         let distant = [("sky", 90), ("city", 75), ("industry", 45)].into_iter().find(|&(id, _)| id == c.id);
         assert_eq!(c.distant, distant.map(|(_, d)| d), "{}", c.id);
     }
-    assert!(placed.level_script.is_some() && placed.scripts.is_empty(), "the level script, no copy's own");
+    assert!(placed.level_script.is_some(), "the level script");
+    // The plant works: each steady strip's own script.
+    let steady = std::fs::read_to_string(repo().join("tools/levels/factory/steady.rhai")).unwrap();
+    let own: Vec<&str> = placed.scripts.keys().map(String::as_str).collect();
+    assert_eq!(
+        own,
+        ["strip-1", "strip-3", "strip-5", "strip-6", "strip-8", "strip-9"],
+        "the copies' own scripts"
+    );
+    assert!(placed.scripts.values().all(|t| *t == steady), "each `steady.rhai`");
     let o = cli(&["level", "library", dir.to_str().unwrap(), "--content", packs_dir().to_str().unwrap()]);
     let out = String::from_utf8_lossy(&o.stdout);
     assert!(o.status.success(), "{out}{}", String::from_utf8_lossy(&o.stderr));
@@ -901,7 +1029,7 @@ fn the_mine_lamps_keep_clear_of_rock_and_dirt() {
 }
 
 /// The factory's live copy `id` as the world has it now.
-fn live_copy<'a>(w: &'a olr_sim::World, id: &str) -> olr_sim::LiveCopyView<'a> {
+pub(crate) fn live_copy<'a>(w: &'a olr_sim::World, id: &str) -> olr_sim::LiveCopyView<'a> {
     w.live().expect("the factory's live copies").copy_by_id(id).unwrap_or_else(|| panic!("no live copy {id}"))
 }
 
@@ -913,7 +1041,7 @@ fn claw_x(w: &olr_sim::World) -> i64 {
 /// A world of the factory (Classic) whose worm 0, a human pressing what a
 /// test gives it, first spawns at `at`, and a second worm wherever
 /// `FindSpot` puts it (seed 3: the far left of the upper floor).
-fn factory_world(content: &Content, at: (i32, i32)) -> olr_sim::World {
+pub(crate) fn factory_world(content: &Content, at: (i32, i32)) -> olr_sim::World {
     use olr_cli::assets::LevelAssets;
     use olr_cli::spec::MatchSpec;
     let assets = LevelAssets::load(content, CLASSIC, FACTORY).unwrap();
@@ -938,8 +1066,11 @@ fn the_live_factory_has_its_live_copies() {
     let placed = read_placed_files(&DirFs::new(&dir)).unwrap().expect("editor/placed.ron");
     let live: Vec<&str> = placed.file.copies.iter().filter(|c| c.live).map(|c| c.id.as_str()).collect();
     assert_eq!(live, LIVE_COPIES);
+    // The plant works: every strip is live, the faulty tubes running the
+    // Strip light's script, the others `steady.rhai` of their own.
     for c in placed.file.copies.iter().filter(|c| c.id.starts_with("strip-")) {
-        assert_eq!(c.live, TUBES.contains(&c.id.as_str()), "{}: live only if a tube", c.id);
+        assert!(c.live, "{}", c.id);
+        assert_eq!(c.default_script, TUBES.contains(&c.id.as_str()), "{}: its asset's script", c.id);
     }
     let crane_script = std::fs::read_to_string(repo().join("tools/levels/factory/crane.rhai")).unwrap();
     let tube_script = std::fs::read_to_string(repo().join("tools/levels/factory/tube.rhai")).unwrap();
@@ -952,6 +1083,18 @@ fn the_live_factory_has_its_live_copies() {
         .collect();
     for (d, script) in DISPLAYS.iter().zip(&display_scripts) {
         want.push((d.0, d.1, d.2, Some(script)));
+    }
+    // The plant works' copies, with their default scripts' files.
+    let works: Vec<(&str, &str, &str, Option<String>)> = WORKS
+        .iter()
+        .map(|&(id, name, start, file)| {
+            let script =
+                file.map(|f| std::fs::read_to_string(repo().join("tools/levels/factory").join(f)).unwrap());
+            (id, name, start, script)
+        })
+        .collect();
+    for (id, name, start, script) in &works {
+        want.push((*id, *name, *start, script.as_ref()));
     }
     for (id, name, start, script) in want {
         let c = placed.file.copies.iter().find(|c| c.id == id).unwrap();
@@ -992,6 +1135,9 @@ fn the_live_factory_has_its_live_copies() {
     );
     for d in DISPLAYS {
         assert_eq!(live_copy(w, d.0).state_name(), d.2, "{}", d.0);
+    }
+    for &(id, _, start, _) in &WORKS {
+        assert_eq!(live_copy(w, id).state_name(), start, "{id}");
     }
     assert_eq!(claw_x(w), 0, "the claw starts where After Dark has it");
     let crane = live_copy(w, "crane").setup();
@@ -1122,14 +1268,15 @@ fn rock_by_state(folder: &str) -> Vec<(String, BTreeSet<(u32, u32)>)> {
 /// Issue #97: no state switch adds or removes a solid pixel: for the
 /// Crane, the Console, (issue #98) the Strip light, (issue #99) the
 /// Computer screen, the Lit sign, the Control desk and the Gauge and
-/// (issue #100) the Terminal, every
-/// state's rock pixels (the stacked pictures included) are the starting
-/// state's (none for the Strip light, the screen and the desk: their
-/// layers are Background), and so are the solid pixels of each state of
-/// the copies as a match loads them.
+/// (issue #100) the Terminal and (the plant works) the Dirt-ball line,
+/// the Lift, the Mine cart, the Forklift, the Generator, the Siren and the
+/// Window pane, every state's rock pixels (the stacked pictures included)
+/// are the starting state's (none for the Strip light, the screen, the
+/// desk, the siren and the pane: their layers are Background), and so are
+/// the solid pixels of each state of the copies as a match loads them.
 #[test]
 fn live_states_keep_their_solid_pixels() {
-    let backgrounds = ["strip-light", "computer-screen", "control-desk"];
+    let backgrounds = ["strip-light", "computer-screen", "control-desk", "siren", "window-pane"];
     for folder in [
         "crane",
         "console",
@@ -1139,6 +1286,14 @@ fn live_states_keep_their_solid_pixels() {
         "control-desk",
         "gauge",
         "terminal",
+        // The plant works (2026-11-04).
+        "ball-line",
+        "lift",
+        "mine-cart",
+        "forklift",
+        "generator",
+        "siren",
+        "window-pane",
     ] {
         let states = rock_by_state(folder);
         assert!(states.len() >= 2, "{folder}: its states");
@@ -1170,7 +1325,9 @@ fn live_states_keep_their_solid_pixels() {
             px
         };
         let start = solid(&setup.states[usize::from(setup.start_state)]);
-        let unsolid = TUBES.contains(&c.id()) || ["screen", "desk"].contains(&c.id());
+        let unsolid = c.id().starts_with("strip-")
+            || c.id().starts_with("pane-")
+            || ["screen", "desk", "siren", "lab-flask"].contains(&c.id());
         assert_eq!(start.is_empty(), unsolid, "{}: its solid pixels", c.id());
         for s in &setup.states {
             assert!(solid(s) == start, "{}: state {}'s solid pixels", c.id(), s.name);
@@ -1326,15 +1483,18 @@ fn explosions_leave_the_factorys_live_copies_alone() {
         }
         let mut w = m.world().clone();
         let before = w.terrain().clone();
-        let live = w.live().map(|_| live_snapshot(&w));
+        // The plant works' machines move on their own: the copies are
+        // compared with the same tick without the explosions.
+        let mut calm = w.clone();
         for &at in &hits {
             w.explode_for_test(at, 4.0);
         }
         let mut ev = olr_sim::TickEvents::new();
         w.tick(&[olr_sim::Keys(0), olr_sim::Keys(0)], &mut ev);
-        if let Some(live) = live {
+        calm.tick(&[olr_sim::Keys(0), olr_sim::Keys(0)], &mut ev);
+        if w.live().is_some() {
             assert_eq!(claw_x(&w), 75, "at rest at its far end");
-            assert!(live_snapshot(&w) == live, "{level}: an explosion changed a live copy");
+            assert!(live_snapshot(&w) == live_snapshot(&calm), "{level}: an explosion changed a live copy");
         }
         let mut dug = BTreeSet::new();
         for y in 0..before.height() {
@@ -1371,6 +1531,9 @@ fn the_factory_scripts_never_fail() {
     let mut last = claw_x(m.world());
     let tube_states = |w: &olr_sim::World| TUBES.map(|t| live_copy(w, t).state());
     let (mut tubes, mut late_switches) = (tube_states(m.world()), [0; 3]);
+    // The plant works: a tube shot out (Broken) or in a blackout (Dark)
+    // rightly stops switching.
+    let mut held = [false; 3];
     // Issue #99: the screen, the desk and the gauge go on changing.
     let shows = |w: &olr_sim::World| ["screen", "desk", "gauge"].map(|d| live_copy(w, d).state());
     let (mut displays, mut late_changes) = (shows(m.world()), [0; 3]);
@@ -1384,6 +1547,8 @@ fn the_factory_scripts_never_fail() {
         let now = tube_states(m.world());
         for i in 0..3 {
             late_switches[i] += usize::from(m.ticks() > 4500 && now[i] != tubes[i]);
+            let s = live_copy(m.world(), TUBES[i]).state_name();
+            held[i] |= m.ticks() > 4500 && (s == "Broken" || s == "Dark");
         }
         tubes = now;
         let now = shows(m.world());
@@ -1401,7 +1566,10 @@ fn the_factory_scripts_never_fail() {
         late_moves > 0 && late_alarms > 0,
         "the scripts still run: {late_moves} moves, {late_alarms} alarms"
     );
-    assert!(late_switches.iter().all(|&n| n > 0), "the tubes still switch: {late_switches:?}");
+    assert!(
+        late_switches.iter().zip(held).all(|(&n, held)| n > 0 || held),
+        "the tubes still switch: {late_switches:?}, held {held:?}"
+    );
     assert!(late_changes.iter().all(|&n| n > 0), "the screen, desk and gauge still change: {late_changes:?}");
     assert!(peak.run * 2 <= olr_script::MAX_RUN_OPERATIONS, "a run used {} operations", peak.run);
     assert!(peak.tick * 2 <= olr_script::MAX_TICK_OPERATIONS, "a tick used {} operations", peak.tick);
@@ -1539,8 +1707,8 @@ fn bursts(states: &[Tube]) -> Vec<usize> {
 /// scripts' one generator, drawn in run order); the same seed gives the
 /// same sequences, another seed others; `lamps.glow` is 100 whenever a
 /// tube is `On` (ruling R2: entering `On` restores it, whatever came
-/// before), 35 `Dim` and 0 `Off`; and every static strip stays as baked,
-/// steady `On` (After Dark's pixels and glow, no live copy of its own).
+/// before), 35 `Dim` and 0 `Off`; and (the plant works) every other strip
+/// stays `Steady`, fully lit, in an idle match.
 #[test]
 fn the_tubes_fail_unevenly() {
     let a = tube_run(1, 12_000);
@@ -1572,36 +1740,22 @@ fn the_tubes_fail_unevenly() {
         assert!(seq(&a, i) == seq(&again, i), "{tube}: seed 1 again flickers otherwise");
         assert!(seq(&a, i) != seq(&other, i), "{tube}: seed 2 flickers as seed 1");
     }
-    // The static strips: no live copy, baked as After Dark's lit strips.
+    // The plant works: the other strips are live copies that stay Steady
+    // (no blast near them), fully lit.
     let content = Content::open_bundled(&packs_dir()).unwrap();
-    let m = olr_cli::runner::Match::new(
-        &content,
-        &olr_cli::spec::MatchSpec::new(CLASSIC, FACTORY, 2, 1, 10),
-        &olr_cli::runner::Options::default(),
-    )
-    .unwrap();
-    let (ours, theirs) = (baked(FACTORY), baked(AFTER_DARK));
-    let (go, gt) = (ours.glow.as_ref().unwrap(), theirs.glow.as_ref().unwrap());
-    let front = |l: &str| {
-        olr_pack::image_io::decode_rgba(&std::fs::read(reloaded_dir().join(l).join("front.png")).unwrap())
-            .unwrap()
+    let spec = olr_cli::spec::MatchSpec {
+        personality: olr_cli::spec::Personality::Idle,
+        ..olr_cli::spec::MatchSpec::new(CLASSIC, FACTORY, 2, 1, 2000)
     };
-    let (fo, ft) = (front(FACTORY), front(AFTER_DARK));
-    for (id, (x, y)) in [
-        ("strip-1", (778, 80)),
-        ("strip-3", (1119, 80)),
-        ("strip-5", (1067, 177)),
-        ("strip-6", (314, 286)),
-        ("strip-8", (524, 286)),
-        ("strip-9", (187, 342)),
-    ] {
-        assert!(m.world().live().unwrap().copy_by_id(id).is_none(), "{id}: static");
-        for py in y..y + 2u32 {
-            for px in x..x + 29u32 {
-                let i = (py * ours.size.0 + px) as usize;
-                assert!(fo.get(px, py) == ft.get(px, py), "{id}: its pixel ({px}, {py})");
-                assert!(go.back[i] == gt.back[i] && go.back[i] > 0, "{id}: its glow at ({px}, {py})");
-            }
+    let mut m = olr_cli::runner::Match::new(&content, &spec, &olr_cli::runner::Options::default()).unwrap();
+    let steady = ["strip-1", "strip-3", "strip-5", "strip-6", "strip-8", "strip-9"];
+    while m.step() {
+        for id in steady {
+            let c = live_copy(m.world(), id);
+            assert_eq!(c.state_name(), "Steady", "{id} at tick {}", m.ticks());
+            let glow =
+                c.setup().props.iter().position(|p| matches!(p.target, olr_sim::LiveTarget::GlowStrength(_)));
+            assert_eq!(c.values()[glow.unwrap()], 100, "{id}: fully lit");
         }
     }
 }
@@ -1610,7 +1764,9 @@ fn the_tubes_fail_unevenly() {
 /// the live sounds (issue #92's `LiveSounds`, headless): in a 4000-tick
 /// match a live tube's `buzz.wav` loops on every tick it is `On` or `Dim`
 /// and on no other, `tick.wav` starts once on each tick it enters `On`
-/// and on no other; no sound plays at a static strip.
+/// and on no other; no sound loops at a steady strip (the plant works:
+/// `Steady` is `On` without the buzz), and none starts there after the
+/// first tick.
 #[test]
 fn the_tubes_buzz_and_tick() {
     let r = tube_run(1, 4000);
@@ -1633,14 +1789,14 @@ fn the_tubes_buzz_and_tick() {
         }
     }
     assert!(ticks.iter().all(|&n| n >= 2), "the tubes' ticks: {ticks:?}");
-    let statics = [(778, 80), (1119, 80), (1067, 177), (314, 286), (524, 286), (187, 342)];
-    for s in &r.sounds {
-        let at = s.starts.iter().map(|x| x.pos).chain(s.loops.iter().map(|l| l.pos));
-        for p in at {
-            let by_static = statics
+    let steady = [(778, 80), (1119, 80), (1067, 177), (314, 286), (524, 286), (187, 342)];
+    for (t, s) in r.sounds.iter().enumerate() {
+        let starts = s.starts.iter().map(|x| x.pos).filter(|_| t > 1);
+        for p in starts.chain(s.loops.iter().map(|l| l.pos)) {
+            let by_steady = steady
                 .iter()
                 .any(|&(x, y)| (p.x - (x as f32 + 14.5)).abs() < 1.0 && (p.y - (y as f32 + 1.0)).abs() < 1.0);
-            assert!(!by_static, "a sound at a static strip: {p:?}");
+            assert!(!by_steady, "a sound at a steady strip at tick {t}: {p:?}");
         }
     }
 }

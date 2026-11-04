@@ -327,3 +327,11 @@
   fixtures/render/factory-screen.png
 2026-11-03 bless-regression: the factory's night shift: the Strip light exposes its colour, a hashed value
   fixtures/matches-live/classic-factory-live-4dm.ron
+2026-11-04 bless-regression: Liero Factory Reloaded's plant works: 25 live copies (the Dirt-ball line, lift, mine cart, forklift, generator, siren, lab flask, panes, every strip live), the level script's shift, alarm and blackout
+  fixtures/matches-live/classic-factory-live-4dm.ron
+2026-11-04 bless-render: Liero Factory Reloaded's plant works: the crane, screen and beacon views redrawn with the new live copies; new goldens factory-line.png (the Dirt-ball line running) and factory-blackout.png (the generator wrecked)
+  fixtures/render/factory-beacon-side.png
+  fixtures/render/factory-blackout.png
+  fixtures/render/factory-crane.png
+  fixtures/render/factory-line.png
+  fixtures/render/factory-screen.png

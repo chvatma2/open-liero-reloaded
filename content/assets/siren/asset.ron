@@ -1,0 +1,246 @@
+(
+    name: "Siren",
+    size: (62, 28),
+    elements: [
+        (
+            id: "backdrop",
+            name: "Background",
+            kind: Drawn(
+                material: Background,
+                size: (61, 28),
+            ),
+            surface: "concrete",
+            surface_map: true,
+        ),
+        (
+            id: "beacons",
+            name: "Beacons",
+            kind: Drawn(
+                material: Background,
+                at: (3, 1),
+                size: (55, 19),
+            ),
+            glow: (
+                strength: 100,
+                group: "beacons",
+            ),
+            surface: "metal",
+        ),
+        (
+            id: "lens-a",
+            name: "Lens A",
+            kind: Drawn(
+                material: Background,
+                at: (10, 10),
+                size: (2, 1),
+            ),
+            glow: (
+                strength: 100,
+                group: "siren",
+                beam: (
+                    direction: 180,
+                    spread: 14,
+                ),
+            ),
+        ),
+        (
+            id: "lens-b",
+            name: "Lens B",
+            kind: Drawn(
+                material: Background,
+                at: (13, 10),
+                size: (2, 1),
+            ),
+            glow: (
+                strength: 100,
+                group: "siren",
+                beam: (
+                    direction: 0,
+                    spread: 14,
+                ),
+            ),
+        ),
+        (
+            id: "lens-c",
+            name: "Lens C",
+            kind: Drawn(
+                material: Background,
+                at: (46, 10),
+                size: (2, 1),
+            ),
+            glow: (
+                strength: 100,
+                group: "siren",
+                beam: (
+                    direction: 180,
+                    spread: 14,
+                ),
+            ),
+        ),
+        (
+            id: "lens-d",
+            name: "Lens D",
+            kind: Drawn(
+                material: Background,
+                at: (49, 10),
+                size: (2, 1),
+            ),
+            glow: (
+                strength: 100,
+                group: "siren",
+                beam: (
+                    direction: 0,
+                    spread: 14,
+                ),
+            ),
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "beacons",
+            intensity: 200,
+            reach: Pixels(20),
+            animation: Pulse(
+                period_ms: 2400,
+                low: 30,
+                high: 100,
+            ),
+        ),
+        (
+            id: "siren",
+            colour: Tint("#ff2810"),
+            intensity: 0,
+            reach: Pixels(150),
+        ),
+    ],
+    materials: [
+        (
+            id: "stone",
+            name: "Stone",
+            notes: "Grey rock: the reference every heat value is a percent of. A blast leaves the rim glowing like lava, cooling slowly.",
+            light_soak: 2,
+            heat: (
+                capacity: 100,
+                conductivity: 100,
+                cooling: 100,
+            ),
+        ),
+        (
+            id: "concrete",
+            name: "Concrete",
+            notes: "Heavy and dense: slow to warm, slow to cool.",
+            light_soak: 2,
+            heat: (
+                capacity: 140,
+                conductivity: 80,
+                cooling: 80,
+            ),
+        ),
+        (
+            id: "metal",
+            name: "Metal",
+            notes: "Steel: heat runs far through it, so a blast warms a wide patch less; it sheds heat fast to the air.",
+            heat: (
+                capacity: 80,
+                conductivity: 600,
+                cooling: 150,
+            ),
+        ),
+    ],
+    states: [
+        (
+            name: "Normal",
+            values: [
+                (
+                    property: GlowStrength("lens-a"),
+                    value: Int(0),
+                ),
+                (
+                    property: GlowStrength("lens-b"),
+                    value: Int(0),
+                ),
+                (
+                    property: GlowStrength("lens-c"),
+                    value: Int(0),
+                ),
+                (
+                    property: GlowStrength("lens-d"),
+                    value: Int(0),
+                ),
+            ],
+        ),
+        (
+            name: "Alarm",
+            values: [
+                (
+                    property: GlowStrength("lens-a"),
+                    value: Int(100),
+                ),
+                (
+                    property: GlowStrength("lens-b"),
+                    value: Int(100),
+                ),
+                (
+                    property: GlowStrength("lens-c"),
+                    value: Int(100),
+                ),
+                (
+                    property: GlowStrength("lens-d"),
+                    value: Int(100),
+                ),
+                (
+                    property: LightIntensity("lens-a"),
+                    value: Int(1000),
+                ),
+            ],
+            loop_sound: "klaxon.wav",
+        ),
+    ],
+    exposed: [
+        (
+            name: "spread_a",
+            property: BeamSpread("lens-a"),
+            default: Int(14),
+            min: 1,
+            max: 90,
+        ),
+        (
+            name: "spread_b",
+            property: BeamSpread("lens-b"),
+            default: Int(14),
+            min: 1,
+            max: 90,
+        ),
+        (
+            name: "spread_c",
+            property: BeamSpread("lens-c"),
+            default: Int(14),
+            min: 1,
+            max: 90,
+        ),
+        (
+            name: "spread_d",
+            property: BeamSpread("lens-d"),
+            default: Int(14),
+            min: 1,
+            max: 90,
+        ),
+        (
+            name: "reach",
+            property: LightReach("lens-a"),
+            default: Int(150),
+            min: 1,
+            max: 360,
+        ),
+        (
+            name: "light",
+            property: LightIntensity("lens-a"),
+            default: Int(0),
+            min: 0,
+            max: 1000,
+        ),
+    ],
+    sounds: [
+        "klaxon.wav",
+    ],
+)

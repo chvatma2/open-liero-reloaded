@@ -2,6 +2,10 @@
 // It stays On a long while, then stutters (a burst of flickers, each Off a
 // moment, then On again, the starter ticking), then now and then stays
 // dark a while before a recovering burst, or glows Dim a while.
+// The plant works (2026-11-04): Dark (a power cut) and Broken (its health
+// gone) are left alone, the tube's timers doing nothing, until it is On
+// again; set Off from outside while On or Dim (Liero Factory Reloaded's
+// level script, for a blast near it), it bursts.
 // Its constants (ticks are 10 ms; tuned in issue #100):
 fn ON_MIN() { 300 }       // ticks On between bursts, at least
 fn ON_MAX() { 1200 }      // and at most
@@ -33,17 +37,20 @@ fn between(lo, hi) { lo + this.rand(hi - lo + 1) }
 fn start() {
   this.mem.step = "on";
   this.mem.left = 0;
+  this.mem.cut = -1;
   this.after(this.between(ON_MIN(), ON_MAX()), "burst");
 }
 
 // A burst of flickers; from the dark it comes On first (recovering).
 fn burst() {
+  if this.halted() { return; }
   this.mem.left = this.between(FLICKERS_MIN(), FLICKERS_MAX());
   if this.state() == "Off" { this.back(); } else { this.flicker(); }
 }
 
 // One flicker: Off a moment.
 fn flicker() {
+  if this.halted() { return; }
   this.set_state("Off");
   this.mem.step = "off";
   this.after(this.between(OFF_MIN(), OFF_MAX()), "back");
@@ -51,6 +58,7 @@ fn flicker() {
 
 // On again (entering On ticks); the next flicker, or the burst is over.
 fn back() {
+  if this.halted() { return; }
   this.set_state("On");
   this.mem.step = "back";
   this.mem.left = this.mem.left - 1;
@@ -60,6 +68,7 @@ fn back() {
 
 // After a burst: dark a while, then a recovering burst; Dim a while; or On.
 fn settle() {
+  if this.halted() { return; }
   let r = this.rand(DRAWS());
   if r < DARK_DRAWS() {
     this.set_state("Off");
@@ -76,7 +85,37 @@ fn settle() {
 
 // Steady On until the next burst.
 fn steady() {
+  if this.halted() { return; }
   if this.state() != "On" { this.set_state("On"); }
   this.mem.step = "on";
   this.after(this.between(ON_MIN(), ON_MAX()), "burst");
+}
+
+// Dark or Broken: its timers do nothing (`mem.step` "halt").
+fn halted() {
+  let s = this.state();
+  if s == "Dark" || s == "Broken" { this.mem.step = "halt"; true } else { false }
+}
+
+// Dark and Broken come from outside (the level script, its health): a
+// step of this script's own in the same tick may have overwritten them, so
+// they are set again. On again after a power cut or a repair (not this
+// script's own step overwriting the cut, in the same tick): steady until
+// the next burst.
+fn entered(s) {
+  if s == "Dark" || s == "Broken" {
+    this.mem.step = "halt";
+    this.mem.cut = this.time();
+    if this.state() != s { this.set_state(s); }
+  } else if s == "On" && this.mem.step == "halt" && this.time() != this.mem.cut {
+    this.steady();
+  } else if s == "Off" && (this.mem.step == "on" || this.mem.step == "dim") {
+    // Not this script's own Off (that sets the step with it): a burst,
+    // from the dark.
+    this.cancel("burst");
+    this.cancel("steady");
+    this.mem.left = this.between(FLICKERS_MIN(), FLICKERS_MAX());
+    this.mem.step = "off";
+    this.after(this.between(OFF_MIN(), OFF_MAX()), "back");
+  }
 }

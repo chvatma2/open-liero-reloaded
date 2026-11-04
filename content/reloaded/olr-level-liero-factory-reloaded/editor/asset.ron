@@ -30,6 +30,20 @@
             surface_map: true,
         ),
         (
+            id: "cab",
+            name: "Cab",
+            locked: true,
+            kind: Drawn(
+                material: Rock,
+            ),
+            glow: (
+                strength: 60,
+                group: "cab",
+            ),
+            surface: "stone",
+            surface_map: true,
+        ),
+        (
             id: "flue",
             name: "Flue",
             locked: true,
@@ -168,19 +182,6 @@
             surface: "glass",
         ),
         (
-            id: "beacons",
-            name: "Beacons",
-            locked: true,
-            kind: Drawn(
-                material: Background,
-            ),
-            glow: (
-                strength: 100,
-                group: "beacons",
-            ),
-            surface: "metal",
-        ),
-        (
             id: "mine-lamps",
             name: "Mine lamps",
             locked: true,
@@ -216,6 +217,31 @@
             glow: (
                 strength: 100,
                 group: "aviation",
+            ),
+        ),
+        (
+            id: "emergency",
+            name: "Emergency",
+            locked: true,
+            kind: Drawn(
+                material: Background,
+            ),
+            glow: (
+                strength: 100,
+                group: "emergency",
+                mask: true,
+            ),
+        ),
+        (
+            id: "hazards",
+            name: "Hazards",
+            locked: true,
+            kind: Drawn(
+                material: Rock,
+            ),
+            glow: (
+                strength: 100,
+                group: "hazard",
             ),
         ),
     ],
@@ -323,6 +349,35 @@
                 high: 100,
                 shape: Square,
             ),
+        ),
+        (
+            id: "emergency",
+            colour: Tint("#ff2010"),
+            intensity: 0,
+            reach: Pixels(70),
+            animation: Pulse(
+                period_ms: 2000,
+                low: 50,
+                high: 100,
+            ),
+        ),
+        (
+            id: "hazard",
+            colour: Tint("#ffa020"),
+            intensity: 300,
+            reach: Pixels(24),
+            animation: Pulse(
+                period_ms: 1000,
+                low: 0,
+                high: 100,
+                shape: Square,
+            ),
+        ),
+        (
+            id: "cab",
+            colour: Tint("#ffd8a0"),
+            intensity: 140,
+            reach: Pixels(22),
         ),
     ],
     materials: [

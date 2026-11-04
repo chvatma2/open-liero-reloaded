@@ -1,0 +1,139 @@
+(
+    name: "Mine cart",
+    size: (187, 17),
+    elements: [
+        (
+            id: "cart",
+            name: "Cart",
+            kind: Drawn(
+                material: Rock,
+                at: (2, 3),
+                size: (18, 14),
+            ),
+        ),
+        (
+            id: "lamp",
+            name: "Lamp",
+            kind: Drawn(
+                material: Background,
+                at: (20, 10),
+                size: (1, 1),
+            ),
+            glow: (
+                strength: 100,
+                group: "cartlamp",
+                beam: (
+                    direction: 0,
+                    spread: 18,
+                ),
+            ),
+        ),
+        (
+            id: "lamp-b",
+            name: "Lamp B",
+            kind: Drawn(
+                material: Background,
+                at: (1, 10),
+                size: (1, 1),
+            ),
+            glow: (
+                strength: 100,
+                group: "cartlamp",
+                beam: (
+                    direction: 180,
+                    spread: 18,
+                ),
+            ),
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "cartlamp",
+            colour: Tint("#ffd090"),
+            intensity: 420,
+            reach: Pixels(60),
+        ),
+    ],
+    states: [
+        (
+            name: "Stopped",
+            values: [
+                (
+                    property: GlowStrength("lamp"),
+                    value: Int(0),
+                ),
+                (
+                    property: GlowStrength("lamp-b"),
+                    value: Int(0),
+                ),
+            ],
+        ),
+        (
+            name: "Right",
+            values: [
+                (
+                    property: GlowStrength("lamp"),
+                    value: Int(100),
+                ),
+                (
+                    property: GlowStrength("lamp-b"),
+                    value: Int(0),
+                ),
+            ],
+            loop_sound: "cart.wav",
+        ),
+        (
+            name: "Left",
+            values: [
+                (
+                    property: GlowStrength("lamp"),
+                    value: Int(0),
+                ),
+                (
+                    property: GlowStrength("lamp-b"),
+                    value: Int(100),
+                ),
+            ],
+            loop_sound: "cart.wav",
+        ),
+        (
+            name: "Off",
+            values: [
+                (
+                    property: GlowStrength("lamp"),
+                    value: Int(0),
+                ),
+                (
+                    property: GlowStrength("lamp-b"),
+                    value: Int(0),
+                ),
+            ],
+        ),
+    ],
+    exposed: [
+        (
+            name: "cart_x",
+            property: OffsetX("cart"),
+            default: Int(0),
+            min: 0,
+            max: 167,
+        ),
+        (
+            name: "lamp_x",
+            property: OffsetX("lamp"),
+            default: Int(0),
+            min: 0,
+            max: 167,
+        ),
+        (
+            name: "lamp_b_x",
+            property: OffsetX("lamp-b"),
+            default: Int(0),
+            min: 0,
+            max: 167,
+        ),
+    ],
+    sounds: [
+        "cart.wav",
+    ],
+)

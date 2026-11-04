@@ -36,8 +36,8 @@ struct Saved {
 fn strip() -> Asset {
     let mut a = olr_edit::asset::load_dir(&built_in_assets().join("strip-light")).unwrap();
     a.name = "Strip two".into();
-    // Issue #98: the built-in has `On`, `Dim` and `Off` already.
-    olr_edit::asset::add_state(&mut a, "Broken", None).unwrap();
+    // Issue #98: the built-in has `On`, `Dim`, `Off`, `Dark`, `Broken` and `Steady` already.
+    olr_edit::asset::add_state(&mut a, "Spare", None).unwrap();
     a
 }
 

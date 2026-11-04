@@ -38,7 +38,9 @@
 # 3. The level takes them (`level library update <pack> k e s c t d g`),
 #    its `crane` and (issue #100) `terminal` copies, the strips `LIVE_STRIPS` and (issue
 #    #99) `LIVE_DISPLAYS` are switched live (`level copy set … --live`;
-#    the other strips stay static, baked steady On), its level script is
+#    the plant works: every strip and `LIVE_WORKS` too, the strips not in
+#    `LIVE_STRIPS` starting Steady with `steady.rhai` as their own
+#    script instead of their asset's), its level script is
 #    `tools/levels/factory/level.rhai` (`level script --set`) and its
 #    notes say so.
 #
@@ -65,6 +67,12 @@ STRIP_COLOURS = [("#ffb050", ["strip-6", "strip-7", "strip-8", "strip-9"]),
                  ("#dce8ff", ["strip-1", "strip-2", "strip-3"])]
 # Issue #99: the copies whose displays change.
 LIVE_DISPLAYS = ["screen", "sign", "desk", "gauge"]
+# The plant works (2026-11-04): every strip is live (health, broken, a
+# power cut); the faulty tubes (`LIVE_STRIPS`) run the Strip light's
+# script, the others their own `steady.rhai`; and the pass's new copies.
+STRIPS = [f"strip-{i}" for i in range(1, 10)]
+STEADY = "tools/levels/factory/steady.rhai"
+LIVE_WORKS = ["line", "siren", "generator", "lift", "cart", "forklift", "lab-flask", "pane-1", "pane-3", "pane-4"]
 # Issue #99: the security camera's parts of After Dark, each drawn full
 # bright centred on a world point, and the world box shrunk to the
 # screen's 12 x 11 (about its aspect).
@@ -108,7 +116,13 @@ NOTES = (
     "control room's screen is a security camera, the 13-37 sign, the desk's lamps and the gauge "
     "change now and then, and an orange warning beacon under the crane's trolley turns while it "
     "moves. The night shift lights the mine's back wall, the lower hall, the red duct and the "
-    "chimney, colours the strips by area and sets a city and its industry before the stars."
+    "chimney, colours the strips by area and sets a city and its industry before the stars. "
+    "The plant works: a horn starts the shift and the line under the sign stamps dirt into balls "
+    "that roll up the incline into the crate, its belt red when stopped and white when running; "
+    "a lift, a mine cart and a forklift go about their work; a big blast or a quick run of kills "
+    "sounds the roof's sirens and tints the lamps red; shooting the generator by the gauge cuts "
+    "the power (red emergency lamps, the machines stopped) until it is repaired; strips can be "
+    "shot out and are mended now and then, the lab's flask bubbles and the office panes shatter."
 )
 
 # The Console's `rock-disp` box in the level (After Dark's place): its LED
@@ -324,8 +338,12 @@ def make_level(cli):
     run(cli, "level", "library", "update", OUT, "k", "e", "s", "c", "t", "d", "g")
     run(cli, "level", "copy", "set", OUT, "crane", "--live")
     run(cli, "level", "copy", "set", OUT, "terminal", "--live")
-    for copy in LIVE_STRIPS + LIVE_DISPLAYS:
+    for copy in STRIPS + LIVE_DISPLAYS + LIVE_WORKS:
         run(cli, "level", "copy", "set", OUT, copy, "--live")
+    for copy in STRIPS:
+        if copy not in LIVE_STRIPS:
+            run(cli, "level", "copy", "set", OUT, copy, "--default-script", "off", "--state", "Steady")
+            run(cli, "level", "copy", "script", OUT, copy, "--set", STEADY)
     for colour, strips in STRIP_COLOURS:
         for copy in strips:
             run(cli, "level", "copy", "set", OUT, copy, "--value", f"colour={colour}")

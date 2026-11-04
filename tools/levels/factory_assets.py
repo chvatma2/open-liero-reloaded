@@ -57,6 +57,7 @@ import os, shlex, shutil, struct, subprocess, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from reloaded_materials import decode  # noqa: E402
 from factory_skyline import png, write as write_skyline  # noqa: E402
+import factory_works as works  # noqa: E402
 
 AFTER_DARK = "content/reloaded/olr-level-liero-factory-after-dark"
 OUT = "content/reloaded/olr-level-liero-factory-reloaded"
@@ -72,7 +73,9 @@ NOTES = (
 ASSETS = "content/assets"
 README = os.path.join(ASSETS, "README.md")
 SCRATCH = "target/factory-assets"
-NEW_ASSETS = ["crane", "console", "gauge", "terminal"]
+NEW_ASSETS = ["crane", "console", "gauge", "terminal",
+              # The plant works (2026-11-04, `factory_works.py`).
+              "ball-line", "lift", "mine-cart", "forklift", "generator", "siren", "lab-flask", "window-pane"]
 # Issue #97: the crane's box, whose wall is painted behind its pixels.
 CRANE_BOX = (762, 269, 114, 50)
 WALL_EDGE = 2
@@ -105,8 +108,14 @@ SKYLINE = [
 ]
 
 # The pieces: key, built-in folder, the ground's layers its pixels come
-# from, its size and its copies (id, top-left), in placing order (later on
-# top: the sign above the console).
+# from, its size and its copies (id, top-left, and where it is placed when
+# that is elsewhere), in placing order (later on top: the sign above the
+# line's stamp, the gauge above the generator). The plant works
+# (2026-11-04): the Dirt-ball line takes the Console's place (its stamp;
+# the belt's stripe and balls are cut by `factory_works.ground`), the
+# Siren the Warning beacon's (both rings), the Generator and the Gauge's
+# mounting, the Lab flask (its liquid cut by `ground`) and three panes of
+# the big window are new.
 PIECES = [
     ("s", "strip-light", ["lamps"], (29, 2), [
         ("strip-1", (778, 80)), ("strip-2", (1004, 80)), ("strip-3", (1119, 80)),
@@ -116,12 +125,15 @@ PIECES = [
     ("l", "ceiling-lamp", ["rock", "lamps"], (13, 6), [("ceil-lamp", (319, 137))]),
     ("c", "computer-screen", ["backdrop", "ctrl-scr"], (14, 14), [("screen", (906, 83))]),
     ("d", "control-desk", ["backdrop", "screens", "displays"], (30, 11), [("desk", (903, 119))]),
-    ("w", "warning-beacon", ["backdrop", "beacons"], (25, 28), [("beacon", (951, 45))]),
+    ("w", "siren", ["backdrop", "beacons"], (62, 28), [("siren", (951, 45))]),
     ("e", "terminal", ["rock", "rock-bcn"], (15, 14), [("terminal", (723, 351))]),
     ("k", "crane", ["rock"], (114, 50), [("crane", (762, 269))]),
-    ("o", "console", ["rock", "rock-disp"], (33, 64), [("console", (933, 269))]),
+    ("o", "ball-line", ["rock", "rock-disp"], (33, 64), [("line", (933, 269), (909, 269))]),
     ("t", "lit-sign", ["rock", "rock-disp"], (31, 21), [("sign", (934, 299))]),
+    ("r", "generator", ["rock"], (72, 25), [("generator", (1046, 146))]),
     ("g", "gauge", ["rock", "rock-scr", "rock-disp"], (48, 27), [("gauge", (1059, 144))]),
+    ("b", "lab-flask", [], (22, 17), [("lab-flask", (370, 205))]),
+    ("a", "window-pane", ["glass"], (19, 22), [("pane-1", (719, 151)), ("pane-3", (759, 151)), ("pane-4", (779, 151))]),
 ]
 
 
@@ -352,7 +364,7 @@ def make_level(cli):
     run(cli, "level", "element", "remove", OUT, "sky")
     cut = []
     for _, _, layers, (w, h), copies in PIECES:
-        for _, (x, y) in copies:
+        for _, (x, y), *_ in copies:
             for layer in layers:
                 run(cli, "level", "element", "erase", OUT, layer, "--rect", f"{x},{y},{w},{h}")
                 cut.append(layer)
@@ -361,6 +373,7 @@ def make_level(cli):
             run(cli, "level", "element", "remove", OUT, layer)
     paint_wall(cli)
     locked += night_shift(cli)
+    locked += works.ground(lambda *a: run(cli, *a), OUT)
     gone = {"sky"} | {l for l in cut if not os.path.exists(os.path.join(OUT, "editor/layers", l + ".png"))}
     for layer in locked:
         if layer not in gone:
@@ -376,9 +389,11 @@ def make_level(cli):
     make_skyline(cli)
     # The pieces, built in.
     for key, folder, _, _, copies in PIECES:
-        for i, (cid, (x, y)) in enumerate(copies):
+        for i, (cid, at, *place) in enumerate(copies):
+            x, y = place[0] if place else at
             args = ["level", "copy", "add", OUT, os.path.join(ASSETS, folder), "--at", f"{x},{y}", "--id", cid]
             run(cli, *(args + (["--key", key] if i == 0 else [])))
+    works.place(lambda *a: run(cli, *a), OUT, ASSETS)
     run(cli, "level", "library", OUT)
 
 
@@ -387,6 +402,7 @@ def main():
         sys.exit("usage: python3 -I tools/levels/factory_assets.py <olr-cli>")
     cli = os.path.abspath(sys.argv[1])
     os.makedirs(SCRATCH, exist_ok=True)
+    works.make_art()
     make_assets(cli)
     make_level(cli)
 

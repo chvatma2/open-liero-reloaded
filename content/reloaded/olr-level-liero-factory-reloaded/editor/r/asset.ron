@@ -1,0 +1,165 @@
+(
+    name: "Generator",
+    size: (72, 25),
+    elements: [
+        (
+            id: "housing",
+            name: "Housing",
+            kind: Drawn(
+                material: Rock,
+                at: (4, 6),
+                size: (66, 15),
+            ),
+            surface: "stone",
+            surface_map: true,
+        ),
+        (
+            id: "leds",
+            name: "Leds",
+            kind: Drawn(
+                material: Background,
+                at: (6, 8),
+                size: (2, 10),
+            ),
+            glow: (
+                strength: 100,
+                group: "status",
+            ),
+        ),
+        (
+            id: "vent",
+            name: "Vent",
+            kind: Drawn(
+                material: Background,
+                at: (61, 0),
+                size: (11, 9),
+            ),
+            glow: (
+                strength: 100,
+                group: "vent",
+                mask: true,
+            ),
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "status",
+            intensity: 160,
+            reach: Pixels(14),
+            animation: Flicker(
+                speed: 2,
+                depth: 20,
+            ),
+        ),
+        (
+            id: "vent",
+            colour: Tint("#ff8030"),
+            intensity: 260,
+            reach: Pixels(30),
+            animation: Pulse(
+                period_ms: 3000,
+                low: 40,
+                high: 100,
+            ),
+        ),
+    ],
+    materials: [
+        (
+            id: "stone",
+            name: "Stone",
+            notes: "Grey rock: the reference every heat value is a percent of. A blast leaves the rim glowing like lava, cooling slowly.",
+            light_soak: 2,
+            heat: (
+                capacity: 100,
+                conductivity: 100,
+                cooling: 100,
+            ),
+        ),
+        (
+            id: "metal",
+            name: "Metal",
+            notes: "Steel: heat runs far through it, so a blast warms a wide patch less; it sheds heat fast to the air.",
+            heat: (
+                capacity: 80,
+                conductivity: 600,
+                cooling: 150,
+            ),
+        ),
+        (
+            id: "wood",
+            name: "Wood",
+            notes: "Smoulders: warms easily, keeps its heat where it lands and glows like embers.",
+            heat: (
+                capacity: 50,
+                conductivity: 15,
+                cooling: 60,
+                look: (
+                    ramp: [
+                        (
+                            temperature: 80,
+                            colour: "#300c00",
+                            glow: 0,
+                        ),
+                        (
+                            temperature: 250,
+                            colour: "#9a2400",
+                            glow: 45,
+                        ),
+                        (
+                            temperature: 550,
+                            colour: "#ff6410",
+                            glow: 85,
+                        ),
+                        (
+                            temperature: 1000,
+                            colour: "#ffc060",
+                            glow: 100,
+                        ),
+                    ],
+                ),
+            ),
+        ),
+    ],
+    states: [
+        (
+            name: "Running",
+            loop_sound: "idle.wav",
+        ),
+        (
+            name: "Wrecked",
+            own: [
+                "housing",
+                "leds",
+                "vent",
+            ],
+            values: [
+                (
+                    property: GlowStrength("leds"),
+                    value: Int(0),
+                ),
+                (
+                    property: GlowStrength("vent"),
+                    value: Int(0),
+                ),
+            ],
+            enter_sound: "pop.wav",
+        ),
+    ],
+    exposed: [
+        (
+            name: "hp",
+            property: Health,
+            default: Int(40),
+            min: 0,
+            max: 40,
+        ),
+    ],
+    sounds: [
+        "idle.wav",
+        "pop.wav",
+    ],
+    health: (
+        points: 40,
+        at_zero: "Wrecked",
+    ),
+)

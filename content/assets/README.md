@@ -12,9 +12,12 @@ They are in the 0.3 asset format (issue #71) and stateless (one state,
 nothing exposed, no sounds, health or script) but for the Crane and the
 Console (issue #97), the Strip light (issue #98), the Computer
 screen, the Control desk, the Lit sign and the Gauge (issue #99) and
-the Terminal (issue #100), which Liero Factory Reloaded brings alive
-(all but the Console, its copy static since issue #100). All glow; the Crane since issue
-#99 (its warning beacon).
+the Terminal (issue #100), and the plant works' Dirt-ball line, Lift,
+Mine cart, Forklift, Generator, Siren, Lab flask and Window pane
+(2026-11-04), which Liero Factory Reloaded brings alive (all but the
+Console, its copy static since issue #100 and replaced by the Dirt-ball
+line since the plant works). All glow but the Window pane; the Crane
+since issue #99 (its warning beacon).
 
 Each was cut from OLR's own Reloaded levels (`content/reloaded/`) with
 `olr-cli asset save`. Its entry below holds one block of `olr-cli` lines
@@ -67,7 +70,13 @@ is gone.
   burst of 2-6 flickers, now and then staying dark or Dim a while after
   (`content/reloaded/README.md`). A static copy bakes steady On. The
   night shift exposes its glow colour as `colour` (default `#ffe6c0`,
-  the group's), which Liero Factory Reloaded sets by area.
+  the group's), which Liero Factory Reloaded sets by area. The plant works
+  (2026-11-04): `Dark` (as `Off`, for a power cut: the script leaves it
+  alone until it is On again) and `Broken` (the tube shattered,
+  `strip-broken.png`, entered with `pop.wav`), health 20 (`hp`),
+  `Broken` at 0; set `Off` from outside while lit (Liero Factory
+  Reloaded's level script does so for a blast near it), the script
+  bursts; `Steady` is `On` without the buzz (a sound tube).
 
       olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 778,80,29,2 --layers lamps --name "Strip light" --out content/assets/strip-light
       olr-cli asset state set content/assets/strip-light Normal --name On
@@ -83,6 +92,16 @@ is gone.
       olr-cli asset state set content/assets/strip-light Dim --loop-sound buzz.wav
       olr-cli asset script content/assets/strip-light --set tools/levels/factory/tube.rhai
       olr-cli asset expose content/assets/strip-light colour lamps.glow-colour --default "#ffe6c0"
+      olr-cli asset state add content/assets/strip-light Dark --from Off
+      olr-cli asset state add content/assets/strip-light Broken
+      olr-cli asset state picture content/assets/strip-light Broken lamps --art tools/levels/factory/art/strip-broken.png
+      olr-cli asset state value content/assets/strip-light Broken lamps.glow 0
+      olr-cli asset sound add content/assets/strip-light tools/levels/factory/sounds/pop.wav
+      olr-cli asset state set content/assets/strip-light Broken --enter-sound pop.wav
+      olr-cli asset health content/assets/strip-light --points 20 --at-zero Broken
+      olr-cli asset expose content/assets/strip-light hp health --min 0 --max 20
+      olr-cli asset state add content/assets/strip-light Steady --from On
+      olr-cli asset state set content/assets/strip-light Steady --loop-sound none --enter-sound tick.wav
 
 - `computer-screen/`: **Computer screen**, the control room's upper
   screen on its wall, group `control` (blue-white, `Tint("#d0e0ff")`;
@@ -177,7 +196,8 @@ is gone.
   glow) and `halo_light` (`halo`'s intensity); `Idle` puts it out (both
   lenses' glow, `beacon`'s and `halo`'s intensity 0, `claw`'s glow 0).
   The script keeps the lenses at the claw's offset and turns the beacon
-  while `Moving`.
+  while `Moving`. The plant works (2026-11-04): `Off` (as `Idle`, for a
+  power cut: the claw stops where it is until it is Idle again).
 
       olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 762,272,114,47 --name Claw
       olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 762,269,114,3 --name Rail
@@ -218,6 +238,7 @@ is gone.
       olr-cli asset state value content/assets/crane Idle claw.light 0
       olr-cli asset sound add content/assets/crane tools/levels/factory/sounds/hum.wav
       olr-cli asset state set content/assets/crane Moving --loop-sound hum.wav
+      olr-cli asset state add content/assets/crane Off --from Idle
       olr-cli asset script content/assets/crane --set tools/levels/factory/crane.rhai
 
 - `console/`: **Console** (issue #96), the box hanging under the conveyor
@@ -283,6 +304,331 @@ is gone.
       olr-cli asset state add content/assets/gauge C
       olr-cli asset state picture content/assets/gauge C rock-disp --art tools/levels/factory/art/gauge-c.png
       olr-cli asset script content/assets/gauge --set tools/levels/factory/gauge.rhai
+
+- `ball-line/`: **Dirt-ball line** (the plant works, 2026-11-04), the
+  lower hall's line in one copy, so its script keeps the stamp and the
+  balls in step: the stamp under the 13-37 sign (its housing, `housing`,
+  and its die, `die`, the cylinder and pressing plate, cut from After
+  Dark's `rock`; the sign is a copy of its own on top), a ram behind the
+  housing (`ram`, drawn from the die's cylinder, a Background layer that
+  shows as the die drops), the LED column (`leds`, group `displays`) as
+  the stamp's countdown, the belt's red stripe on the flat run and the
+  incline (`stripe`, its rock pixels, group `belt`, `#ff2a18`) as the
+  line's status light, the drive's running lamp (`drive-lamp`, group
+  `running`) and six dirt balls (`ball-1` … `ball-6`, the incline's
+  painted ball, Background, hidden; glowing at 60 in `balls`, a group
+  that casts nothing, so they show their art at least at 60 % as front
+  dirt does by its floor). States `Stopped` (start: the LEDs
+  dark, the stripe red, the lamp out) and `Lit 1` … `Lit 7` (running:
+  that many LEDs lit from the bottom, the stripe white, `#f4f0ff`, the
+  lamp lit; each ticks, `tick.wav`, and loops `rumble.wav`). Exposed
+  `die_y` and `ram_y` (0-18: the plate onto the belt), and each ball's
+  `b<i>_x` (from each ball's own place, 4 (i − 1) px along the flat
+  run: −4 (i − 1) to 96 − 4 (i − 1)), `b<i>_y` (−29-0) and `b<i>_on`. Its pictures and
+  masks are from `tools/levels/factory_works.py`; `thump.wav`,
+  `tick.wav`, `rumble.wav` and `horn.wav` are synthesised for OLR by
+  `tools/sounds/factory_sounds.py`, CC0. Its default script
+  `tools/levels/factory/line.rhai` counts down, drops the die (crushing
+  what is under it), sends a ball along the belt and up the incline into
+  the crate, and again, while not Stopped; Liero Factory Reloaded's level
+  script starts and stops it (the shift).
+
+      olr-cli level element erase content/reloaded/olr-level-liero-factory-after-dark rock --rect 934,299,31,21
+      olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 933,269,33,57 --name Housing
+      olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 933,326,33,7 --name Die
+      olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --mask tools/levels/factory/art/line-stripe-mask.png --name Stripe
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark rock-disp --locked false
+      olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock-disp --rect 942,279,1,19 --name Leds
+      olr-cli level element glow content/reloaded/olr-level-liero-factory-after-dark leds --rect 942,279,1,19 --strength 100
+      olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark backdrop --rect 941,308,17,18 --name Ram
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark ram --mask tools/levels/factory/art/line-ram-mask.png --tile tools/levels/factory/art/line-ram-tile.png
+      olr-cli level group add content/reloaded/olr-level-liero-factory-after-dark belt --colour ff2a18 --intensity 300 --reach 26
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark stripe --glow 100 --glow-group belt
+      olr-cli level element glow content/reloaded/olr-level-liero-factory-after-dark stripe --mask tools/levels/factory/art/line-stripe-glow.png --strength 100
+      olr-cli level group add content/reloaded/olr-level-liero-factory-after-dark running --colour 50ff70 --intensity 160 --reach 12
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name "Drive lamp"
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark drive-lamp --mask tools/levels/factory/art/line-lamp-mask.png --tile tools/levels/factory/art/line-lamp-tile.png
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark drive-lamp --glow 100 --glow-group running
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name "Ball 1"
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark ball-1 --mask tools/levels/factory/art/line-ball-1-mask.png --tile tools/levels/factory/art/line-ball-1-tile.png
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name "Ball 2"
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark ball-2 --mask tools/levels/factory/art/line-ball-2-mask.png --tile tools/levels/factory/art/line-ball-2-tile.png
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name "Ball 3"
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark ball-3 --mask tools/levels/factory/art/line-ball-3-mask.png --tile tools/levels/factory/art/line-ball-3-tile.png
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name "Ball 4"
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark ball-4 --mask tools/levels/factory/art/line-ball-4-mask.png --tile tools/levels/factory/art/line-ball-4-tile.png
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name "Ball 5"
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark ball-5 --mask tools/levels/factory/art/line-ball-5-mask.png --tile tools/levels/factory/art/line-ball-5-tile.png
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name "Ball 6"
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark ball-6 --mask tools/levels/factory/art/line-ball-6-mask.png --tile tools/levels/factory/art/line-ball-6-tile.png
+      olr-cli level group add content/reloaded/olr-level-liero-factory-after-dark balls --colour own --intensity 0 --reach 1
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark ball-1 --glow 60 --glow-group balls
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark ball-2 --glow 60 --glow-group balls
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark ball-3 --glow 60 --glow-group balls
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark ball-4 --glow 60 --glow-group balls
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark ball-5 --glow 60 --glow-group balls
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark ball-6 --glow 60 --glow-group balls
+      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 909,269,150,88 --layers ram,housing,die,leds,stripe,drive-lamp,ball-1,ball-2,ball-3,ball-4,ball-5,ball-6 --name "Dirt-ball line" --out content/assets/ball-line
+      olr-cli asset state add content/assets/ball-line Plain
+      olr-cli asset state picture content/assets/ball-line Plain leds --art tools/levels/factory/art/line-leds-0.png --glow tools/levels/factory/art/line-leds-0-glow.png
+      olr-cli asset state set content/assets/ball-line Plain --start
+      olr-cli asset state remove content/assets/ball-line Normal
+      olr-cli asset state set content/assets/ball-line Plain --name Stopped
+      olr-cli asset state value content/assets/ball-line Stopped drive-lamp.glow 0
+      olr-cli asset sound add content/assets/ball-line tools/levels/factory/sounds/thump.wav
+      olr-cli asset sound add content/assets/ball-line tools/levels/factory/sounds/tick.wav
+      olr-cli asset sound add content/assets/ball-line tools/levels/factory/sounds/rumble.wav
+      olr-cli asset sound add content/assets/ball-line tools/levels/factory/sounds/horn.wav
+      olr-cli asset state add content/assets/ball-line "Lit 1"
+      olr-cli asset state picture content/assets/ball-line "Lit 1" leds --art tools/levels/factory/art/line-leds-1.png --glow tools/levels/factory/art/line-leds-1-glow.png
+      olr-cli asset state picture content/assets/ball-line "Lit 1" stripe --art tools/levels/factory/art/line-stripe-run.png
+      olr-cli asset state picture content/assets/ball-line "Lit 1" drive-lamp --art tools/levels/factory/art/line-lamp-on.png
+      olr-cli asset state value content/assets/ball-line "Lit 1" stripe.glow-colour "#f4f0ff"
+      olr-cli asset state value content/assets/ball-line "Lit 1" drive-lamp.glow 100
+      olr-cli asset state set content/assets/ball-line "Lit 1" --loop-sound rumble.wav --enter-sound tick.wav
+      olr-cli asset state add content/assets/ball-line "Lit 2" --from "Lit 1"
+      olr-cli asset state picture content/assets/ball-line "Lit 2" leds --art tools/levels/factory/art/line-leds-2.png --glow tools/levels/factory/art/line-leds-2-glow.png
+      olr-cli asset state add content/assets/ball-line "Lit 3" --from "Lit 1"
+      olr-cli asset state picture content/assets/ball-line "Lit 3" leds --art tools/levels/factory/art/line-leds-3.png --glow tools/levels/factory/art/line-leds-3-glow.png
+      olr-cli asset state add content/assets/ball-line "Lit 4" --from "Lit 1"
+      olr-cli asset state picture content/assets/ball-line "Lit 4" leds --art tools/levels/factory/art/line-leds-4.png --glow tools/levels/factory/art/line-leds-4-glow.png
+      olr-cli asset state add content/assets/ball-line "Lit 5" --from "Lit 1"
+      olr-cli asset state picture content/assets/ball-line "Lit 5" leds --art tools/levels/factory/art/line-leds-5.png --glow tools/levels/factory/art/line-leds-5-glow.png
+      olr-cli asset state add content/assets/ball-line "Lit 6" --from "Lit 1"
+      olr-cli asset state picture content/assets/ball-line "Lit 6" leds --art tools/levels/factory/art/line-leds-6.png --glow tools/levels/factory/art/line-leds-6-glow.png
+      olr-cli asset state add content/assets/ball-line "Lit 7" --from "Lit 1"
+      olr-cli asset state picture content/assets/ball-line "Lit 7" leds --art tools/levels/factory/art/line-leds-7.png --glow tools/levels/factory/art/line-leds-7-glow.png
+      olr-cli asset expose content/assets/ball-line die_y die.y --default 0 --min 0 --max 18
+      olr-cli asset expose content/assets/ball-line ram_y ram.y --default 0 --min 0 --max 18
+      olr-cli asset expose content/assets/ball-line b1_x ball-1.x --default 0 --min 0 --max 96
+      olr-cli asset expose content/assets/ball-line b1_y ball-1.y --default 0 --min -29 --max 0
+      olr-cli asset expose content/assets/ball-line b1_on ball-1.visible --default false
+      olr-cli asset expose content/assets/ball-line b2_x ball-2.x --default 0 --min -4 --max 92
+      olr-cli asset expose content/assets/ball-line b2_y ball-2.y --default 0 --min -29 --max 0
+      olr-cli asset expose content/assets/ball-line b2_on ball-2.visible --default false
+      olr-cli asset expose content/assets/ball-line b3_x ball-3.x --default 0 --min -8 --max 88
+      olr-cli asset expose content/assets/ball-line b3_y ball-3.y --default 0 --min -29 --max 0
+      olr-cli asset expose content/assets/ball-line b3_on ball-3.visible --default false
+      olr-cli asset expose content/assets/ball-line b4_x ball-4.x --default 0 --min -12 --max 84
+      olr-cli asset expose content/assets/ball-line b4_y ball-4.y --default 0 --min -29 --max 0
+      olr-cli asset expose content/assets/ball-line b4_on ball-4.visible --default false
+      olr-cli asset expose content/assets/ball-line b5_x ball-5.x --default 0 --min -16 --max 80
+      olr-cli asset expose content/assets/ball-line b5_y ball-5.y --default 0 --min -29 --max 0
+      olr-cli asset expose content/assets/ball-line b5_on ball-5.visible --default false
+      olr-cli asset expose content/assets/ball-line b6_x ball-6.x --default 0 --min -20 --max 76
+      olr-cli asset expose content/assets/ball-line b6_y ball-6.y --default 0 --min -29 --max 0
+      olr-cli asset expose content/assets/ball-line b6_on ball-6.visible --default false
+      olr-cli asset script content/assets/ball-line --set tools/levels/factory/line.rhai
+
+- `lift/`: **Lift** (the plant works), a goods lift's cage: its floor
+  (`cage-floor`, Rock, hazard striped, a blinking light at each end in
+  group `lift`, `Pulse`) and its frame and lamp (`cage`, Background,
+  group `cage`). States `Idle` (start: the blinkers out), `Moving` (lit,
+  looping `whine.wav`) and `Off` (the lamp out too); `floor_y` and
+  `cage_y` (0-87) move it down. Its default script
+  `tools/levels/factory/lift.rhai` rests at each end, then rides to the
+  other; `Off` stops it where it is.
+
+      olr-cli level group add content/reloaded/olr-level-liero-factory-after-dark cage --colour fff0d0 --intensity 380 --reach 30
+      olr-cli level group add content/reloaded/olr-level-liero-factory-after-dark lift --colour ffb040 --intensity 300 --reach 26 --animation "Pulse(period_ms: 1000, low: 30, high: 100, shape: Square)"
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material rock --name "Cage floor"
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark cage-floor --mask tools/levels/factory/art/lift-floor-mask.png --tile tools/levels/factory/art/lift-floor-tile.png
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark cage-floor --glow 100 --glow-group lift
+      olr-cli level element glow content/reloaded/olr-level-liero-factory-after-dark cage-floor --mask tools/levels/factory/art/lift-floor-glow.png --strength 100
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name Cage
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark cage --mask tools/levels/factory/art/lift-frame-mask.png --tile tools/levels/factory/art/lift-frame-tile.png
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark cage --glow 100 --glow-group cage
+      olr-cli level element glow content/reloaded/olr-level-liero-factory-after-dark cage --mask tools/levels/factory/art/lift-frame-glow.png --strength 100
+      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 1186,352,12,104 --layers cage,cage-floor --name Lift --out content/assets/lift
+      olr-cli asset state set content/assets/lift Normal --name Idle
+      olr-cli asset state value content/assets/lift Idle cage-floor.glow 0
+      olr-cli asset state add content/assets/lift Moving
+      olr-cli asset state value content/assets/lift Moving cage-floor.glow 100
+      olr-cli asset state add content/assets/lift Off
+      olr-cli asset state value content/assets/lift Off cage.glow 0
+      olr-cli asset expose content/assets/lift floor_y cage-floor.y --default 0 --min 0 --max 87
+      olr-cli asset expose content/assets/lift cage_y cage.y --default 0 --min 0 --max 87
+      olr-cli asset sound add content/assets/lift tools/levels/factory/sounds/whine.wav
+      olr-cli asset state set content/assets/lift Moving --loop-sound whine.wav
+      olr-cli asset script content/assets/lift --set tools/levels/factory/lift.rhai
+
+- `mine-cart/`: **Mine cart** (the plant works), a cart loaded with dirt
+  on rails (`cart`, Rock; the load is its art, not dirt) and a lamp at
+  each end (`lamp`, beam 0°, and `lamp-b`, 180°, group
+  `cartlamp`). States `Stopped` (start: lamps out), `Right` and `Left`
+  (the lamp ahead lit, looping `cart.wav`) and `Off`; `cart_x`,
+  `lamp_x` and `lamp_b_x` (0-167) move it. Its default script
+  `tools/levels/factory/cart.rhai` runs it to the end of its rails and
+  back, turning where it is blocked.
+
+      olr-cli level group add content/reloaded/olr-level-liero-factory-after-dark cartlamp --colour ffd090 --intensity 420 --reach 60
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material rock --name Cart
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark cart --mask tools/levels/factory/art/cart-mask.png --tile tools/levels/factory/art/cart-tile.png
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name "Lamp"
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark lamp --mask tools/levels/factory/art/cart-lamp-mask.png --tile tools/levels/factory/art/cart-lamp-tile.png
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark lamp --glow 100 --glow-group cartlamp --glow-beam 0,18
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name "Lamp B"
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark lamp-b --mask tools/levels/factory/art/cart-lamp-b-mask.png --tile tools/levels/factory/art/cart-lamp-b-tile.png
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark lamp-b --glow 100 --glow-group cartlamp --glow-beam 180,18
+      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 12,456,187,17 --layers cart,lamp,lamp-b --name "Mine cart" --out content/assets/mine-cart
+      olr-cli asset state set content/assets/mine-cart Normal --name Stopped
+      olr-cli asset state value content/assets/mine-cart Stopped lamp.glow 0
+      olr-cli asset state value content/assets/mine-cart Stopped lamp-b.glow 0
+      olr-cli asset state add content/assets/mine-cart Right
+      olr-cli asset state value content/assets/mine-cart Right lamp.glow 100
+      olr-cli asset state add content/assets/mine-cart Left
+      olr-cli asset state value content/assets/mine-cart Left lamp-b.glow 100
+      olr-cli asset state add content/assets/mine-cart Off
+      olr-cli asset expose content/assets/mine-cart cart_x cart.x --default 0 --min 0 --max 167
+      olr-cli asset expose content/assets/mine-cart lamp_x lamp.x --default 0 --min 0 --max 167
+      olr-cli asset expose content/assets/mine-cart lamp_b_x lamp-b.x --default 0 --min 0 --max 167
+      olr-cli asset sound add content/assets/mine-cart tools/levels/factory/sounds/cart.wav
+      olr-cli asset state set content/assets/mine-cart Right --loop-sound cart.wav
+      olr-cli asset state set content/assets/mine-cart Left --loop-sound cart.wav
+      olr-cli asset script content/assets/mine-cart --set tools/levels/factory/cart.rhai
+
+- `forklift/`: **Forklift** (the plant works), with a crate of the
+  warehouse's stack on its forks (`forklift`, Rock, its roof beacon in
+  group `forkbeacon`, `Pulse`) and a work light on top of its mast
+  (`fork-light`, beam 160°, group `forklight`). States `Idle` (start),
+  `Driving` (`engine.wav`) and `Reversing` (`beep.wav`); `fork_x` and
+  `light_x` (0-14) move it back. Its default script
+  `tools/levels/factory/forklift.rhai` backs away from the stack and
+  drives up to it again.
+
+      olr-cli level group add content/reloaded/olr-level-liero-factory-after-dark forkbeacon --colour ffa020 --intensity 350 --reach 30 --animation "Pulse(period_ms: 800, low: 0, high: 100, shape: Square)"
+      olr-cli level group add content/reloaded/olr-level-liero-factory-after-dark forklight --colour fff0c8 --intensity 700 --reach 80
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material rock --name Forklift
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark forklift --mask tools/levels/factory/art/forklift-mask.png --tile tools/levels/factory/art/forklift-tile.png
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark forklift --mask tools/levels/factory/art/forklift-cab-mask.png --tile tools/levels/factory/art/forklift-cab-tile.png
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark forklift --mask tools/levels/factory/art/forklift-beacon-mask.png --tile tools/levels/factory/art/forklift-beacon-tile.png
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark forklift --glow 100 --glow-group forkbeacon
+      olr-cli level element glow content/reloaded/olr-level-liero-factory-after-dark forklift --mask tools/levels/factory/art/forklift-beacon-glow.png --strength 100
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name "Fork light"
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark fork-light --mask tools/levels/factory/art/forklift-light-mask.png --tile tools/levels/factory/art/forklift-light-tile.png
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark fork-light --glow 100 --glow-group forklight --glow-beam 160,24
+      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 536,374,52,30 --layers forklift,fork-light --name Forklift --out content/assets/forklift
+      olr-cli asset state set content/assets/forklift Normal --name Idle
+      olr-cli asset state add content/assets/forklift Driving
+      olr-cli asset state add content/assets/forklift Reversing
+      olr-cli asset expose content/assets/forklift fork_x forklift.x --default 0 --min 0 --max 14
+      olr-cli asset expose content/assets/forklift light_x fork-light.x --default 0 --min 0 --max 14
+      olr-cli asset sound add content/assets/forklift tools/levels/factory/sounds/engine.wav
+      olr-cli asset sound add content/assets/forklift tools/levels/factory/sounds/beep.wav
+      olr-cli asset state set content/assets/forklift Driving --loop-sound engine.wav
+      olr-cli asset state set content/assets/forklift Reversing --loop-sound beep.wav
+      olr-cli asset script content/assets/forklift --set tools/levels/factory/forklift.rhai
+
+- `generator/`: **Generator** (the plant works), the upper floor's gauge's
+  mounting as the plant's generator (`housing`, Rock, cut from After Dark
+  with the Gauge's rectangle left out: the Gauge is a copy of its own),
+  its status lamps (`leds`, group `status`, `Flicker`) and a
+  vent (`vent`, group `vent`, `Pulse`). States `Running` (start, looping
+  `idle.wav`) and `Wrecked` (sooted, lamps and vent dark, entered with
+  `pop.wav`), health 40 (`hp`), `Wrecked` at 0. Its default script
+  `tools/levels/factory/generator.rhai` repairs it after 30 s. Liero
+  Factory Reloaded's level script blacks the plant out while it is
+  wrecked.
+
+      olr-cli level element erase content/reloaded/olr-level-liero-factory-after-dark rock --rect 1059,144,48,27
+      olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 1046,146,72,25 --name Housing
+      olr-cli level group add content/reloaded/olr-level-liero-factory-after-dark status --colour own --intensity 160 --reach 14 --animation "Flicker(speed: 2, depth: 20)"
+      olr-cli level group add content/reloaded/olr-level-liero-factory-after-dark vent --colour ff8030 --intensity 260 --reach 30 --animation "Pulse(period_ms: 3000, low: 40, high: 100)"
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name "Leds"
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark leds --mask tools/levels/factory/art/gen-lamps-mask.png --tile tools/levels/factory/art/gen-lamps-tile.png
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark leds --glow 100 --glow-group status
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name Vent
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark vent --mask tools/levels/factory/art/gen-vent-mask.png --tile tools/levels/factory/art/gen-vent-tile.png
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark vent --glow 100 --glow-group vent
+      olr-cli level element glow content/reloaded/olr-level-liero-factory-after-dark vent --mask tools/levels/factory/art/gen-vent-glow.png --strength 100
+      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 1046,146,72,25 --layers housing,leds,vent --name Generator --out content/assets/generator
+      olr-cli asset state set content/assets/generator Normal --name Running
+      olr-cli asset state add content/assets/generator Wrecked
+      olr-cli asset state picture content/assets/generator Wrecked housing --art tools/levels/factory/art/gen-housing-wrecked.png
+      olr-cli asset state picture content/assets/generator Wrecked leds --art tools/levels/factory/art/gen-lamps-wrecked.png
+      olr-cli asset state picture content/assets/generator Wrecked vent --art tools/levels/factory/art/gen-vent-wrecked.png
+      olr-cli asset state value content/assets/generator Wrecked leds.glow 0
+      olr-cli asset state value content/assets/generator Wrecked vent.glow 0
+      olr-cli asset sound add content/assets/generator tools/levels/factory/sounds/idle.wav
+      olr-cli asset sound add content/assets/generator tools/levels/factory/sounds/pop.wav
+      olr-cli asset state set content/assets/generator Running --loop-sound idle.wav
+      olr-cli asset state set content/assets/generator Wrecked --enter-sound pop.wav
+      olr-cli asset health content/assets/generator --points 40 --at-zero Wrecked
+      olr-cli asset expose content/assets/generator hp health --min 0 --max 40
+      olr-cli asset script content/assets/generator --set tools/levels/factory/generator.rhai
+
+- `siren/`: **Siren** (the plant works), the roof's two speaker rings
+  (the Warning beacon's and the one right of it, `backdrop` and
+  `beacons`) and four lenses, two at each ring's middle (`lens-a` …
+  `lens-d`, beams 180° and 0°, group `siren`, `#ff2810`, intensity 0).
+  States `Normal` (start: dark) and `Alarm` (lit, looping `klaxon.wav`);
+  exposed each lens's `spread_<a-d>`, `reach` and `light`. Its default
+  script `tools/levels/factory/siren.rhai` turns the beams while it is in
+  Alarm, as the Crane's beacon turns.
+
+      olr-cli level group add content/reloaded/olr-level-liero-factory-after-dark siren --colour ff2810 --intensity 0 --reach 150
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name "Lens A"
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark lens-a --rect 961,55,2,1 --colour ff7850
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark lens-a --glow 100 --glow-group siren --glow-beam 180,14
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name "Lens B"
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark lens-b --rect 964,55,2,1 --colour ff7850
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark lens-b --glow 100 --glow-group siren --glow-beam 0,14
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name "Lens C"
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark lens-c --rect 997,55,2,1 --colour ff7850
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark lens-c --glow 100 --glow-group siren --glow-beam 180,14
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name "Lens D"
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark lens-d --rect 1000,55,2,1 --colour ff7850
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark lens-d --glow 100 --glow-group siren --glow-beam 0,14
+      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 951,45,62,28 --layers backdrop,beacons,lens-a,lens-b,lens-c,lens-d --name Siren --out content/assets/siren
+      olr-cli asset state value content/assets/siren Normal lens-a.glow 0
+      olr-cli asset state value content/assets/siren Normal lens-b.glow 0
+      olr-cli asset state value content/assets/siren Normal lens-c.glow 0
+      olr-cli asset state value content/assets/siren Normal lens-d.glow 0
+      olr-cli asset state add content/assets/siren Alarm
+      olr-cli asset state value content/assets/siren Alarm lens-a.glow 100
+      olr-cli asset state value content/assets/siren Alarm lens-b.glow 100
+      olr-cli asset state value content/assets/siren Alarm lens-c.glow 100
+      olr-cli asset state value content/assets/siren Alarm lens-d.glow 100
+      olr-cli asset state value content/assets/siren Alarm lens-a.light 1000
+      olr-cli asset expose content/assets/siren spread_a lens-a.beam-spread --default 14 --min 1 --max 90
+      olr-cli asset expose content/assets/siren spread_b lens-b.beam-spread --default 14 --min 1 --max 90
+      olr-cli asset expose content/assets/siren spread_c lens-c.beam-spread --default 14 --min 1 --max 90
+      olr-cli asset expose content/assets/siren spread_d lens-d.beam-spread --default 14 --min 1 --max 90
+      olr-cli asset expose content/assets/siren reach lens-a.reach --default 150 --min 1 --max 360
+      olr-cli asset expose content/assets/siren light lens-a.light --default 0 --min 0 --max 1000
+      olr-cli asset sound add content/assets/siren tools/levels/factory/sounds/klaxon.wav
+      olr-cli asset state set content/assets/siren Alarm --loop-sound klaxon.wav
+      olr-cli asset script content/assets/siren --set tools/levels/factory/siren.rhai
+
+- `lab-flask/`: **Lab flask** (the plant works), the lab's still: its
+  flask's liquid (`liquid`, green, group `flask`, a slow `Pulse`; After
+  Dark's was olive dirt) and a burner's flame (`burner`, blue, group
+  `burner`, `Flicker`), looping `bubble.wav`.
+
+      olr-cli level group add content/reloaded/olr-level-liero-factory-after-dark flask --colour 70ff90 --intensity 220 --reach 26 --animation "Pulse(period_ms: 2600, low: 50, high: 100)"
+      olr-cli level group add content/reloaded/olr-level-liero-factory-after-dark burner --colour 5080ff --intensity 260 --reach 20 --animation "Flicker(speed: 8, depth: 40)"
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name Liquid
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark liquid --mask tools/levels/factory/art/lab-liquid-mask.png --tile tools/levels/factory/art/lab-liquid-tile.png
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark liquid --glow 80 --glow-group flask
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name Burner
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark burner --mask tools/levels/factory/art/lab-burner-mask.png --tile tools/levels/factory/art/lab-burner-tile.png
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark burner --glow 100 --glow-group burner
+      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 370,205,22,17 --layers liquid,burner --name "Lab flask" --out content/assets/lab-flask
+      olr-cli asset sound add content/assets/lab-flask tools/levels/factory/sounds/bubble.wav
+      olr-cli asset state set content/assets/lab-flask Normal --loop-sound bubble.wav
+
+- `window-pane/`: **Window pane** (the plant works), one of the upper
+  hall's window panes (`glass`); states `Intact` (start) and `Broken`
+  (a jagged rim left, `tools/levels/factory/art/pane-broken.png`,
+  entered with `smash.wav`), health 5, `Broken` at 0.
+
+      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 719,151,19,22 --layers glass --name "Window pane" --out content/assets/window-pane
+      olr-cli asset state set content/assets/window-pane Normal --name Intact
+      olr-cli asset state add content/assets/window-pane Broken
+      olr-cli asset state picture content/assets/window-pane Broken glass --art tools/levels/factory/art/pane-broken.png
+      olr-cli asset sound add content/assets/window-pane tools/levels/factory/sounds/smash.wav
+      olr-cli asset state set content/assets/window-pane Broken --enter-sound smash.wav
+      olr-cli asset health content/assets/window-pane --points 5 --at-zero Broken
 
 ## Editing an asset from the command line
 
