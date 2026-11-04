@@ -107,6 +107,23 @@ fn pick_present_mode(modes: &[wgpu::PresentMode], uncapped: bool) -> wgpu::Prese
     order.iter().copied().find(|m| modes.contains(m)).unwrap_or(P::Fifo)
 }
 
+/// The adapter's driver for the run log: wgpu's `driver` and
+/// `driver_info` (Vulkan: the driver's name and version; DX12: its
+/// version), then the PCI vendor and device (an "AMD Radeon(TM)
+/// Graphics" is many GPUs); `unknown` when the backend says nothing.
+fn driver_text(a: &wgpu::AdapterInfo) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let named = [a.driver.trim(), a.driver_info.trim()].into_iter().filter(|s| !s.is_empty());
+    let named = named.collect::<Vec<_>>().join(" ");
+    if !named.is_empty() {
+        out.push(named);
+    }
+    if a.vendor != 0 || a.device != 0 {
+        out.push(format!("PCI {:04x}:{:04x}", a.vendor, a.device));
+    }
+    if out.is_empty() { "unknown".to_string() } else { out.join(", ") }
+}
+
 impl TextureSink for Gpu {
     fn set(&mut self, id: egui::TextureId, delta: &egui::epaint::ImageDelta) {
         self.egui.update_texture(self.renderer.device(), self.renderer.queue(), id, delta);
@@ -243,6 +260,11 @@ impl Gpu {
             self.config.present_mode = mode;
             self.state.reconfigure();
         }
+    }
+
+    /// The adapter's driver and PCI ids, for the run log (`driver_text`).
+    pub fn driver(&self) -> String {
+        driver_text(&self.adapter.get_info())
     }
 
     /// The adapter with its driver, and the surface's present mode and
@@ -518,6 +540,24 @@ mod tests {
         assert_eq!(pick_present_mode(&[P::Fifo, P::Mailbox, P::Immediate], true), P::Immediate);
         assert_eq!(pick_present_mode(&[P::Fifo, P::Mailbox], true), P::Mailbox);
         assert_eq!(pick_present_mode(&[P::Fifo], true), P::Fifo);
+    }
+
+    #[test]
+    fn the_driver_names_its_version_and_the_device() {
+        let mut a = wgpu::AdapterInfo::new(wgpu::DeviceType::IntegratedGpu, wgpu::Backend::Vulkan);
+        a.vendor = 0x1002;
+        a.device = 0x164e;
+        a.driver = "AMD proprietary driver".into();
+        a.driver_info = "24.10.1 (LLPC)".into();
+        assert_eq!(driver_text(&a), "AMD proprietary driver 24.10.1 (LLPC), PCI 1002:164e");
+        // DX12 names only its version; a backend may name neither.
+        a.driver = "32.0.21042.62".into();
+        a.driver_info.clear();
+        assert_eq!(driver_text(&a), "32.0.21042.62, PCI 1002:164e");
+        a.driver.clear();
+        a.vendor = 0;
+        a.device = 0;
+        assert_eq!(driver_text(&a), "unknown");
     }
 
     #[derive(Default)]

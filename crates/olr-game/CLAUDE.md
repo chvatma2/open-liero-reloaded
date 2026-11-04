@@ -51,7 +51,8 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `olr <version>` and `logging::System::line` (`os: linux x86_64, <os-release
   PRETTY_NAME (the host's under Flatpak)>, kernel …, WSL, Flatpak, <XDG
   session> session`), then `window system: Wayland|X11|…` once the event
-  loop is made, `GPU …` and `window <Shape>, scale factor …; video: VSync|
+  loop is made, `GPU …; driver …` (`gpu::driver_text`: wgpu's `driver` and
+  `driver_info`, the PCI vendor and device) and `window <Shape>, scale factor …; video: VSync|
   uncapped, filter, interpolation, UI scale` (`App::open`). The terminal
   keeps its lines: `olr <version>` first (printed by `main`), `olr: …` on
   stdout for `info`, `warning: …`/`error: …` on stderr (`xtask e2e` fails

@@ -656,7 +656,7 @@ impl App {
             s.present.invalidate_gpu();
         }
         let egui = self.egui_state(&window, &gpu);
-        log::info!("GPU {}", gpu.info);
+        log::info!("GPU {}; driver {}", gpu.info, gpu.driver());
         log::info!(
             "window {:?}, scale factor {}; video: {}, filter {:?}, interpolation {:?}, UI scale {}",
             self.shape,
