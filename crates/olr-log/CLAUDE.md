@@ -65,6 +65,19 @@ all a stranger's report will ever carry.
   the previous hook (the terminal's message). It waits at most 200 ms for
   the file's lock (a panic inside the logger never hangs). Caught panics
   are recorded too.
+- **Native ends** (`native.rs`): a crash in native code (a driver's
+  access violation, a stack overflow, an abort) or a kill never reaches
+  the hook. On Windows, when `init` warns of a previous unclean run,
+  `report_previous` asks Windows' event log on a thread of its own
+  (`wevtutil qe … /f:xml`, `CREATE_NO_WINDOW`; no unsafe code) and warns
+  of each finding: Application Error 1000 (the exception code, named for
+  the common ones, the module, its version, offset and path), Application
+  Hang 1002 (not responding, closed) for that run's program and pid, and
+  Display 4101 (a display driver reset) since its start; none is
+  `NOTHING_RECORDED`. The run is read from its log's name (`run_of`: pid
+  and UTC start); `findings` reads the XML on any platform (Windows 11's
+  named data, Windows 10's by position), tested in `tests/native.rs`.
+  Elsewhere it does nothing.
 
 Test: `cargo nextest run -p olr-log` (`tests/log_files.rs` on a temporary
 directory and a `TestClock`; `tests/panic_hook.rs` is its own binary:

@@ -1,6 +1,6 @@
 [package]
 name = "olr-log"
-description = "The game's run log: one file a run in the data directory (capped, the last ten kept), mirrored to the terminal, home paths and addresses redacted, and panics captured."
+description = "The game's run log: one file a run in the data directory (capped, the last ten kept), mirrored to the terminal, home paths and addresses redacted, panics captured, and on Windows how the event log saw an unclean run end."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

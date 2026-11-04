@@ -19,6 +19,7 @@
 //!   the terminal.
 
 pub mod format;
+pub mod native;
 pub mod redact;
 pub mod run;
 
@@ -200,6 +201,7 @@ pub fn init(options: Options, clock: Box<dyn Clock>) -> Option<PathBuf> {
     }
     if let Some(p) = &opened.previous_unclean {
         log::warn!(target: "olr", "the previous run ended unexpectedly (a crash or a kill): its log is {}", p.display());
+        native::report_previous(p);
     }
     for p in &opened.pruned {
         log::debug!(target: "olr", "deleted the old log {}", p.display());
