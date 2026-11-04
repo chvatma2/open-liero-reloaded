@@ -25,11 +25,15 @@ use crate::{ScriptIssue, compile_text, engine};
 
 /// The names a level's scripts may use: its live copies (what
 /// `this.copy(id)` reaches), each with its states, its exposed names and
-/// its sounds (#92's `play` checks those). No `olr-format` types: the
-/// caller fills it from the level's placement.
+/// its sounds (#92's `play` checks those), and the level's own glow
+/// groups (what `group_intensity`, `group_colour` and `group_reset`
+/// name, 2026-11-04; `None` when the caller cannot tell them, and then
+/// unchecked). No `olr-format` types: the caller fills it from the
+/// level's placement.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ScriptNames {
     pub copies: Vec<CopyNames>,
+    pub groups: Option<Vec<String>>,
 }
 
 /// One live copy's names.
@@ -75,6 +79,10 @@ enum Kind {
     Exposed,
     Sound,
 }
+
+/// The API methods naming one of the level's glow groups first
+/// (2026-11-04), and their count of parameters.
+const GROUPS: [(&str, usize); 3] = [("group_intensity", 2), ("group_colour", 2), ("group_reset", 1)];
 
 /// The API methods taking a name, by name: what it names and its count of
 /// parameters in its own-copy form (the handle form takes the handle
@@ -202,7 +210,9 @@ fn fn_line(text: &str, name: &str) -> (Option<usize>, Option<usize>) {
 /// (`set_state`), or no exposed name of it (`get`, `set`, `move_to`,
 /// `stop`, `moving`, `min`, `max`), or no sound of it (`play`, issue
 /// #92), the copy being this one or a known
-/// handle's. In the level script the own-copy forms are issues too.
+/// handle's, or no glow group of the level (`group_intensity`,
+/// `group_colour`, `group_reset`). In the level script the own-copy forms
+/// are issues too.
 pub fn check_level(names: &ScriptNames, scripts: &[RunScript<'_>]) -> Vec<LevelIssue> {
     let engine = engine();
     let mut out = Vec::new();
@@ -244,6 +254,18 @@ pub fn check_level(names: &ScriptNames, scripts: &[RunScript<'_>]) -> Vec<LevelI
                     && names.copy(id).is_none()
                 {
                     found.push(issue(at.line(), at.position(), format!("no live copy {id:?}")));
+                }
+                return true;
+            }
+            if GROUPS.iter().any(|(m, n)| *m == f.name.as_str() && f.args.len() == *n) {
+                if let Some((id, at)) = literal(&f.args[0])
+                    && names.groups.as_ref().is_some_and(|gs| !gs.iter().any(|g| g == id))
+                {
+                    found.push(issue(
+                        at.line(),
+                        at.position(),
+                        format!("the level has no glow group {id:?}"),
+                    ));
                 }
                 return true;
             }

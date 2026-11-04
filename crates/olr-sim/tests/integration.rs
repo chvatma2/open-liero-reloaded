@@ -14,6 +14,7 @@ mod live_level;
 #[path = "common/director.rs"]
 mod director;
 
+mod groups;
 mod live;
 mod motion;
 mod script;

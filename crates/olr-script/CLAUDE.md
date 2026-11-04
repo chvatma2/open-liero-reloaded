@@ -59,7 +59,8 @@ checks (`ScriptNames`, `check_level`), `move_to`, `stop`, `moving`,
   they agree). Syntax only.
 - **`check_level(&ScriptNames, &[RunScript]) -> Vec<LevelIssue>`**
   (`names.rs`, issue #89; the design's call 20): `ScriptNames { copies:
-  Vec<CopyNames { id, states, exposed, sounds }> }` is a plain table (no
+  Vec<CopyNames { id, states, exposed, sounds }> }` (and `groups: Option<Vec<String>>`,
+  the level's glow groups; `None` leaves them unchecked) is a plain table (no
   `olr-format` types; `olr_edit::scripts::names` fills it from a
   placement's live copies), `RunScript { copy: Option<&str>, text }` a
   script the level runs on that copy (none: the level script), and a
@@ -177,7 +178,14 @@ checks (`ScriptNames`, `check_level`), `move_to`, `stop`, `moving`,
   (`olr_sim::ScriptRng`, in the world). The match: `this.time()` (ms since
   it started), `this.worm_count()`, `this.worm_alive(i)`,
   `this.worm_x(i)`, `this.worm_y(i)` (whole pixels, truncated),
-  `this.game_over()`. Memory: `this.mem` (get and set), an object map of
+  `this.game_over()`. Where a copy is (2026-11-04): `this.centre_x()`,
+  `this.centre_y()` and their handle forms, its rectangle's centre moved
+  by its `X`/`Y` (whole pixels). The level's glow groups (the factory's
+  plant works): `this.group_intensity(id, v)` (0-1000),
+  `this.group_colour(id, "#rrggbb")`, `this.group_reset(id)` (its own
+  again) queue `LiveCommand::Group`; an id the level has not is a script
+  error, and `check_level` reports a literal one ("the level has no glow
+  group …"); `tests/groups.rs`. Memory: `this.mem` (get and set), an object map of
   integers, booleans and strings, at most `MAX_MEMORY_KEYS` 32 keys,
   keys and strings at most `MAX_MEMORY_BYTES` 64 bytes (a setter past
   them is a script error), rebuilt from the world before each run and

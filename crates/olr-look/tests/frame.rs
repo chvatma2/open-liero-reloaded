@@ -664,3 +664,30 @@ fn two_copies_of_one_asset_change_colour_independently() {
     assert_eq!(before.groups[..n], after.groups[..n], "the level's groups too");
     assert!(after.groups[n].cast[0] > after.groups[n].cast[1]);
 }
+
+/// The factory's plant works (2026-11-04): a script's values replace a
+/// level group's in place, keeping its identity (no values: the group as
+/// `begin` made it); the other groups and an index past them are left
+/// alone.
+#[test]
+fn a_scripts_values_replace_a_level_group() {
+    let look = level();
+    let mut f = LookFrame::default();
+    f.begin(Some(&look), 123.0);
+    let mut g = LookFrame::default();
+    g.begin(Some(&look), 123.0);
+    g.set_level_group(0, &look.groups[0], 123.0, GroupValues::default());
+    assert_eq!(f, g, "no values: the group as authored");
+    g.set_level_group(
+        look.groups.len(),
+        &look.groups[0],
+        123.0,
+        GroupValues { intensity: Some(0), ..GroupValues::default() },
+    );
+    assert_eq!(f, g, "past the groups: nothing");
+    let off = GroupValues { intensity: Some(0), ..GroupValues::default() };
+    g.set_level_group(0, &look.groups[0], 123.0, off);
+    assert_eq!(g.groups.len(), f.groups.len());
+    assert_eq!(g.groups[0].cast, [0.0; 3]);
+    assert_eq!(g.groups[1..], f.groups[1..]);
+}

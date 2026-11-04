@@ -132,8 +132,11 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   `LightIntensity`, `LightReach`, `GlowAnimation`) of a layer that uses
   it (a layer's group: the first group pixel of a picture of a part of
   it), so two layers sharing a group change together.
-  `live_look(world.live(), &light, world size, &mut LookFrame, t_ms)`
-  pushes each copy's groups with its values over them
+  `live_look(world.live(), &light, level groups, world size, &mut
+  LookFrame, t_ms)` first lays what scripts set over the level's own
+  groups (`LookFrame::set_level_group`, 2026-11-04; `LoadedLive::new`
+  names them in `LiveLevel::with_groups`,
+  `a_scripts_level_groups_reach_the_look`), then pushes each copy's groups with its values over them
   (`LookFrame::push_live_group_with`), then each visible part's patches
   placed (mirrored by `Facing` within the copy), turned by its layer's
   `BeamDirection`/`BeamSpread`, at its strength (`push_live_beam`); no

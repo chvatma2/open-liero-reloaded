@@ -59,14 +59,14 @@ impl LoadedLive {
     /// past them all the same is drawn without glow, with a warning, never
     /// a panic. A script that does not compile refuses it (issue #88:
     /// every peer refuses the same bytes alike).
-    pub fn new(source: LiveSource, level_groups: usize) -> anyhow::Result<LoadedLive> {
-        let sim = Arc::new(live_level(&source));
+    pub fn new(source: LiveSource, level_groups: &[String]) -> anyhow::Result<LoadedLive> {
+        let sim = Arc::new(live_level(&source).with_groups(level_groups.to_vec()));
         let director = olr_script::director(&sim).map_err(|e| {
             let at = source.file.scripts.get(usize::from(e.script)).map_or("a script", String::as_str);
             anyhow::anyhow!("{LIVE_FILE}: {at}: {}", e.issue)
         })?;
         let mut warnings = Vec::new();
-        let mut next = level_groups;
+        let mut next = level_groups.len();
         let mut groups = Vec::with_capacity(source.file.copies.len());
         let mut art = LiveArt { copies: Vec::with_capacity(source.file.copies.len()) };
         let mut light = LiveLight { copies: Vec::with_capacity(source.file.copies.len()) };
@@ -227,9 +227,30 @@ fn art_scale(p: &LivePicture) -> u32 {
 /// patches, copy and part order, placed at the part (mirrored within the
 /// copy by its `Facing`), turned to its layer's `BeamDirection` and
 /// `BeamSpread` when it has them, glowing at its strength
-/// ([`LookFrame::push_live_beam`]). A hidden part casts none. Allocates
-/// nothing once `look` is warm.
-pub fn live_look(live: LiveView<'_>, light: &LiveLight, world: (u32, u32), look: &mut LookFrame, t_ms: f64) {
+/// ([`LookFrame::push_live_beam`]). A hidden part casts none. First, the
+/// level's own groups (`level_groups`, the look's, in its order) a script
+/// set take their values (2026-11-04, [`LookFrame::set_level_group`]).
+/// Allocates nothing once `look` is warm.
+pub fn live_look(
+    live: LiveView<'_>,
+    light: &LiveLight,
+    level_groups: &[GlowGroup],
+    world: (u32, u32),
+    look: &mut LookFrame,
+    t_ms: f64,
+) {
+    // 2026-11-04: the level's own groups as scripts set them.
+    for (i, (set, g)) in live.groups().iter().zip(level_groups).enumerate() {
+        if *set != olr_sim::LiveGroup::OWN {
+            let v = GroupValues {
+                colour: (set.colour >= 0).then_some(i64::from(set.colour)),
+                intensity: (set.intensity >= 0).then_some(i64::from(set.intensity)),
+                reach: None,
+                animation: None,
+            };
+            look.set_level_group(i, g, t_ms, v);
+        }
+    }
     for (c, l) in live.copies().zip(&light.copies) {
         let values = c.values();
         let value = |p: Option<u16>| p.and_then(|p| values.get(usize::from(p)).copied());

@@ -239,3 +239,9 @@ Test: `cargo nextest run -p olr-look`.
   part's strength, its group the run-time value (none for 0), `first` its
   first pixel's world index (0 outside the world)
   (`live_patches_place_turn_and_mirror_as_derived`).
+
+- **A level group set by a script** (2026-11-04): `set_level_group(i, g,
+  t_ms, GroupValues)` replaces the level's group `i` (as `begin` made
+  it) with `g` and the values over it, as `push_live_group_with` does,
+  keeping the group's identity (its flicker and phase); an index past the
+  groups changes nothing. Test: `a_scripts_values_replace_a_level_group`.

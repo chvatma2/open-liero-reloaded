@@ -88,8 +88,9 @@ impl LoadedLevel {
         let Extras { look, glow, clear, glass, glow_beams, haze, distant, surface, distant_surface, live } =
             extras;
         check_art_size(l.material.width(), l.material.height(), l.def.art_scale)?;
-        let level_groups = look.as_ref().map_or(0, |l| l.groups.len());
-        let live = live.map(|src| crate::LoadedLive::new(src, level_groups)).transpose()?;
+        let level_groups: Vec<String> =
+            look.as_ref().map_or_else(Vec::new, |l| l.groups.iter().map(|g| g.id.clone()).collect());
+        let live = live.map(|src| crate::LoadedLive::new(src, &level_groups)).transpose()?;
         let mut warnings = warnings;
         warnings.extend(live.iter().flat_map(|l| l.warnings.iter().cloned()));
         Ok(LoadedLevel {

@@ -14,12 +14,17 @@ fn names() -> ScriptNames {
             copy("console", &["Normal", "Alarm"], &["screen"]),
             copy("press", &["Up", "Down"], &["head_y"]),
         ],
+        groups: Some(vec!["lamps".into()]),
     }
 }
 
 /// `(script, line, message)` of each issue.
 fn issues(scripts: &[RunScript<'_>]) -> Vec<(usize, u32, String)> {
-    check_level(&names(), scripts).into_iter().map(|i| (i.script, i.issue.line, i.issue.message)).collect()
+    issues_of(&names(), scripts)
+}
+
+fn issues_of(names: &ScriptNames, scripts: &[RunScript<'_>]) -> Vec<(usize, u32, String)> {
+    check_level(names, scripts).into_iter().map(|i| (i.script, i.issue.line, i.issue.message)).collect()
 }
 
 #[test]
@@ -108,4 +113,25 @@ fn check_finds_an_unknown_sound_name() {
     ];
     let want: Vec<(usize, u32, String)> = want.iter().map(|&(s, l, m)| (s, l, m.to_string())).collect();
     assert_eq!(got, want);
+}
+
+/// The factory's plant works: a literal group id names one of the
+/// level's glow groups; unchecked when the groups are unknown.
+#[test]
+fn check_level_finds_unknown_glow_groups() {
+    let text = "fn start() {\n\
+                  this.group_intensity(\"lamps\", 0);\n\
+                  this.group_colour(\"lampz\", \"#ff0000\");\n\
+                  this.group_reset(\"emergency\");\n\
+                }";
+    let scripts = [RunScript { copy: None, text }];
+    assert_eq!(
+        issues(&scripts),
+        [
+            (0, 3, "the level has no glow group \"lampz\"".to_string()),
+            (0, 4, "the level has no glow group \"emergency\"".to_string()),
+        ]
+    );
+    let unchecked = ScriptNames { groups: None, ..names() };
+    assert_eq!(issues_of(&unchecked, &scripts), []);
 }

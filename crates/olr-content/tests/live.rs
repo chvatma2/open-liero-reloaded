@@ -365,7 +365,7 @@ fn a_copys_groups_take_its_values() {
     let look = |world: &olr_sim::World| {
         let mut f = olr_look::LookFrame::default();
         f.begin(None, 0.0);
-        olr_content::live_look(world.live().unwrap(), &live.light, world_size, &mut f, 0.0);
+        olr_content::live_look(world.live().unwrap(), &live.light, &[], world_size, &mut f, 0.0);
         f
     };
     // The groups in copy order: the lamp's, console-a's, console-b's.
@@ -377,4 +377,50 @@ fn a_copys_groups_take_its_values() {
     assert!(after.groups[1].cast[0] > after.groups[1].cast[1], "console-a red: {:?}", after.groups[1].cast);
     assert_eq!(after.groups[2], gb, "console-b as it was");
     assert_eq!(after.groups[0], before.groups[0], "the lamp too");
+}
+
+/// The factory's plant works (2026-11-04): the level's own glow groups
+/// reach the world's live level by id, and `live_look` lays what a
+/// script set over them (`lamps` dimmed to 0, `sky` left its own).
+#[test]
+fn a_scripts_level_groups_reach_the_look() {
+    let (_tmp, content) = content(|dir| {
+        let path = dir.join("level.ron");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let groups = "glow_groups: [\
+                        (id: \"lamps\", colour: Tint(\"#ffffff\"), intensity: 100, reach: Pixels(20)),\
+                        (id: \"sky\", colour: Tint(\"#8098d0\"), intensity: 300, reach: Unlimited),\
+                      ],\n        ambient:";
+        let text = text.replace("olx-theme-dirt", "test-theme").replacen("ambient:", groups, 1);
+        std::fs::write(&path, text).unwrap();
+        std::fs::write(dir.join("live/8.rhai"), "fn start() { this.group_intensity(\"lamps\", 0); }")
+            .unwrap();
+    });
+    let setup = olr_content::SandboxSetup {
+        mod_id: "broken-mod".into(),
+        level_id: ID.into(),
+        seed: 3,
+        settings: olr_sim::SimSettings::lx56(),
+        worms: vec![olr_content::SpawnSpec::default()],
+        restrictions: olr_content::DEFAULT_PRESET.into(),
+    };
+    let mut world = content.new_world(&setup).unwrap();
+    let level = content.load_level(ID).unwrap();
+    let live = level.live.as_ref().unwrap();
+    assert_eq!(live.sim.groups, ["lamps", "sky"]);
+    let look = level.look.as_ref().unwrap();
+    let world_size = (level.material.width(), level.material.height());
+    let frame = |world: &olr_sim::World| {
+        let mut f = olr_look::LookFrame::default();
+        f.begin(Some(look), 0.0);
+        olr_content::live_look(world.live().unwrap(), &live.light, &look.groups, world_size, &mut f, 0.0);
+        f
+    };
+    let before = frame(&world);
+    assert!(before.groups[0].cast[0] > 0.0);
+    world.tick(&[olr_sim::Keys(0)], &mut olr_sim::TickEvents::new());
+    assert_eq!(world.live().unwrap().groups()[0], olr_sim::LiveGroup { intensity: 0, colour: -1 });
+    let after = frame(&world);
+    assert_eq!(after.groups[0].cast, [0.0; 3], "lamps dimmed");
+    assert_eq!(after.groups[1], before.groups[1], "sky its own");
 }

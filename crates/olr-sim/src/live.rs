@@ -19,6 +19,9 @@
 //! makes the rock parts solid: [`LiveWorld`] keeps their index
 //! ([`crate::solid::SolidIndex`]), a motion steps them a whole pixel at a
 //! time ([`PartMover`], `live_step.rs`), and each worm slot's crush count.
+//! The factory's plant (2026-11-04) lets scripts set the level's own glow
+//! groups ([`LiveGroup`], [`LiveLevel::groups`]): world state, read by
+//! presentation only.
 
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -312,7 +315,36 @@ pub struct LiveLevel {
     /// Each destructible copy (with health and parts) and where its
     /// covered pixels can ever be (issue #94), in copy order.
     destructible: Vec<(u16, LiveBounds)>,
+    /// The level's own glow groups' ids, in the look's order (a group map
+    /// value `v` is `groups[v - 1]`): what scripts may set
+    /// ([`LiveLevel::with_groups`]). Empty for a level without a look.
+    pub groups: Vec<String>,
 }
+
+/// A script's setting of one of the level's glow groups (2026-11-04):
+/// `-1` keeps the group's own value. Presentation lays it over the group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LiveGroup {
+    /// Its intensity, percent 0 to [`MAX_GROUP_INTENSITY`]; -1 its own.
+    pub intensity: i32,
+    /// Its colour, `0xRRGGBB`, cast as a tint; -1 its own.
+    pub colour: i32,
+}
+
+impl LiveGroup {
+    /// The group as the level made it.
+    pub const OWN: LiveGroup = LiveGroup { intensity: -1, colour: -1 };
+
+    /// Whether the values are in range: an intensity of -1 to
+    /// [`MAX_GROUP_INTENSITY`], a colour of -1 to `0xffffff`.
+    pub fn in_range(self) -> bool {
+        (-1..=MAX_GROUP_INTENSITY).contains(&self.intensity) && (-1..=0xff_ffff).contains(&self.colour)
+    }
+}
+
+/// A group's highest intensity a script sets, percent (`olr-look`'s
+/// `MAX_GROUP_INTENSITY`).
+pub const MAX_GROUP_INTENSITY: i32 = 1000;
 
 /// Where the live rock parts of one copy's layer (or of its unlayered
 /// parts) can ever be (issue #91, for the bots): the rectangle every place
@@ -486,7 +518,19 @@ impl LiveLevel {
             .map_while(|(i, c)| Some((u16::try_from(i).ok()?, c)))
             .filter_map(|(i, c)| Some((i, cover_bounds(c)?)))
             .collect();
-        LiveLevel { copies, scripts, level_script, sounds, ids, reach, destructible }
+        LiveLevel { copies, scripts, level_script, sounds, ids, reach, destructible, groups: Vec::new() }
+    }
+
+    /// This level with the ids of its own glow groups, in the look's order
+    /// (at most 255; past it none is kept).
+    pub fn with_groups(mut self, groups: Vec<String>) -> LiveLevel {
+        self.groups = if groups.len() <= usize::from(u8::MAX) { groups } else { Vec::new() };
+        self
+    }
+
+    /// The level's glow group `id`: its index into [`LiveLevel::groups`].
+    pub fn group(&self, id: &str) -> Option<u16> {
+        self.groups.iter().position(|g| g == id).and_then(|i| u16::try_from(i).ok())
     }
 
     /// Each destructible copy (a [`LiveCopy::health`] and parts) with the
@@ -828,6 +872,9 @@ pub(crate) struct LiveWorld {
     pub(crate) script: Option<ScriptWorld>,
     /// Issue #90: each worm slot's consecutive wedged ticks (crushing).
     crush: Buf<u16>,
+    /// The level's glow groups as scripts set them, one a group of
+    /// [`LiveLevel::groups`] (2026-11-04).
+    groups: Buf<LiveGroup>,
     /// Issue #90: the shown rock parts' index, derived from the rest (in
     /// no checksum or transfer; [`LiveWorld::refresh_solids`]).
     pub(crate) solids: SolidIndex,
@@ -865,7 +912,21 @@ impl LiveWorld {
         crush.resize(MAX_WORMS, 0);
         let rock = level.copies.iter().flat_map(|c| &c.pictures).any(|p| p.bits.is_some());
         let solids = SolidIndex::new(map, rock);
-        LiveWorld { level, offsets, states, values, motions, start, script, crush, solids, stale: false }
+        let mut groups = Buf::with_capacity(level.groups.len());
+        groups.resize(level.groups.len(), LiveGroup::OWN);
+        LiveWorld {
+            level,
+            offsets,
+            states,
+            values,
+            motions,
+            start,
+            script,
+            crush,
+            groups,
+            solids,
+            stale: false,
+        }
     }
 
     /// The shown rock parts to read ([`LiveWorld::solid_parts`]) and, in a
@@ -1062,6 +1123,21 @@ impl LiveWorld {
         Ok(())
     }
 
+    /// The level's glow group `group` takes `intensity` (percent, clamped
+    /// to 0-[`MAX_GROUP_INTENSITY`]; below 0 its own) and `colour`
+    /// (`0xRRGGBB`; below 0 its own); `None` keeps that field. An index
+    /// the level lacks changes nothing (2026-11-04).
+    pub(crate) fn set_group(&mut self, group: u16, intensity: Option<i64>, colour: Option<i64>) -> bool {
+        let Some(g) = self.groups.get_mut(usize::from(group)) else { return false };
+        if let Some(i) = intensity {
+            g.intensity = if i < 0 { -1 } else { i.min(i64::from(MAX_GROUP_INTENSITY)) as i32 };
+        }
+        if let Some(c) = colour {
+            g.colour = if c < 0 { -1 } else { c.min(0xff_ffff) as i32 };
+        }
+        true
+    }
+
     /// Value `prop` of `copy` stops where it is.
     pub(crate) fn stop_value(&mut self, copy: u16, prop: u16) -> Result<(), LiveError> {
         let c = self.level.copies.get(usize::from(copy)).ok_or(LiveError::NoCopy(copy))?;
@@ -1217,7 +1293,8 @@ impl LiveWorld {
     /// scripts' state (issue #88) and every value's motion (issue #89:
     /// only scripts start one); last, only while a worm is wedged (so a
     /// world nobody was crushed in hashes as before), the crush counts
-    /// (issue #90).
+    /// (issue #90); last, only while a script has set one (2026-11-04),
+    /// the level's glow groups.
     pub(crate) fn hash(&self, h: &mut Fnv) {
         let LiveWorld {
             level: _,
@@ -1228,6 +1305,7 @@ impl LiveWorld {
             start: _,
             script,
             crush,
+            groups,
             solids: _,
             stale: _,
         } = self;
@@ -1252,6 +1330,13 @@ impl LiveWorld {
                 h.bytes(&c.to_le_bytes());
             }
         }
+        if groups.iter().any(|&g| g != LiveGroup::OWN) {
+            h.usize(groups.len());
+            for g in groups.iter() {
+                h.bytes(&g.intensity.to_le_bytes());
+                h.bytes(&g.colour.to_le_bytes());
+            }
+        }
     }
 
     /// The live part of [`crate::World::state`].
@@ -1265,6 +1350,7 @@ impl LiveWorld {
             start: _,
             script,
             crush,
+            groups,
             solids: _,
             stale: _,
         } = self;
@@ -1274,6 +1360,7 @@ impl LiveWorld {
             motions: motions.to_vec(),
             script: script.as_ref().map(|s| s.wire()),
             crush: crush.to_vec(),
+            groups: groups.to_vec(),
         }
     }
 
@@ -1283,9 +1370,12 @@ impl LiveWorld {
     /// the limits, its speed 1 to [`MAX_MOTION_SPEED`]; none in a world
     /// without scripts), and a scripts' part exactly when this world has
     /// one, fitting it (`ScriptWorld::can_load`); a crush count per worm
-    /// slot (issue #90).
+    /// slot (issue #90); a setting per level glow group, in range, and
+    /// none set in a world without scripts (2026-11-04).
     pub(crate) fn can_load(&self, w: &LiveWire) -> bool {
-        let LiveWire { states, values, motions, script, crush } = w;
+        let LiveWire { states, values, motions, script, crush, groups } = w;
+        let groups_ok = groups.len() == self.groups.len()
+            && groups.iter().all(|g| g.in_range() && (self.script.is_some() || *g == LiveGroup::OWN));
         let script_ok = match (&self.script, script) {
             (None, None) => true,
             (Some(s), Some(w)) => s.can_load(w, &self.level),
@@ -1299,6 +1389,7 @@ impl LiveWorld {
                     && c.clamped(p, m.target) == m.target)
         };
         script_ok
+            && groups_ok
             && crush.len() == self.crush.len()
             && states.len() == self.states.len()
             && values.len() == self.values.len()
@@ -1316,8 +1407,9 @@ impl LiveWorld {
     /// Takes `w`, checked by [`LiveWorld::can_load`]; keeps every buffer
     /// and rebuilds the parts' index.
     pub(crate) fn load(&mut self, w: LiveWire) {
-        let LiveWire { states, values, motions, script, crush } = w;
+        let LiveWire { states, values, motions, script, crush, groups } = w;
         self.states.copy_from_slice(&states);
+        self.groups.copy_from_slice(&groups);
         self.values.copy_from_slice(&values);
         self.motions.copy_from_slice(&motions);
         self.crush.copy_from_slice(&crush);
@@ -1331,7 +1423,8 @@ impl LiveWorld {
 /// The live copies' part of a [`crate::WorldState`]: each copy's state and
 /// every value and its motion (issue #89), as [`LiveWorld`] holds them,
 /// the scripts' state in a world with scripts (issue #88), and each worm
-/// slot's crush count (issue #90).
+/// slot's crush count (issue #90), and the level's glow groups as scripts
+/// set them (2026-11-04).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LiveWire {
     states: Vec<u16>,
@@ -1339,9 +1432,17 @@ pub struct LiveWire {
     motions: Vec<LiveMotion>,
     script: Option<ScriptWire>,
     crush: Vec<u16>,
+    groups: Vec<LiveGroup>,
 }
 
 impl LiveWire {
+    /// The level's glow groups' settings, for tests of
+    /// [`crate::World::load_state`]'s refusals (2026-11-04).
+    #[doc(hidden)]
+    pub fn groups_mut_for_test(&mut self) -> &mut Vec<LiveGroup> {
+        &mut self.groups
+    }
+
     /// The scripts' part, for tests of [`crate::World::load_state`]'s
     /// checks.
     #[doc(hidden)]
@@ -1397,6 +1498,12 @@ impl<'a> LiveView<'a> {
     /// The setup: names, parts and pictures.
     pub fn level(&self) -> &'a LiveLevel {
         &self.world.level
+    }
+
+    /// The level's glow groups as scripts set them, in
+    /// [`LiveLevel::groups`]' order (2026-11-04).
+    pub fn groups(&self) -> &'a [LiveGroup] {
+        &self.world.groups
     }
 
     /// How many live copies there are.

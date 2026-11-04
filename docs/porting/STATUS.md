@@ -8083,6 +8083,21 @@ to this section.
     measured no better on the iGPU: the spans it widens cost the pass
     what the composite saves.
 
+## Liero Factory Reloaded: the plant works (2026-11-04)
+
+Plan `docs/superpowers/plans/2026-11-04-factory-plant-works.md`: every
+idea of the "Factory Pass Mockups" page but the painted particles.
+
+- **Scripts set the level's glow groups.** `this.group_intensity(id, v)`,
+  `this.group_colour(id, "#rrggbb")` and `this.group_reset(id)` change a
+  level glow group (not a copy's) for every viewer: world state
+  (`olr_sim::LiveGroup` per group, hashed only once one is set, so the
+  goldens of levels that set none stay), laid over the look by
+  `olr_content::live_look` through `LookFrame::set_level_group`. A level
+  group has no reach value (its reach stays the look's), and no
+  animation switch: a blackout dims, an alarm recolours.
+  `this.centre_x()`/`centre_y()` give a copy's centre (blast reactions).
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`

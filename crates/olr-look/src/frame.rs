@@ -222,26 +222,24 @@ impl LookFrame {
         if self.groups.len() >= usize::from(u8::MAX) {
             return;
         }
-        let colour = match (v.colour, g.colour) {
-            (Some(c), own) if c >= 0 => {
-                let c = c.min(0xff_ffff);
-                let rgb = [(c >> 16) as u8, (c >> 8) as u8, c as u8];
-                match own {
-                    GlowColour::Filtered(_) => GlowColour::Filtered(rgb),
-                    _ => GlowColour::Tint(rgb),
-                }
-            }
-            _ => g.colour,
-        };
-        let intensity =
-            v.intensity.map_or(g.intensity, |i| i.clamp(0, i64::from(MAX_GROUP_INTENSITY)) as u16);
-        let reach = match (v.reach, g.reach) {
-            (Some(r), Reach::Pixels(_)) => Reach::Pixels(r.clamp(1, i64::from(MAX_GROUP_REACH)) as u16),
-            _ => g.reach,
-        };
-        let animation = v.animation.unwrap_or(&g.animation);
-        let identity = live_identity(copy, &g.id);
-        self.push_parts(Parts { colour, intensity, reach, animation, phase_ms: g.phase_ms }, identity, t_ms);
+        let parts = with_values(g, &v);
+        self.push_parts(parts, live_identity(copy, &g.id), t_ms);
+    }
+
+    /// Lays a script's values `v` over the level's own group `i` (`g`, as
+    /// `begin` made it; 2026-11-04), as [`LookFrame::push_live_group_with`]
+    /// lays a copy's over its own: the group keeps its identity, so its
+    /// flicker and pulse stay where they were. An index past the groups
+    /// changes nothing. Allocates nothing.
+    pub fn set_level_group(&mut self, i: usize, g: &GlowGroup, t_ms: f64, v: GroupValues<'_>) {
+        if i >= self.groups.len() {
+            return;
+        }
+        let parts = with_values(g, &v);
+        let at = self.groups.len();
+        self.push_parts(parts, identity_of(&g.id), t_ms);
+        self.groups.swap_remove(i);
+        debug_assert!(at == self.groups.len());
     }
 
     /// Pushes group `g` of identity `identity` at clock `t_ms`.
@@ -308,6 +306,31 @@ impl LookFrame {
             self.emitters.push(light);
         }
     }
+}
+
+/// Group `g` with values `v` laid over it ([`LookFrame::push_live_group_with`]'s
+/// rules): a colour (`0xRRGGBB`, negative the group's own) casts as a
+/// tint (a `Filtered` group stays filtered), an intensity and a reach (over
+/// a reach in pixels) replace the group's, clamped, an animation its.
+fn with_values<'a>(g: &'a GlowGroup, v: &GroupValues<'a>) -> Parts<'a> {
+    let colour = match (v.colour, g.colour) {
+        (Some(c), own) if c >= 0 => {
+            let c = c.min(0xff_ffff);
+            let rgb = [(c >> 16) as u8, (c >> 8) as u8, c as u8];
+            match own {
+                GlowColour::Filtered(_) => GlowColour::Filtered(rgb),
+                _ => GlowColour::Tint(rgb),
+            }
+        }
+        _ => g.colour,
+    };
+    let intensity = v.intensity.map_or(g.intensity, |i| i.clamp(0, i64::from(MAX_GROUP_INTENSITY)) as u16);
+    let reach = match (v.reach, g.reach) {
+        (Some(r), Reach::Pixels(_)) => Reach::Pixels(r.clamp(1, i64::from(MAX_GROUP_REACH)) as u16),
+        _ => g.reach,
+    };
+    let animation = v.animation.unwrap_or(&g.animation);
+    Parts { colour, intensity, reach, animation, phase_ms: g.phase_ms }
 }
 
 /// [`identity_of`] of `"<copy>/<group>"`, without making the string.

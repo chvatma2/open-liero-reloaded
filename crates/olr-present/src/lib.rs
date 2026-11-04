@@ -316,7 +316,8 @@ impl Presentation {
             match world.live() {
                 Some(view) => {
                     let size = (self.color.material().width(), self.color.material().height());
-                    olr_content::live_look(view, light, size, &mut self.look, t_ms);
+                    let groups = self.level_look.as_ref().map_or(&[][..], |l| l.groups.as_slice());
+                    olr_content::live_look(view, light, groups, size, &mut self.look, t_ms);
                 }
                 None => {
                     for c in &light.copies {

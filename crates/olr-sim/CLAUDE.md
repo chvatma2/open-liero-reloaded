@@ -386,7 +386,9 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   carrying them; `ScriptEvent::Arrived` from `LiveArrived`; issue #92's
   `Play { copy, sound }`, a level sound index, which only emits
   `EventKind::LiveSound { copy, sound }`, a cosmetic event for the quota
-  that changes no state: presentation plays it), `fail(i)` (`EventKind::ScriptError { instance }`,
+  that changes no state: presentation plays it); the plant works' (2026-11-04)
+  `Group { group, intensity, colour }`, a level glow group's values
+  (`LiveWorld::set_group`: clamped, negative -1 the group's own), `fail(i)` (`EventKind::ScriptError { instance }`,
   switched off at the bound) and `charge(ops)`. `World::script_peak()`
   (`ScriptPeak { run, tick }`, the most operations one run and one tick
   used since the world was made) is not state (`NotState`, like
@@ -426,3 +428,14 @@ before blaming it.
 
 Test: `cargo nextest run -p olr-sim`. The oracle test needs imported content;
 `cargo xtask check` sets `OLR_CONTENT_DIR`.
+
+- **Level glow groups** (the factory's plant works, 2026-11-04):
+  `LiveLevel::with_groups(ids)` names the level's own glow groups (the
+  look's, in order; none past 255) and `group(id)` finds one; the world
+  keeps a `LiveGroup { intensity, colour }` each (-1 the group's own,
+  `LiveGroup::OWN`; intensity up to `MAX_GROUP_INTENSITY` 1000, colour
+  `0xRRGGBB`), set by the scripts' `LiveCommand::Group`, read by
+  `LiveView::groups()`. State: hashed after the rest only when one is
+  set (so worlds that set none hash as before), transferred in
+  `LiveWire::groups`, and `can_load` refuses another count, a value out
+  of range or one set in a world without scripts. Tests: `tests/groups.rs`.

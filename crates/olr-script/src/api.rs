@@ -15,8 +15,8 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use olr_sim::{
-    LIVE_SUBPIXELS, LiveCommand, LiveCopy, LiveLevel, LiveReads, LiveTimer, MAX_LIVE_COMMANDS,
-    MAX_MEMORY_BYTES, MAX_MEMORY_KEYS, MAX_TIMERS, ScriptRng,
+    LIVE_SUBPIXELS, LiveCommand, LiveCopy, LiveLevel, LiveReads, LiveTarget, LiveTimer, MAX_GROUP_INTENSITY,
+    MAX_LIVE_COMMANDS, MAX_MEMORY_BYTES, MAX_MEMORY_KEYS, MAX_TIMERS, ScriptRng,
 };
 use rhai::{Dynamic, Engine, EvalAltResult, INT, ImmutableString, Map, NativeCallContext};
 
@@ -236,6 +236,38 @@ impl Live {
         Ok(())
     }
 
+    /// Copy `c`'s centre in whole world pixels (rounded down): its
+    /// rectangle's, moved by its `X` and `Y` (2026-11-04).
+    fn centre_of(&mut self, c: u16) -> (INT, INT) {
+        let copy = self.setup(c);
+        let values = self.reads.values(c);
+        let mut at = (i64::from(copy.at.0), i64::from(copy.at.1));
+        for (p, &v) in copy.props.iter().zip(values) {
+            match p.target {
+                LiveTarget::X => at.0 = at.0.saturating_add(v.div_euclid(LIVE_SUBPIXELS)),
+                LiveTarget::Y => at.1 = at.1.saturating_add(v.div_euclid(LIVE_SUBPIXELS)),
+                _ => {}
+            }
+        }
+        (at.0.saturating_add(i64::from(copy.size.0) / 2), at.1.saturating_add(i64::from(copy.size.1) / 2))
+    }
+
+    /// The level's glow group `id`: its index (2026-11-04).
+    fn group(&mut self, id: &str) -> Res<u16> {
+        self.live()?.level.group(id).map_or_else(|| err(format!("the level has no glow group {id:?}")), Ok)
+    }
+
+    /// Group `id` takes `intensity` (percent, 0-1000) and/or `colour`.
+    fn group_set(&mut self, id: &str, intensity: Option<INT>, colour: Option<INT>) -> Res<()> {
+        let group = self.group(id)?;
+        if let Some(i) = intensity
+            && !(0..=INT::from(MAX_GROUP_INTENSITY)).contains(&i)
+        {
+            return err(format!("a group intensity of {i}: 0 to {MAX_GROUP_INTENSITY}"));
+        }
+        self.queue(LiveCommand::Group { group, intensity, colour })
+    }
+
     fn worm(&mut self, i: INT) -> Res<(bool, i64, i64)> {
         let w = self.live()?.reads.worms();
         match usize::try_from(i).ok().and_then(|i| w.get(i)) {
@@ -394,6 +426,36 @@ pub(crate) fn register(e: &mut Engine) {
         Ok((l.rng.below(100) as INT) < percent)
     });
     // Reading the match.
+    // 2026-11-04: a copy's centre; the level's glow groups.
+    e.register_fn("centre_x", |l: &mut Live| -> Res<INT> {
+        let c = l.me()?;
+        Ok(l.centre_of(c).0)
+    });
+    e.register_fn("centre_y", |l: &mut Live| -> Res<INT> {
+        let c = l.me()?;
+        Ok(l.centre_of(c).1)
+    });
+    e.register_fn("centre_x", |l: &mut Live, c: INT| -> Res<INT> {
+        let c = l.handle(c)?;
+        Ok(l.centre_of(c).0)
+    });
+    e.register_fn("centre_y", |l: &mut Live, c: INT| -> Res<INT> {
+        let c = l.handle(c)?;
+        Ok(l.centre_of(c).1)
+    });
+    e.register_fn("group_intensity", |l: &mut Live, id: &str, v: INT| l.group_set(id, Some(v), None));
+    e.register_fn("group_colour", |l: &mut Live, id: &str, colour: &str| -> Res<()> {
+        let hex =
+            colour.strip_prefix('#').filter(|h| h.len() == 6 && h.bytes().all(|b| b.is_ascii_hexdigit()));
+        let Some(rgb) = hex.and_then(|h| INT::from_str_radix(h, 16).ok()) else {
+            return err(format!("a group colour {colour:?}: \"#rrggbb\""));
+        };
+        l.group_set(id, None, Some(rgb))
+    });
+    e.register_fn("group_reset", |l: &mut Live, id: &str| -> Res<()> {
+        let group = l.group(id)?;
+        l.queue(LiveCommand::Group { group, intensity: Some(-1), colour: Some(-1) })
+    });
     e.register_fn("time", |l: &mut Live| -> Res<INT> { Ok(l.live()?.reads.time_ms) });
     e.register_fn("game_over", |l: &mut Live| -> Res<bool> { Ok(l.live()?.reads.game_over) });
     e.register_fn("worm_count", |l: &mut Live| -> Res<INT> { Ok(l.live()?.reads.worms().len() as INT) });

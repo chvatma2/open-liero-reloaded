@@ -273,6 +273,11 @@ pub enum LiveCommand {
     /// [`EventKind::LiveSound`] is emitted, a cosmetic event; the world
     /// is unchanged.
     Play { copy: u16, sound: u16 },
+    /// The level's glow group `group` (an index into
+    /// [`crate::LiveLevel::groups`]) takes `intensity` (percent; below 0
+    /// its own) and `colour` (`0xRRGGBB`; below 0 its own), `None` keeping
+    /// that field (2026-11-04): world state presentation reads.
+    Group { group: u16, intensity: Option<i64>, colour: Option<i64> },
 }
 
 /// An event a script's handlers see ([`LiveCtx::events`]): positions in
@@ -935,6 +940,7 @@ impl<'a> LiveCtx<'a> {
                 }
                 ok
             }
+            LiveCommand::Group { group, intensity, colour } => self.live.set_group(group, intensity, colour),
         };
         if ok {
             self.commands += 1;

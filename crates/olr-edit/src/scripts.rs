@@ -61,8 +61,19 @@ impl fmt::Display for ScriptProblem {
 
 /// The names `src`'s scripts may use: each live copy's id, its asset's
 /// states, exposed names and sounds (a copy whose asset is missing has
-/// none of them).
+/// none of them), and the level's glow groups (2026-11-04): the static
+/// copies' assets' groups gathered in copy order as the bake gathers them,
+/// or none (unchecked) when a static copy sets values, which may rename
+/// a group it poses (`lamps-2`).
 pub fn names(src: &PlacedSource) -> ScriptNames {
+    let mut gathered = Vec::new();
+    let mut posed = false;
+    for c in src.file.copies.iter().filter(|c| !c.live) {
+        let Some(a) = src.assets.get(&c.asset) else { continue };
+        posed |= !c.values.is_empty();
+        olr_format::levels::gather_groups(&mut gathered, &a.file.glow_groups);
+    }
+    let groups = (!posed).then(|| gathered.into_iter().map(|g| g.id).collect());
     let copies = src
         .file
         .copies
@@ -78,7 +89,7 @@ pub fn names(src: &PlacedSource) -> ScriptNames {
             }
         })
         .collect();
-    ScriptNames { copies }
+    ScriptNames { copies, groups }
 }
 
 /// The scripts `src` runs, in run order (as the played form gathers
