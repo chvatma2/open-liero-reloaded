@@ -3876,6 +3876,17 @@ Spec `docs/superpowers/specs/2026-10-19-glowing-light-design.md`, plan
   through the wall) × `engine::BOUNCE` (0.6, clamped 0-0.9). The history
   is the fluence copied after each frame; a new level, a frame without a
   look or one with no glow starts it afresh.
+- **Cascades where the views need them** (the user's ruling, 2026-11-04,
+  after a crash report from an AMD integrated GPU: Liero v1.0 Reloaded on
+  Castle Strike cost 54 ms of cascades a frame there over the whole
+  level). Each cascade is drawn only over the probes the views' light
+  grids need (cascade 0 their cells, each cascade the probes the one
+  below merges), so a view's light is the whole level's, except that
+  walls outside those rectangles bounce nothing: at most 1 of 255 of
+  Liero Factory Reloaded's picture, none on a level without bounce. The
+  light thus depends on the camera by that bounce. 61 to 17 ms a frame
+  there; split screen's views far apart gain less, an editor canvas over
+  the whole level nothing.
 - **Independent flicker.** A `Flicker` group's flicker is the renderer's:
   each 4-connected region of its pixels (labelled on the CPU, only for
   groups that flicker, again for regions touching a changed rectangle)

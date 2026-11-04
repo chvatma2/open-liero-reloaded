@@ -766,6 +766,72 @@ fn light_is_camera_independent() {
     }
 }
 
+/// The user's ruling (2026-11-04): the cascades run only where the views
+/// need them. Without bounce a small view's light is the whole level's,
+/// bit for bit, frame after frame: lights and walls far outside it,
+/// a level large enough that its upper cascades reach past the view.
+#[test]
+fn a_view_lights_as_the_whole_level_does() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(900, 160, |x, y| (x % 97 == 0 && y > 40) || (y == 120 && x % 211 < 150));
+    let lights = [lamp([60.5, 30.5], f32::INFINITY), lamp([700.5, 90.5], 300.0), lamp([450.5, 140.5], 120.0)];
+    let small = View { x: 380.0, y: 50.0, w: 100.0, h: 60.0 };
+    let frames = |view: View| {
+        let mut r = gpu.renderer(RenderSettings::default());
+        r.set_lighting(true);
+        r.upload_terrain(&map);
+        let mut look = dim(0.1);
+        look.emitters.extend_from_slice(&lights);
+        let mut l = list(view);
+        l.map = (900, 160);
+        for _ in 0..3 {
+            gpu.render_lit_to_image(&mut r, &l, Some(&look), (64, 64));
+        }
+        r
+    };
+    let whole = frames(View { x: 0.0, y: 0.0, w: 900.0, h: 160.0 });
+    let part = frames(small);
+    for y in 50..110 {
+        for x in 380..480 {
+            assert_eq!(light_at(&gpu, &whole, x, y), light_at(&gpu, &part, x, y), "({x}, {y})");
+        }
+    }
+}
+
+/// The light is made once a step: a view moved within it past the
+/// rectangles the light was made over is lit afresh, as a renderer that
+/// only ever drew it.
+#[test]
+fn a_view_moved_within_its_step_is_lit_afresh() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(900, 160, |x, y| x % 97 == 0 && y > 40);
+    let mut look = dim(0.1);
+    look.emitters.extend_from_slice(&[lamp([100.5, 30.5], 200.0), lamp([800.5, 30.5], 200.0)]);
+    look.step = Some(7);
+    let draw = |r: &mut Renderer, view: View| {
+        let mut l = list(view);
+        l.map = (900, 160);
+        gpu.render_lit_to_image(r, &l, Some(&look), (64, 64));
+    };
+    let fresh = |view: View| {
+        let mut r = gpu.renderer(RenderSettings::default());
+        r.set_lighting(true);
+        r.upload_terrain(&map);
+        draw(&mut r, view);
+        r
+    };
+    let (left, right) =
+        (View { x: 50.0, y: 0.0, w: 100.0, h: 60.0 }, View { x: 750.0, y: 0.0, w: 100.0, h: 60.0 });
+    let mut moved = fresh(left);
+    draw(&mut moved, right);
+    let alone = fresh(right);
+    for x in [760, 800, 840] {
+        let (a, b) = (light_at(&gpu, &moved, x, 30), light_at(&gpu, &alone, x, 30));
+        assert_eq!(a, b, "({x}, 30)");
+    }
+    assert!(light_at(&gpu, &alone, 800, 30)[0] > 0.2, "the right lamp lights its view");
+}
+
 /// Rock from y 20 down, a lamp in the air above it.
 fn ground() -> (ColorMap, View, [olr_look::FrameLight; 1]) {
     let lamp = olr_look::FrameLight { colour: [0.2; 3], ..lamp([50.5, 10.5], 100.0) };

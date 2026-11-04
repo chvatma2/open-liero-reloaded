@@ -379,8 +379,20 @@ on screen or offscreen.
     bounce on). The composite's worm halo reads it (binding 4) near the
     view's worm boxes (Soak's `look::worm_boxes`, binding 7; issue #54).
   - **Glow light** (`gi.rs`, `gi_*.wgsl`, Task 12; plan 15c): radiance
-    cascades over the whole level, fixed to the world (never
-    camera-dependent): play's discs (`gi_dynamic.wgsl`: the first
+    cascades fixed to the world, drawn only where the frame's views need
+    them (the user's ruling, 2026-11-04; `LightRects`, `GiState::plan`
+    from each view's light grid, its world target and `LIGHT_PAD`): cascade
+    0's probes the cells those grids sample, a cell more each way, each
+    cascade's the probes the ones below merge, overlapping rectangles
+    merged, each pass a scissored draw a rectangle (cleared elsewhere), the
+    fluence likewise; the emission and the flood stay whole. A view's
+    light is the whole level's, bit for bit without bounce
+    (`a_view_lights_as_the_whole_level_does`); walls outside the
+    rectangles bounce nothing (their history is zero: at most 1 of 255 of
+    Liero Factory Reloaded's picture). A kept light (`holds`) is made again
+    when a view moved past the cells it was made over
+    (`a_view_moved_within_its_step_is_lit_afresh`). On the AMD integrated
+    GPU, Liero v1.0 Reloaded on Castle Strike: 61 to 17 ms a frame. Play's discs (`gi_dynamic.wgsl`: the first
     `olr_look::MAX_EMITTERS` of `LookFrame::emitters`, instanced quads into
     a dynamic layer, never cleared whole (issue #35: each frame zeroes the
     quads of the discs last drawn, `fs_disc_clear`, from the other of two

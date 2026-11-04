@@ -335,3 +335,5 @@
   fixtures/render/factory-crane.png
   fixtures/render/factory-line.png
   fixtures/render/factory-screen.png
+2026-11-04 bless-render: the glow light's cascades drawn only where the views need them: walls outside bounce nothing (the user's ruling 2026-11-04)
+  fixtures/render/lit-hashes.ron

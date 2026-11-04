@@ -343,6 +343,16 @@ impl Renderer {
         // made at keeps it, unless a heat pass ran since (the glow light
         // once a tick: the render profile).
         let key = look.and_then(|l| l.step).map(|s| (s, self.heat_passes()));
+        if let (Some(_), Some(state)) = (look, self.look.as_ref())
+            && let Some(tex) = &state.textures
+        {
+            // Each view's light grid: its world target and the pad.
+            let pad = LIGHT_PAD as i32;
+            tex.gi.plan(self.plans.iter().map(|p| {
+                let (o, s) = (p.frame.origin, p.frame.size);
+                [o.0 - pad, o.1 - pad, o.0 + s.0 as i32 + pad, o.1 + s.1 as i32 + pad]
+            }));
+        }
         if let (Some(look), Some(state)) = (look, self.look.as_ref())
             && let Some(tex) = &state.textures
             && !views.is_empty()

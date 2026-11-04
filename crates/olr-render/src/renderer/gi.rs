@@ -1,6 +1,7 @@
 //! Glow light (plan 15a Task 12, spec §Glow light): 2D global illumination
-//! with radiance cascades over the whole level, fixed to the world, so the
-//! light never depends on the camera. The shaders are `look/gi*.wgsl`;
+//! with radiance cascades fixed to the world, drawn only where the views
+//! need them ([`LightRects`]): a view's light is the whole level's, but for
+//! what walls outside them would bounce. The shaders are `look/gi*.wgsl`;
 //! the cascades' layout is in `gi.wgsl`'s header.
 //!
 //! Chosen parameters: cascade 0 has a probe per cell and 4 directions;
@@ -292,6 +293,120 @@ fn texture(
         .create_view(&Default::default())
 }
 
+/// The rectangles the glow light's passes draw for the frame's views
+/// (the user's ruling, 2026-11-04: the cascades only where a view needs
+/// them; a 427 x 192 view on Castle Strike cost 54 ms of cascades a
+/// frame on the AMD integrated GPU over the whole level, 8 within its
+/// rectangles). `levels[0]` is the fluence's cells, `levels[1 + i]`
+/// cascade `i`'s texels, each `[x, y, w, h]`, apart. Cascade 0's probes
+/// are the cells the views' light grids sample (bilinear: a cell more
+/// each way); each cascade's are those the probes below merge
+/// (`fs_cascade`: `q0` and `q0 + 1`, clamped), so the light in a view is
+/// the whole level's, but for the bounce of walls outside the
+/// rectangles: their history is not made (zero), at most 1 of 255 of
+/// Liero Factory Reloaded's picture (the spike's 60 frames). Reused
+/// frame after frame: no allocation once warm.
+#[derive(Default)]
+pub(super) struct LightRects {
+    levels: Vec<Vec<[u32; 4]>>,
+    /// Probe rectangles `[x0, y0, x1, y1]` (ends included) being merged.
+    scratch: Vec<[i32; 4]>,
+    next: Vec<[i32; 4]>,
+}
+
+impl LightRects {
+    /// The rectangles of `count` cascades over `grid` cells of `cell`
+    /// world pixels, for light grids over the world-pixel rectangles
+    /// `views` (`[x0, y0, x1, y1]`, ends excluded).
+    pub(super) fn fill(
+        &mut self,
+        grid: (u32, u32),
+        cell: u32,
+        count: u32,
+        views: impl IntoIterator<Item = [i32; 4]>,
+    ) {
+        let levels = 1 + count as usize;
+        self.levels.resize_with(levels, Vec::new);
+        self.levels.truncate(levels);
+        self.levels.iter_mut().for_each(Vec::clear);
+        let c = cell.max(1) as i32;
+        let (gw, gh) = (grid.0 as i32, grid.1 as i32);
+        self.scratch.clear();
+        for [x0, y0, x1, y1] in views {
+            let r = [
+                x0.div_euclid(c) - 1,
+                y0.div_euclid(c) - 1,
+                (x1 - 1).div_euclid(c) + 1,
+                (y1 - 1).div_euclid(c) + 1,
+            ];
+            if let Some(r) = clamped(r, (gw, gh)) {
+                self.scratch.push(r);
+            }
+        }
+        merge(&mut self.scratch);
+        let out = |r: &[i32; 4], (bw, bh): (u32, u32)| {
+            [r[0] as u32 * bw, r[1] as u32 * bh, (r[2] - r[0] + 1) as u32 * bw, (r[3] - r[1] + 1) as u32 * bh]
+        };
+        self.levels[0].extend(self.scratch.iter().map(|r| out(r, (1, 1))));
+        for i in 0..count {
+            let shape = Cascade::new(i, grid);
+            self.levels[1 + i as usize].extend(self.scratch.iter().map(|r| out(r, (shape.bw, shape.bh))));
+            if i + 1 == count {
+                break;
+            }
+            // The probes above that these merge.
+            let upper = Cascade::new(i + 1, grid).probes;
+            let q0 = |p: i32| (2 * p - 1).div_euclid(4);
+            self.next.clear();
+            for r in &self.scratch {
+                let up = [q0(r[0]), q0(r[1]), q0(r[2]) + 1, q0(r[3]) + 1];
+                if let Some(up) = clamped(up, (upper.0 as i32, upper.1 as i32)) {
+                    self.next.push(up);
+                }
+            }
+            std::mem::swap(&mut self.scratch, &mut self.next);
+            merge(&mut self.scratch);
+        }
+    }
+
+    /// Level `i`'s rectangles (0 the fluence, `1 + i` cascade `i`).
+    pub(super) fn level(&self, i: usize) -> &[[u32; 4]] {
+        self.levels.get(i).map_or(&[], Vec::as_slice)
+    }
+}
+
+/// `r` (ends included) cut to `0..size`, or `None` outside it.
+fn clamped(r: [i32; 4], size: (i32, i32)) -> Option<[i32; 4]> {
+    let c = [r[0].max(0), r[1].max(0), r[2].min(size.0 - 1), r[3].min(size.1 - 1)];
+    (c[0] <= c[2] && c[1] <= c[3]).then_some(c)
+}
+
+/// Overlapping rectangles (ends included) become their bounding box,
+/// until none overlap.
+fn merge(rects: &mut Vec<[i32; 4]>) {
+    'again: loop {
+        for i in 0..rects.len() {
+            for j in i + 1..rects.len() {
+                let (a, b) = (rects[i], rects[j]);
+                if a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3] {
+                    rects[i] = [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])];
+                    rects.swap_remove(j);
+                    continue 'again;
+                }
+            }
+        }
+        return;
+    }
+}
+
+/// Whether every rectangle of `need` lies inside one of `have`.
+fn covered(need: &[[u32; 4]], have: &[[u32; 4]]) -> bool {
+    need.iter().all(|n| {
+        have.iter()
+            .any(|h| n[0] >= h[0] && n[1] >= h[1] && n[0] + n[2] <= h[0] + h[2] && n[1] + n[3] <= h[1] + h[3])
+    })
+}
+
 /// One level's glow light: its grid, pyramid, cascades and fluence.
 pub(super) struct GiState {
     /// World pixels per cell.
@@ -328,6 +443,11 @@ pub(super) struct GiState {
     /// frame's step ([`olr_look::LookFrame::step`]) and the heat's passes
     /// run by then; `None` when its inputs changed since, or it has none.
     kept: std::cell::Cell<Option<(u64, u64)>>,
+    /// The frame's rectangles ([`GiState::plan`]).
+    rects: std::cell::RefCell<LightRects>,
+    /// The fluence's cells the kept light was made over: a view moved
+    /// past them within its step needs it made again.
+    lit: std::cell::RefCell<Vec<[u32; 4]>>,
     emission_bind: wgpu::BindGroup,
     seed_bind: wgpu::BindGroup,
     /// Each flood pass: the texture it writes and its bind (step, the other).
@@ -542,6 +662,8 @@ impl GiState {
             fluence,
             fresh: std::cell::Cell::new(true),
             kept: std::cell::Cell::new(None),
+            rects: std::cell::RefCell::new(LightRects::default()),
+            lit: std::cell::RefCell::new(Vec::new()),
             emission_bind,
             seed_bind,
             jfa,
@@ -574,7 +696,8 @@ impl GiState {
                     group: PassGroup,
                     targets: &[&wgpu::TextureView],
                     work: Option<(&wgpu::RenderPipeline, &wgpu::BindGroup)>,
-                    more: &[&wgpu::BindGroup]| {
+                    more: &[&wgpu::BindGroup],
+                    within: Option<&[[u32; 4]]>| {
             // At most four targets, kept on the stack (issue #35: no
             // allocation a pass).
             let attachments: [Option<wgpu::RenderPassColorAttachment>; 4] = std::array::from_fn(|i| {
@@ -602,16 +725,25 @@ impl GiState {
                 for (i, g) in more.iter().enumerate() {
                     p.set_bind_group(1 + i as u32, *g, &[]);
                 }
-                p.draw(0..3, 0..1);
+                match within {
+                    None => p.draw(0..3, 0..1),
+                    // Only these rectangles (the rest stays cleared).
+                    Some(rects) => {
+                        for r in rects {
+                            p.set_scissor_rect(r[0], r[1], r[2], r[3]);
+                            p.draw(0..3, 0..1);
+                        }
+                    }
+                }
             }
         };
         if !casting {
-            pass(encoder, PassGroup::Fluence, &[&self.fluence], None, &[]);
+            pass(encoder, PassGroup::Fluence, &[&self.fluence], None, &[], None);
             self.reset();
             return false;
         }
         if self.fresh.replace(false) {
-            pass(encoder, PassGroup::Fluence, &[&self.fluence], None, &[]);
+            pass(encoder, PassGroup::Fluence, &[&self.fluence], None, &[], None);
         }
         // The discs (issue #35): the quads last drawn back to zero, then
         // this frame's added; no pass when neither has any.
@@ -649,19 +781,28 @@ impl GiState {
         }
         let emission = Some((&pipes.emission, &self.emission_bind));
         let emitted = [&self.emission.0, &self.emission.1, &self.emission.2, &self.emission.3];
-        pass(encoder, PassGroup::Emission, &emitted, emission, &[heat]);
+        pass(encoder, PassGroup::Emission, &emitted, emission, &[heat], None);
         let seed = Some((&pipes.seed, &self.seed_bind));
-        pass(encoder, PassGroup::JumpFlood, &[&self.seeds[0]], seed, &[]);
+        pass(encoder, PassGroup::JumpFlood, &[&self.seeds[0]], seed, &[], None);
         for (target, b) in &self.jfa {
-            pass(encoder, PassGroup::JumpFlood, &[&self.seeds[*target]], Some((&pipes.jfa, b)), &[]);
+            pass(encoder, PassGroup::JumpFlood, &[&self.seeds[*target]], Some((&pipes.jfa, b)), &[], None);
         }
+        // Each cascade, then the fluence, only where the views need them.
+        let rects = self.rects.borrow();
         for i in (0..self.cascades.len()).rev() {
             let cascade = Some((&pipes.cascade, &self.cascade_binds[i]));
-            pass(encoder, PassGroup::Cascades, &[&self.cascades[i]], cascade, &[beams]);
+            pass(
+                encoder,
+                PassGroup::Cascades,
+                &[&self.cascades[i]],
+                cascade,
+                &[beams],
+                Some(rects.level(1 + i)),
+            );
         }
         // The next frame's bounce reads this frame's light, kept here.
         let fluence = Some((&pipes.fluence, &self.fluence_bind));
-        pass(encoder, PassGroup::Fluence, &[&self.fluence], fluence, &[]);
+        pass(encoder, PassGroup::Fluence, &[&self.fluence], fluence, &[], Some(rects.level(0)));
         true
     }
 
@@ -680,15 +821,28 @@ impl GiState {
         self.stale();
     }
 
-    /// Whether the fluence holds the light of `key` (a step and the heat
-    /// passes run), so a frame of it may keep it: never for `None`.
-    pub(super) fn holds(&self, key: Option<(u64, u64)>) -> bool {
-        key.is_some() && self.kept.get() == key
+    /// The frame's views: their light grids over the world-pixel
+    /// rectangles `views` (`[x0, y0, x1, y1]`, ends excluded), which the
+    /// next [`GiState::encode`] lights ([`LightRects`]).
+    pub(super) fn plan(&self, views: impl IntoIterator<Item = [i32; 4]>) {
+        let count = self.cascades.len() as u32;
+        self.rects.borrow_mut().fill(self.grid, self.cell, count, views);
     }
 
-    /// The light just encoded is of `key`.
+    /// Whether the fluence holds the light of `key` (a step and the heat
+    /// passes run) over the planned views, so a frame of it may keep it:
+    /// never for `None`, nor when a view moved past the cells it was made
+    /// over.
+    pub(super) fn holds(&self, key: Option<(u64, u64)>) -> bool {
+        key.is_some() && self.kept.get() == key && covered(self.rects.borrow().level(0), &self.lit.borrow())
+    }
+
+    /// The light just encoded is of `key`, over the planned views.
     pub(super) fn made(&self, key: Option<(u64, u64)>) {
         self.kept.set(key);
+        let mut lit = self.lit.borrow_mut();
+        lit.clear();
+        lit.extend_from_slice(self.rects.borrow().level(0));
     }
 
     /// What the light reads changed (the terrain, the heat's materials):
@@ -713,5 +867,122 @@ mod tests {
             let c = Cascade::new(i, (4096, 64));
             assert!(c.size().0 <= 2 * 4096 + c.bw, "{i}: {:?}", c.size());
         }
+    }
+
+    /// The probes of cascade `i + 1` a probe `p` of cascade `i` merges
+    /// (`fs_cascade`: bilinear between `q0` and `q0 + 1`, clamped).
+    fn upper_probes(p: (u32, u32), upper: (u32, u32)) -> [(u32, u32); 4] {
+        let q0 = |p: u32| (((p as f32 + 0.5) / 2.0 - 0.5).floor()) as i32;
+        let at = |q: i32, n: u32| q.clamp(0, n as i32 - 1) as u32;
+        let (x, y) = (q0(p.0), q0(p.1));
+        [(0, 0), (1, 0), (0, 1), (1, 1)].map(|(dx, dy)| (at(x + dx, upper.0), at(y + dy, upper.1)))
+    }
+
+    fn inside(rects: &[[u32; 4]], (x, y): (u32, u32)) -> bool {
+        rects.iter().any(|r| x >= r[0] && y >= r[1] && x < r[0] + r[2] && y < r[1] + r[3])
+    }
+
+    fn light_rects(grid: (u32, u32), cell: u32, count: u32, views: &[[i32; 4]]) -> Vec<Vec<[u32; 4]>> {
+        let mut r = LightRects::default();
+        r.fill(grid, cell, count, views.iter().copied());
+        (0..=count as usize).map(|i| r.level(i).to_vec()).collect()
+    }
+
+    /// Castle Strike's grid and cascades (cell 1).
+    const GRID: (u32, u32) = (1350, 550);
+    const COUNT: u32 = 10;
+
+    #[test]
+    fn a_view_over_the_whole_level_lights_all_of_it() {
+        let r = light_rects(GRID, 1, COUNT, &[[-40, -40, 1400, 600]]);
+        assert_eq!(r.len(), 1 + COUNT as usize);
+        assert_eq!(r[0], [[0, 0, 1350, 550]]);
+        for i in 0..COUNT {
+            let (w, h) = Cascade::new(i, GRID).size();
+            assert_eq!(r[1 + i as usize], [[0, 0, w, h]], "cascade {i}");
+        }
+    }
+
+    #[test]
+    fn each_cascade_holds_every_probe_the_one_below_merges() {
+        // One view, two apart, two overlapping, one at a corner; cells of 2.
+        let cases: [(u32, &[[i32; 4]]); 4] = [
+            (1, &[[500, 200, 927, 392]]),
+            (1, &[[10, 10, 437, 202], [900, 330, 1327, 522]]),
+            (1, &[[100, 100, 527, 292], [300, 200, 727, 392]]),
+            (2, &[[-30, 300, 397, 492]]),
+        ];
+        for (cell, views) in cases {
+            let grid = (GRID.0.div_ceil(cell), GRID.1.div_ceil(cell));
+            let r = light_rects(grid, cell, COUNT, views);
+            // The fluence holds every cell the views' light grids sample
+            // (bilinear: the cells around each world pixel).
+            for v in views {
+                for (x, y) in [(v[0], v[1]), (v[2] - 1, v[3] - 1), (v[0], v[3] - 1)] {
+                    let c = |w: i32, n: u32| {
+                        ((w as f32 / cell as f32 - 0.5).floor() as i32).clamp(0, n as i32 - 1) as u32
+                    };
+                    for (dx, dy) in [(0, 0), (1, 1)] {
+                        let p = ((c(x, grid.0) + dx).min(grid.0 - 1), (c(y, grid.1) + dy).min(grid.1 - 1));
+                        assert!(inside(&r[0], p), "cell {cell} {views:?}: fluence {p:?} of {:?}", r[0]);
+                    }
+                }
+            }
+            // Cascade 0's probes are the fluence's cells; each cascade's
+            // probes merge only probes above them that are drawn.
+            let probes = |i: usize| -> Vec<[u32; 4]> {
+                let s = Cascade::new(i as u32, grid);
+                r[1 + i].iter().map(|t| [t[0] / s.bw, t[1] / s.bh, t[2] / s.bw, t[3] / s.bh]).collect()
+            };
+            assert_eq!(probes(0), r[0]);
+            for i in 0..COUNT as usize - 1 {
+                let upper = Cascade::new(i as u32 + 1, grid).probes;
+                for rect in probes(i) {
+                    for y in rect[1]..rect[1] + rect[3] {
+                        for x in rect[0]..rect[0] + rect[2] {
+                            for q in upper_probes((x, y), upper) {
+                                assert!(
+                                    inside(&probes(i + 1), q),
+                                    "{views:?}: cascade {i} ({x}, {y}) reads {q:?}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_game_view_lights_a_small_part_of_a_large_level() {
+        // A 427 x 192 view and its light grid's pad, mid-level.
+        let r = light_rects(GRID, 1, COUNT, &[[440, 150, 440 + 427 + 58, 150 + 192 + 58]]);
+        let area = |rects: &[[u32; 4]]| rects.iter().map(|t| u64::from(t[2]) * u64::from(t[3])).sum::<u64>();
+        let all = |i: u32| {
+            let (w, h) = Cascade::new(i, GRID).size();
+            u64::from(w) * u64::from(h)
+        };
+        assert!(area(&r[1]) * 5 < all(0), "cascade 0: {:?}", r[1]);
+        assert!(area(&r[4]) * 3 < all(3), "cascade 3: {:?}", r[4]);
+        // Overlapping views' rectangles merge: never a texel drawn twice.
+        let r = light_rects(GRID, 1, COUNT, &[[100, 100, 527, 292], [300, 200, 727, 392]]);
+        for level in &r {
+            for (i, a) in level.iter().enumerate() {
+                for b in &level[i + 1..] {
+                    let apart = a[0] + a[2] <= b[0]
+                        || b[0] + b[2] <= a[0]
+                        || a[1] + a[3] <= b[1]
+                        || b[1] + b[3] <= a[1];
+                    assert!(apart, "{a:?} and {b:?} overlap");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_view_off_the_level_lights_nothing() {
+        let r = light_rects(GRID, 1, COUNT, &[[5000, 5000, 5400, 5200]]);
+        assert!(r.iter().all(|level| level.is_empty()), "{r:?}");
+        assert!(light_rects(GRID, 1, COUNT, &[]).iter().all(|level| level.is_empty()));
     }
 }
