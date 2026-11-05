@@ -286,6 +286,13 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   one (`crushed`) and set the
   level's glow groups (`group_intensity`, `group_colour`,
   `group_reset`) and read a copy's centre (`centre_x`, `centre_y`).
+- Loose dirt: a level can mark dirt loose, and its grains fall, ride a
+  falling body and slide off a pile steeper than their material's angle
+  of repose, slower than a falling worm. Each loose material sets its
+  angle, gravity, top speed and slide speed (`olr-cli level loose
+  list|add|set|remove`, `level element set --loose`, and the level
+  editor's ground and asset panels). Liero Factory Reloaded's press heap
+  and the mine's floor seam are loose spoil.
 
 ### Changed
 

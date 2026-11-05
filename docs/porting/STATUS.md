@@ -8141,6 +8141,59 @@ idea of the "Factory Pass Mockups" page but the painted particles.
     `steady.rhai` (a blast nearby flickers them) instead of the Strip
     light's default script.
 
+## Loose dirt (2026-11-05)
+
+Spec `docs/superpowers/specs/2026-11-05-loose-dirt-design.md`, plan
+`docs/superpowers/plans/2026-11-05-loose-dirt.md`. No OLX counterpart:
+OLX's dirt never moves once drawn.
+
+- **What it is.** A level may mark some of its dirt loose (`level.ron`'s
+  `loose` list of up to 16 materials, `loose.png` naming one per pixel).
+  Loose grains fall, ride a falling body as one and slide off a pile
+  steeper than their material's angle of repose (5-85°, default 45);
+  gravity (default 200), top speed (50) and slide speed (25) are each
+  material's, far slower than a dropped worm. Ordinary dirt, rock and
+  levels without a `loose` list play exactly as before: their goldens
+  and the oracle are unchanged.
+- **The step** (`olr-sim`'s loose step) runs once a tick after the
+  scripts, rows bottom up, over awake 16 × 16 chunks only; a dig, a
+  worm's box, a moving grain or a live rock part's change wakes them. It
+  is world state (hashed, saved, restored, rolled back) and capped at
+  20,000 moves a tick, the rest waiting a tick. Grains treat living
+  worms and live rock parts as solid; a part carries none.
+- **Play.** The moves reach the colour map (`olr_content::move_grains`)
+  and the GPU through the ordinary dirty rectangles; the beam shadow
+  maps redraw only the beams a change reaches (`olr-render`'s
+  `stale_rect`), so falling grains do not redraw every beam's shadow.
+  Network protocol 11 and desync bundle 7 carry the loose state.
+- **Authoring.** `olr-cli level loose list|add|set|remove` edits the
+  list and `level element set --loose ID|none` marks a dirt layer (a
+  mixed layer's dirt) loose; the level editor's ground and asset panels
+  edit the list (Angle °, Gravity, Top speed, Slide speed) and a dirt
+  layer's Loose picker. Assets carry the materials their elements name;
+  placed copies' lists gather as surface materials do (a clash
+  `<id>-2`).
+- **Liero Factory Reloaded** has one, `spoil` ("Mine spoil", repose
+  35): the press heap in the hall and the mine's floor seam, the regions
+  of their boxes that `level loose probe` moved under 2 % in 300 ticks
+  (`tools/levels/factory_works.py`). The seams above the tunnel are
+  plain dirt: loose, they would pour into it at the start.
+- **Rulings made on the way** (`docs/deferred-verification.md` has the
+  playtest of the feel):
+  - a bad `loose.png` or list is an error that keeps the level from
+    loading, as live copies' (loose dirt is gameplay); a loose value on
+    rock or background is no error, the terrain reads it on dirt only;
+  - only a dirt layer, or a mixed layer's dirt, can be loose; a distant
+    layer never;
+  - a composition with no loose element bakes no `loose.png`, so a
+    hand-made one is dropped when a plain level is converted to layers;
+  - the editor's paste (`land`) drops an element's loose id, as it drops
+    other level-bound settings;
+  - an asset saved from the asset tab lists only the loose materials its
+    elements name (the ground keeps all of them);
+  - the placed bake renames clashing materials silently (`<id>-2`), as it
+    does surface materials.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`
