@@ -1305,8 +1305,13 @@ and cart stopped; repaired after 3000 ticks, all at rest again),
 `a_big_blast_sounds_the_alarm` (the siren in Alarm with turning beams,
 the groups and strips red, calm after 1000 ticks, not again for 2000),
 `a_broken_strip_is_mended`, `a_pane_shatters`,
-`the_lift_cart_and_forklift_work` (their states and travels) and
-`a_blast_near_a_strip_flickers_it`.
+`the_lift_cart_and_forklift_work` (their states and travels),
+`a_blast_near_a_strip_flickers_it`, and the loose dirt design's
+`the_factory_has_spoil` (`loose.png` all `spoil` and only inside the
+press heap's and the mine's boxes, over 1000 pixels each;
+`the_new_factory_bakes_as_after_dark` checks the list, `level loose
+list`) and `the_spoil_stays_put_in_an_empty_match` (no worms, 300 ticks:
+under 2 % of the grains moved).
 `bots_play_the_live_factory` (both
 mods, 3000 ticks, invariants every tick) and
 `the_live_factory_stays_in_sync` (`netsim`: 3 clients, the `bad`

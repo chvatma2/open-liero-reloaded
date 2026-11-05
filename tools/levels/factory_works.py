@@ -15,7 +15,8 @@
 #   the drive's casing, the dirt balls painted on the incline: the stamp
 #   is the Console's piece), the lift's shaft at the hall's far right down
 #   into the mine's big chamber, the mine cart's rails, the truck's hazard
-#   lights and lit cab, and the line's end crate made rock. (The emergency
+#   lights and lit cab, the line's end crate made rock, and the press heap
+#   and the mine's floor seam loose spoil (the loose dirt design). (The emergency
 #   lamps, red bulbs lit in a blackout, are gone: the user's playtest,
 #   2026-11-05, their bulbs read as red dots hanging in the air.)
 # - `place(run, out)` places the copies new to the level (the lift, the
@@ -130,6 +131,15 @@ CAB_BOX = (50, 378, 23, 16)
 CAB_GROUP = ("cab", "ffd8a0", 140, 22, None)
 CAB_GLOW = 60
 
+# The loose dirt design: the press heap's box and the mine's (its floor
+# seam rests on rock, the seams above the tunnel would fall into it); a
+# region of either is spoil when the probe moves under SPOIL_MOVED % of it
+# in SPOIL_TICKS ticks.
+SPOIL = [("Press heap", "spoil-heap.png", (820, 320, 90, 50)),
+         ("Mine spoil", "spoil-mine.png", (590, 370, 380, 110))]
+SPOIL_REPOSE, SPOIL_TICKS, SPOIL_MOVED = 35, 300, 2.0
+DIRT = (139, 90, 43)  # `material.png`'s dirt
+
 # The Strip light's broken tube: its unlit grey, the middle shattered.
 STRIP_OFF = (150, 150, 156)
 STRIP_GAP = (11, 7)  # the missing glass's first column and width
@@ -195,7 +205,11 @@ def inside(box, x, y):
 
 
 def layer(name):
-    return decode(os.path.join(AFTER_DARK, "editor/layers", name + ".png"))[2]
+    return layer_of(AFTER_DARK, name)
+
+
+def layer_of(pack, name):
+    return decode(os.path.join(pack, "editor/layers", name + ".png"))[2]
 
 
 def bbox(pixels):
@@ -511,7 +525,50 @@ def ground(run, out):
        "--tile", os.path.join(SCRATCH, "crate-tile.png"))
     el("set", out, box, "--surface", "wood")
     new.append(box)
+    # The loose dirt design: the press heap and the mine's floor seam are
+    # spoil, each on a dirt layer of its own.
+    run("level", "loose", "add", out, "--id", "spoil", "--name", "Mine spoil", "--repose", str(SPOIL_REPOSE))
+    for name, mask, box in SPOIL:
+        pixels = resting(run, out, box)
+        sp = added(el("extract", out, "dirt", "--mask", white(mask, pixels, SCRATCH), "--name", name))
+        el("set", out, sp, "--loose", "spoil")
+        new.append(sp)
     return new
+
+
+def resting(run, out, box):
+    """The dirt of `box` that rests: each 4-connected dirt region of the box
+    (`level loose probe`'s, matched by its bounds and size) of which under
+    `SPOIL_MOVED` % moved in `SPOIL_TICKS`, all on the ground's `dirt`."""
+    bx, by, bw, bh = box
+    probed = run("level", "loose", "probe", out, "--box", ",".join(map(str, box)), "--ticks", str(SPOIL_TICKS))
+    moved = {}
+    for line in probed.splitlines():
+        rect, n, share = line.split()
+        moved[(tuple(map(int, rect.split(","))), int(n))] = float(share.rstrip("%"))
+    _, _, mat = decode(os.path.join(out, "material.png"))
+    dirt = layer_of(out, "dirt")
+    is_dirt = lambda x, y: bx <= x < bx + bw and by <= y < by + bh and mat[y][x][:3] == DIRT
+    seen, rest = set(), set()
+    for y in range(by, by + bh):
+        for x in range(bx, bx + bw):
+            if (x, y) in seen or not is_dirt(x, y):
+                continue
+            region, stack = set(), [(x, y)]
+            seen.add((x, y))
+            while stack:
+                p = stack.pop()
+                region.add(p)
+                for q in ((p[0] - 1, p[1]), (p[0] + 1, p[1]), (p[0], p[1] - 1), (p[0], p[1] + 1)):
+                    if q not in seen and is_dirt(*q):
+                        seen.add(q)
+                        stack.append(q)
+            share = moved[(bbox(region), len(region))]
+            if share < SPOIL_MOVED:
+                assert all(dirt[py][px][3] for px, py in region), (box, bbox(region))
+                rest |= region
+    assert rest, box
+    return rest
 
 
 def place(run, out, assets):

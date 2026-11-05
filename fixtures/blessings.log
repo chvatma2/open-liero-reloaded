@@ -346,3 +346,9 @@
   fixtures/matches-live/classic-factory-live-4dm.ron
 2026-11-05 bless-regression: loose dirt: the loose-test level's golden
   fixtures/matches-live/classic-loose-test-4chaos.ron
+2026-11-05 bless-render: Liero Factory Reloaded: loose mine spoil
+  fixtures/render/factory-beacon-side.png
+  fixtures/render/factory-crane.png
+  fixtures/render/factory-line.png
+2026-11-05 bless-regression: Liero Factory Reloaded: loose mine spoil
+  fixtures/matches-live/classic-factory-live-4dm.ron

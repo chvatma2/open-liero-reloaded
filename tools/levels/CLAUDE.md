@@ -91,7 +91,13 @@ byte for byte, and running one again changes nothing.
   cart's rails on the left tunnel's floor, row 473; the doorway's
   threshold plate behind the forklift, `THRESHOLD`, its art moved onto
   the backdrop so the wheels roll over it; the truck's hazard lights, a Rock layer on
-  the truck's own rock, and lit cab); `place(run, out, assets)` places the Lift, the Mine cart and the
+  the truck's own rock, and lit cab; the loose dirt design: the loose
+  material `spoil` ("Mine spoil", repose 35) and, by `resting`, the dirt
+  regions of `SPOIL`'s boxes, the press heap's and the mine's, that
+  `level loose probe` moves under 2 % in 300 ticks (the heap and the
+  mine's floor seam; the seams over the tunnel would fall), each box's
+  extracted from `dirt` onto a layer of its own set `--loose spoil`);
+  `place(run, out, assets)` places the Lift, the Mine cart and the
   Forklift. `factory_assets.py` makes the Dirt-ball line, Lift, Mine cart,
   Forklift, Generator, Siren, Lab flask and Window pane by their blocks
   (`NEW_ASSETS`); its `PIECES` give the line the Console's place (placed

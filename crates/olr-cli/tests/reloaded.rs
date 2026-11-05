@@ -643,6 +643,13 @@ fn the_new_factory_bakes_as_after_dark() {
     let same = std::fs::read(ours.join("distant/0.png")).unwrap()
         == std::fs::read(theirs.join("distant/0.png")).unwrap();
     assert!(same, "distant/0.png differs from After Dark's");
+    // The loose dirt design: the press heap and the mine's floor seam are
+    // spoil (`factory_works.py`), loose but drawn and solid as before.
+    let loose = |dir: &Path| {
+        String::from_utf8(cli(&["level", "loose", "list", dir.to_str().unwrap()]).stdout).unwrap()
+    };
+    assert_eq!(loose(&ours), "1: spoil \"Mine spoil\" repose 35° gravity 200 top-speed 50 slide-speed 25\n");
+    assert_eq!(loose(&theirs), "");
     for file in ["material.png", "front.png", "back.png"] {
         let decode =
             |dir: &Path| olr_pack::image_io::decode_rgba(&std::fs::read(dir.join(file)).unwrap()).unwrap();

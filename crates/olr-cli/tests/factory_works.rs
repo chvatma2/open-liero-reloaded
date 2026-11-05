@@ -371,3 +371,68 @@ fn a_blast_near_a_strip_flickers_it() {
     until(&mut w, 200, |w| state(w, "strip-6") == "Steady");
     assert_eq!(live_copy(&w, "strip-6").value("hp"), Some(20), "unhurt");
 }
+
+/// The spoil's boxes (`factory_works.py`): the press heap's and the mine's.
+const HEAP: (u32, u32, u32, u32) = (820, 320, 90, 50);
+const MINE: (u32, u32, u32, u32) = (590, 370, 380, 110);
+
+fn within((bx, by, bw, bh): (u32, u32, u32, u32), x: u32, y: u32) -> bool {
+    x >= bx && x < bx + bw && y >= by && y < by + bh
+}
+
+/// The press heap and the mine's floor seam are loose spoil, and no dirt
+/// outside their boxes is.
+#[test]
+fn the_factory_has_spoil() {
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    let level = content.load_level(FACTORY).unwrap();
+    let loose = level.loose.as_ref().expect("the factory has loose dirt");
+    let w = level.material.width();
+    let (mut heap, mut mine) = (0, 0);
+    for (i, &k) in loose.kinds.iter().enumerate() {
+        let (x, y) = (i as u32 % w, i as u32 / w);
+        if k == 0 {
+            continue;
+        }
+        assert_eq!(k, 1, "({x}, {y}): spoil, the only loose material");
+        if within(HEAP, x, y) {
+            heap += 1;
+        } else if within(MINE, x, y) {
+            mine += 1;
+        } else {
+            panic!("({x}, {y}) is loose, outside the heap and the mine");
+        }
+    }
+    assert!(heap > 1000 && mine > 1000, "heap {heap}, mine {mine} loose pixels");
+}
+
+/// The spoil rests where the level lays it: in a match of no worms, fewer
+/// than 2 % of its grains move in 300 ticks.
+#[test]
+fn the_spoil_stays_put_in_an_empty_match() {
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    let level = content.load_level(FACTORY).unwrap();
+    let kinds = &level.loose.as_ref().expect("the factory has loose dirt").kinds;
+    let setup = olr_content::SandboxSetup {
+        mod_id: CLASSIC.into(),
+        level_id: FACTORY.into(),
+        seed: 1,
+        settings: olr_sim::SimSettings::lx56(),
+        worms: Vec::new(),
+        restrictions: olr_content::DEFAULT_PRESET.into(),
+    };
+    let mut w = content.new_world(&setup).unwrap();
+    // `grain[cell]`: the starting cell of the grain there now.
+    let mut grain: Vec<u32> = (0..kinds.len() as u32).collect();
+    let mut moved = vec![false; kinds.len()];
+    run(&mut w, 300, |w, _| {
+        for &(from, to) in w.loose_moves() {
+            let g = grain[from as usize];
+            grain[to as usize] = g;
+            moved[g as usize] = true;
+        }
+    });
+    let loose = kinds.iter().filter(|&&k| k != 0).count();
+    let gone = moved.iter().filter(|&&m| m).count();
+    assert!(gone * 50 < loose, "{gone} of {loose} grains moved");
+}

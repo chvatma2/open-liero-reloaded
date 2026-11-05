@@ -291,4 +291,11 @@
             glow_group: "pylon",
         ),
     ],
+    loose: [
+        (
+            id: "spoil",
+            name: "Mine spoil",
+            repose: 35,
+        ),
+    ],
 )

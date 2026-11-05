@@ -21,6 +21,28 @@
             surface_map: true,
         ),
         (
+            id: "mine-spoil",
+            name: "Mine spoil",
+            locked: true,
+            kind: Drawn(
+                material: Dirt,
+            ),
+            surface: "dirt",
+            surface_map: true,
+            loose: "spoil",
+        ),
+        (
+            id: "press-heap",
+            name: "Press heap",
+            locked: true,
+            kind: Drawn(
+                material: Dirt,
+            ),
+            surface: "dirt",
+            surface_map: true,
+            loose: "spoil",
+        ),
+        (
             id: "rock",
             name: "Rock",
             kind: Drawn(
@@ -471,6 +493,13 @@
                     light: 50,
                 ),
             ),
+        ),
+    ],
+    loose: [
+        (
+            id: "spoil",
+            name: "Mine spoil",
+            repose: 35,
         ),
     ],
 )
