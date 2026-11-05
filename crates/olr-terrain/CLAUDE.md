@@ -155,6 +155,20 @@ and the colour image that follows it (`ColorMap`).
   `a_live_beam_texel_turns_and_mirrors_with_its_part`,
   `live_glass_takes_the_frames_opacity_and_tint`.
 - **Journal** (`journal.rs`, networking spec §3.3): off by default; `start_journal` records each mutator's clipped pre-image and keeps the order-independent cell hash. Every new write to `cells` must go through `set_cell` after `record`, or rollback breaks.
+- **Loose dirt** (spec `docs/superpowers/specs/2026-11-05-loose-dirt-design.md`):
+  an optional kind layer, `with_loose(kinds)` (one per cell, 0 not loose,
+  dropped off dirt; `None` on a wrong length), `has_loose`, `loose(x, y)`,
+  `loose_cells`. A cell's journaled value is `material | kind << 2`: the
+  journal records it, undo puts it back, the cell hash's term takes it (a
+  kind of 0 hashes as before: `kinds_of_zero_hash_as_before`). Every cell
+  a carve or dirt edit changes loses its kind (`set_cell`). `move_grain(from,
+  to)` (cell indices, journaled) moves a grain with its kind;
+  `ColorMap::move_grain(from, to)` replays a move on the colour image (the
+  grain's art block to `to`, glowing none; the backdrop and its glow at
+  `from`; both marked dirty; `a_moved_grain_takes_its_colour`). `take_touched()` drains the carves' and dirt edits' rectangles (kept only
+  with a layer, not journaled) so loose dirt wakes there; `load_loose`
+  (state transfer, after `load_cells`; all or nothing, seals the journal).
+  `material_hash` (the oracle's) never reads kinds. Tests: `tests/loose.rs`.
 - **Restored areas**: `undo_to` reports each undone edit's rectangle and a `load_cells` the whole map; `take_restored_areas()` drains them (`Area`, world px, at most `MAX_RESTORED`, merged into the bounding box beyond), so the colour map, which only replays the ticks' edits, can `rebuild_area` what an undo or a load changed.
 - **State transfer**: `cells()` and `load_cells` (all-or-nothing, valid materials only). A load is not undoable: it seals the journal, so every older mark is `Forgotten`.
 

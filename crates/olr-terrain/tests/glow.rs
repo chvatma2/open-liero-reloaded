@@ -324,3 +324,14 @@ fn uploads_on_a_beam_level_are_a_new_beams_generation() {
     c.replace_rect(Rect { x: 50, y: 50, w: 2, h: 2 }, &front, &back, &cells);
     assert_eq!(c.beams_generation(), g2);
 }
+
+/// The loose dirt design: a moved grain glows none where it lands and its
+/// old place shows the backdrop's glow.
+#[test]
+fn a_moved_grain_glows_none_and_reveals_the_backs_glow() {
+    let t = map(&["D", "."]);
+    let mut c = glowing(&t);
+    c.move_grain((0, 0), (0, 1));
+    assert_eq!(at(&c, 0, 1), (0, 0));
+    assert_eq!(at(&c, 0, 0), (100, 2));
+}

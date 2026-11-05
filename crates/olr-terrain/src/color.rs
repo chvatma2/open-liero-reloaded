@@ -654,6 +654,32 @@ impl ColorMap {
         Some(Rgba::rgb(p[0], p[1], p[2]))
     }
 
+    /// A grain of loose dirt moved from world pixel `from` to `to` (the
+    /// loose dirt design; after the simulation moved it, in its order): `to`
+    /// shows the grain's art block and glows none, `from` shows the backdrop
+    /// with its glow, as a carve does; both pixels are marked dirty. A pixel
+    /// outside the map changes nothing.
+    pub fn move_grain(&mut self, from: (u32, u32), to: (u32, u32)) {
+        let (mw, mh) = (self.material.width(), self.material.height());
+        if from.0 >= mw || from.1 >= mh || to.0 >= mw || to.1 >= mh || from == to {
+            return;
+        }
+        let (w, s) = (self.width as usize, self.scale as usize);
+        for r in 0..s {
+            let a = ((from.1 as usize * s + r) * w + from.0 as usize * s) * 4;
+            let b = ((to.1 as usize * s + r) * w + to.0 as usize * s) * 4;
+            self.pixels.copy_within(a..a + s * 4, b);
+        }
+        let g = (self.width, self.scale, mw);
+        glow_none(&mut self.glow, g, to.0, to.1);
+        copy(&mut self.pixels, &self.back, self.width, self.scale, from.0, from.1);
+        glow_from(&mut self.glow, g, from.0, from.1, false);
+        self.material.move_grain(from.1 * mw + from.0, to.1 * mw + to.0);
+        let (x0, y0) = (i64::from(from.0.min(to.0)), i64::from(from.1.min(to.1)));
+        let (x1, y1) = (i64::from(from.0.max(to.0)) + 1, i64::from(from.1.max(to.1)) + 1);
+        self.mark(x0, y0, x1, y1);
+    }
+
     /// Replays one terrain edit (after the simulation made it, in the same order).
     pub fn apply(&mut self, edit: ColorEdit) {
         match edit {

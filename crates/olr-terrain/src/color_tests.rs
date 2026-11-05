@@ -543,3 +543,26 @@ fn stains_mark_colour_only() {
     let both: Vec<crate::Dirty> = c.take_dirty_kinds().collect();
     assert!(both.iter().any(|d| !d.colour_only && d.rect.x == 0 && d.rect.y == 0), "{both:?}");
 }
+
+/// The loose dirt design: a grain that moves takes its colour with it and
+/// leaves the backdrop behind, both pixels dirty.
+#[test]
+fn a_moved_grain_takes_its_colour() {
+    let t = map(&["RDR", "R.R", "RRR"]);
+    let mut c = color_map(&t, 2, theme(vec![], None));
+    c.take_dirty().for_each(drop);
+    c.move_grain((1, 0), (1, 1));
+    assert!(matches!(block(&c, 1, 0), Block::Back), "the source shows the backdrop");
+    let moved: Vec<Rgba> =
+        (0..2).flat_map(|dy| (0..2).map(move |dx| (dx, dy))).map(|(dx, dy)| px(&c, 2 + dx, 2 + dy)).collect();
+    let was: Vec<Rgba> =
+        (0..2).flat_map(|dy| (0..2).map(move |dx| (dx, dy))).map(|(dx, dy)| front_px(2 + dx, dy)).collect();
+    assert_eq!(moved, was, "the destination shows the grain's art");
+    assert_eq!(rows(c.material()), ["R.R", "RDR", "RRR"]);
+    let dirty: Vec<Rect> = c.take_dirty().collect();
+    let covers =
+        |x: u32, y: u32| dirty.iter().any(|r| (r.x..r.x + r.w).contains(&x) && (r.y..r.y + r.h).contains(&y));
+    assert!(covers(2, 0) && covers(2, 2), "both pixels are dirty: {dirty:?}");
+    c.move_grain((9, 9), (1, 0));
+    assert_eq!(rows(c.material()), ["R.R", "RDR", "RRR"], "outside the map: nothing");
+}
