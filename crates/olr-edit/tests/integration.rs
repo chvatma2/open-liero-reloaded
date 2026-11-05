@@ -17,6 +17,7 @@ mod level;
 mod library;
 mod live;
 mod look;
+mod loose;
 mod mask;
 mod material;
 mod mods;

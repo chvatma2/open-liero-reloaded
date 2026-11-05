@@ -784,6 +784,34 @@ operations.
   - `walk` (private): every spawn and projectile with its path and key,
     `fresh_keys` (explicit ids where inline keys would clash), shared
     references and asset references.
+- **Loose dirt** (the loose dirt design,
+  `docs/superpowers/specs/2026-11-05-loose-dirt-design.md`; the format is
+  `olr_format::loose` and `Element::loose`):
+  - **The bake** (`compose`): a dirt world pixel is loose as the element
+    giving its material is (its `loose` id's index in `level.loose`, plus
+    one; a mixed layer's dirt cells only, a higher element giving the
+    material covering it); `level.loose_map` is `None` when no pixel is
+    (a composition with no loose element drops a hand-made map, as clear
+    flags); `differing` (so `stale`) compares `loose.png` and the list.
+  - **`element`**: `Property::Loose(Option<String>)`, refused before
+    editing when the level lists no such id; the composition check
+    refuses it on rock, background or a distant layer.
+  - **Assets**: `Asset::loose` (`asset.ron`'s list; `decode`, `header`,
+    `Posed::loose`, `LaidCopy::loose`); `from_elements` and `cut_rect`
+    carry the level's materials their pieces name (`carried_loose`,
+    `LevelPieces::loose`, `DecodedLevel::loose`; a name the list lacks is
+    plain dirt); `land` (the editor's paste) leaves it behind, as
+    surfaces. `placed::bake` gathers each copy's list
+    (`olr_format::levels::gather_loose`: shared when identical, else
+    `<id>-2`) into `level.loose`, renaming its pieces' ids; `set_ground`
+    writes `level.ron`'s list into the ground while it is alone, and
+    `edit_ground` edits the ground's list beside other copies.
+  - Tests: `tests/loose.rs` (`a_loose_dirt_element_bakes_its_kinds`,
+    `a_mixed_layer_bakes_loose_only_on_its_dirt`,
+    `a_higher_rock_element_covers_loose`,
+    `a_rock_or_background_layer_refuses_loose`,
+    `assets_loose_materials_are_gathered`,
+    `a_cut_asset_carries_the_loose_materials_it_names`).
 - **Issue #37, surface materials** (the format is `olr_format::materials`
   and the composition's `Element::{surface, back_surface, surface_map,
   back_surface_map}`; STATUS.md "Surface materials (issue #37)"):

@@ -229,7 +229,8 @@ pub fn ground_placement(level: &LevelSource, src: &CompositionSource) -> PlacedS
 
 /// `ground` given `src`'s elements, folders and files (paths without
 /// `editor/`) and the level's size and art scale; with `look`, the
-/// level's look's glow groups and materials too. Its other fields stay.
+/// level's look's glow groups and materials and `level.ron`'s loose
+/// materials too. Its other fields stay.
 fn set_ground(ground: &mut AssetSource, level: &LevelSource, src: &CompositionSource, look: bool) {
     let f = &mut ground.file;
     f.size = level.size;
@@ -245,6 +246,7 @@ fn set_ground(ground: &mut AssetSource, level: &LevelSource, src: &CompositionSo
     if look {
         f.glow_groups = level.look.as_ref().map(|l| l.glow_groups.clone()).unwrap_or_default();
         f.materials = level.look.as_ref().map(|l| l.materials.clone()).unwrap_or_default();
+        f.loose = level.loose.clone();
     }
 }
 

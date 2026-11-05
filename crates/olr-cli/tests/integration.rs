@@ -28,6 +28,7 @@ mod level;
 mod library;
 mod live_bots;
 mod look_preview;
+mod loose;
 mod matches;
 mod material;
 mod mods;

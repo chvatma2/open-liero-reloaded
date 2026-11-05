@@ -209,6 +209,28 @@ The headless command-line tool. Its commands:
   `fixtures/edit/composed-level` with `pack check` clean after and the
   rules re-run byte for byte, hostile input refused with the pack
   unchanged, assets carrying materials through save and place).
+- **Loose dirt** (`loose_cmd.rs`, the loose dirt design): `level loose
+  list <pack>` prints `<value>: <id> "<name>" repose R° gravity G
+  top-speed T slide-speed S` (the value naming it in `loose.png`); `level
+  loose add <pack> --id ID --name NAME [--repose N] [--gravity N]
+  [--top-speed N] [--slide-speed N] [--notes T]` (clap ranges: 5-85,
+  1-2000, 1-500, 0-100), `loose set <pack> ID [--name] [rates]` and
+  `loose remove <pack> ID` edit the ground's list
+  (`olr_edit::placed::edit_ground`, so `level.ron`'s while the ground is
+  alone), then bake and save; `remove` is refused while an element names
+  it ("used by …") or, in a plain level, while `loose.png` holds it (the
+  values above it move down one). `level element set --loose ID|none`
+  (`Property::Loose`; `element list` adds ` loose <id>`). The hidden
+  `level loose probe <pack> --box X,Y,W,H [--ticks 300] [--mod-id
+  olx-classic]` makes every dirt pixel of the box loose at the level's
+  first loose material (else `LooseMaterial::DEFAULT`), runs a world of
+  no worms (`OracleMode`) for the ticks and prints each 4-connected dirt
+  region of the box (top-left first) as `x,y,w,h pixels moved%`, the
+  share of its grains that moved (one decimal), the pack unchanged: the
+  factory scripts' test of which regions rest on rock. Tests:
+  `tests/loose.rs` (`loose_add_set_remove_round_trip`,
+  `remove_refuses_a_named_one`, `element_set_loose`,
+  `probe_reports_a_hanging_region_as_moving`).
 - `olr-cli scenario [name...] [--dump F] [--all | --fields a+b] [--time F.ron]` replays oracle
   scenarios in `olr-sim` and prints the first divergence of each. `--time`
   (plan 8, `timing.rs`: `time_scenario`, `TimingReport`) instead times each

@@ -82,6 +82,10 @@ pub enum Property {
     Surface(Option<String>),
     /// Its back art's surface material (an element with back art only).
     BackSurface(Option<String>),
+    /// Its dirt is loose dirt of this material, the id of one of the
+    /// level's loose materials (the loose dirt design; a dirt layer, or a
+    /// mixed layer's dirt), or none.
+    Loose(Option<String>),
 }
 
 fn level(pack: &Pack) -> Result<&LevelSource, ElementError> {
@@ -452,6 +456,7 @@ fn field(p: &Property) -> &'static str {
         Property::Distant(_) => "distant",
         Property::Surface(_) => "surface",
         Property::BackSurface(_) => "back_surface",
+        Property::Loose(_) => "loose",
     }
 }
 
@@ -483,6 +488,13 @@ pub fn set_all(pack: &mut Pack, id: &str, properties: &[Property]) -> Result<(),
         }
         if let Property::Surface(Some(m)) | Property::BackSurface(Some(m)) = p {
             material_value(l, m).map_err(|e| ElementError::BadValue(format!("{}: {e}", field(p))))?;
+        }
+        if let Property::Loose(Some(m)) = p
+            && !l.loose.iter().any(|x| x.id == *m)
+        {
+            return Err(ElementError::BadValue(format!(
+                "loose: no loose material {m:?} in level.ron (add it first)"
+            )));
         }
     }
     let s = l.art_scale;
@@ -583,6 +595,7 @@ fn apply(
                 return Err(wrong("an element with back art (a drawn layer with back art, a raster)"));
             }
             Property::BackSurface(m) => e.back_surface = m,
+            Property::Loose(m) => e.loose = m,
             Property::Distant(d) => {
                 let was = e.distant.is_some();
                 e.distant = d;

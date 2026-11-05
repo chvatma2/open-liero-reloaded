@@ -165,6 +165,13 @@ enum LevelCommand {
         #[command(subcommand)]
         command: crate::material_cmd::LevelMaterialCommand,
     },
+    /// The level's loose materials (the loose dirt design): dirt that falls
+    /// and slides like sand. Dirt layers name them: `level element set
+    /// --loose`.
+    Loose {
+        #[command(subcommand)]
+        command: crate::loose_cmd::LooseCommand,
+    },
     /// Draw the level (front, or with --material its material) to a PNG with
     /// each spawn marked; the pack is not changed.
     Preview {
@@ -411,6 +418,7 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         LevelCommand::Group { command } => crate::look_cmd::group_cmd(command),
         LevelCommand::Haze { command } => crate::look_cmd::haze_cmd(command),
         LevelCommand::Material { command } => crate::material_cmd::level_cmd(command),
+        LevelCommand::Loose { command } => crate::loose_cmd::run(command),
         LevelCommand::Bake { pack, content } => element_cmd::bake_cmd(pack, content),
         LevelCommand::Convert { packs, content } => {
             for pack in packs {

@@ -70,6 +70,7 @@ impl Document {
             size: self.level.size,
             art_scale: self.level.art_scale,
             look: self.level.look.as_ref(),
+            loose: &self.level.loose,
         }
     }
 

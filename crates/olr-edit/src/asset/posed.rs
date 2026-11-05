@@ -13,7 +13,7 @@ use olr_format::assets::{
     AssetFile, PropertySource, PropertyType, StateSource, StateValue, ValueKind, ValueSource, check_value,
     property_key, property_type,
 };
-use olr_format::levels::{Element, ElementKind, ElementMaterial, element_box};
+use olr_format::levels::{Element, ElementKind, ElementMaterial, LooseSource, element_box};
 use olr_format::look::{GlowColourSource, GlowGroupSource, ReachSource};
 use olr_format::materials::MaterialSource;
 
@@ -84,6 +84,8 @@ pub struct Posed {
     pub pieces: Vec<PosedPiece>,
     pub groups: Vec<GlowGroupSource>,
     pub materials: Vec<MaterialSource>,
+    /// The asset's loose materials (the loose dirt design).
+    pub loose: Vec<LooseSource>,
 }
 
 /// `asset.ron`'s fields of `asset` but its folders (elements as the pieces
@@ -94,6 +96,7 @@ pub(crate) fn header(asset: &Asset) -> AssetFile {
         folders: asset.folders.clone(),
         glow_groups: asset.groups.clone(),
         materials: asset.materials.clone(),
+        loose: asset.loose.clone(),
         states: asset.states.iter().map(State::source).collect(),
         start: (asset.start > 0).then(|| asset.states.get(asset.start).map(|s| s.name.clone())).flatten(),
         exposed: asset.exposed.clone(),
@@ -308,7 +311,7 @@ fn posed_with(
             p.offset = (p.offset.0 + at.0, p.offset.1 + at.1);
         }
     }
-    Ok(Posed { pieces: out, groups, materials: asset.materials.clone() })
+    Ok(Posed { pieces: out, groups, materials: asset.materials.clone(), loose: asset.loose.clone() })
 }
 
 /// `img` mirrored left to right.

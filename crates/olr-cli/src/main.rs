@@ -10,6 +10,7 @@ mod level_cmd;
 mod library_cmd;
 mod look_cmd;
 mod look_preview;
+mod loose_cmd;
 mod match_cmd;
 mod material_cmd;
 mod mod_cmd;

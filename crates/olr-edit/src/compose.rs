@@ -19,6 +19,11 @@
 //! A solid world pixel is clear (`look/clear.png`) when the element giving
 //! its material is.
 //!
+//! Loose dirt (the loose dirt design): a dirt world pixel is loose
+//! (`loose.png`) as the element giving its material is (`Element::loose`,
+//! the level's loose material of that id; a mixed layer's dirt cells
+//! only); the map is `None` when no pixel is loose.
+//!
 //! Distant (parallax) layers (issue #11): a distant element (a background
 //! image or plain drawn layer) gives neither material nor front nor back;
 //! its covered art is one of the level's distant layers (`bake_distant`).
@@ -905,6 +910,9 @@ fn bake_items(
         level.look.as_ref().map_or(Vec::new(), |l| l.materials.iter().map(|m| m.id.as_str()).collect());
     let n = materials.len();
     let (mut layers, mut glows, mut clears, mut surfaces) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    // Each layer's loose kind: 1 + its loose material's index in the
+    // level's list, 0 for none (or an id the list lacks).
+    let mut looses = Vec::new();
     let mut glasses = Vec::new();
     let mut opacities = Vec::new();
     // The distant layers at their reference placement (issue #62: the
@@ -922,6 +930,7 @@ fn bake_items(
         layers.push(layer);
         glows.push(layer_glow(e, masks, &groups, (w, h), s));
         clears.push(e.clear);
+        looses.push(loose_kind(level, e));
         glasses.push(e.glass);
         opacities.push(opacity.get(i).copied().unwrap_or(100));
         surfaces.push(layer_surface(e, painted, &materials, (w, h)));
@@ -943,6 +952,10 @@ fn bake_items(
     let cells = w as usize * h as usize;
     let mut clear = clears.iter().any(|c| *c).then(|| match level.clear.take() {
         Some(c) if c.len() == cells => c,
+        _ => vec![0; cells],
+    });
+    let mut loose = looses.iter().any(|k| *k > 0).then(|| match level.loose_map.take() {
+        Some(m) if m.len() == cells => m,
         _ => vec![0; cells],
     });
     // The glass map (the background glass design): only when some glass
@@ -998,16 +1011,20 @@ fn bake_items(
         for x in rect.x.min(w)..x1 {
             let cell = y as usize * w as usize + x as usize;
             let (cx, cy) = (x * s + s / 2, y * s + s / 2);
-            let (material, is_clear, giver) = layers
+            let (material, is_clear, giver, kind) = layers
                 .iter()
                 .zip(&clears)
                 .zip(&surfaces)
+                .zip(&looses)
                 .rev()
-                .find_map(|((l, c), m)| l.material(cell, cx, cy).map(|mat| (mat, *c, Some(m))))
-                .unwrap_or((Material::Background, false, None));
+                .find_map(|(((l, c), m), k)| l.material(cell, cx, cy).map(|mat| (mat, *c, Some(m), *k)))
+                .unwrap_or((Material::Background, false, None, 0));
             level.material[cell] = material;
             if let Some(c) = clear.as_mut() {
                 c[cell] = u8::from(is_clear && material != Material::Background) * 255;
+            }
+            if let Some(m) = loose.as_mut() {
+                m[cell] = if material == Material::Dirt { kind } else { 0 };
             }
             if let Some(m) = surface.as_mut() {
                 m.front[cell] = match giver {
@@ -1095,10 +1112,18 @@ fn bake_items(
     // A glow left with nothing glowing is no glow; so are clear flags.
     level.glow = glow.filter(|g| g.front.iter().chain(&g.back).any(|v| *v > 0));
     level.clear = clear.filter(|c| c.iter().any(|v| *v > 0));
+    level.loose_map = loose.filter(|m| m.iter().any(|v| *v > 0));
     level.glow_beams =
         beams.filter(|b| level.glow.is_some() && b.front.iter().chain(&b.back).any(|v| *v > 0));
     level.glass = glass.filter(|m| m.texels.as_chunks::<4>().0.iter().any(|t| *t != [255, 255, 255, 0]));
     level.surface = surface.filter(|m| !m.is_empty());
+}
+
+/// Element `e`'s loose kind in `level`: 1 + the index of its loose
+/// material in `level.loose`, 0 for none or an id the list lacks.
+fn loose_kind(level: &LevelSource, e: &Element) -> u8 {
+    let Some(id) = &e.loose else { return 0 };
+    level.loose.iter().position(|m| m.id == *id).and_then(|i| u8::try_from(i + 1).ok()).unwrap_or(0)
 }
 
 /// Decoded elements and processed images of one composition, ready to
@@ -1735,7 +1760,7 @@ pub fn theme_back_tile(content: &Path, theme: &str) -> Result<RgbaImage, Compose
 
 /// The files a bake writes that it can leave stale (and `level.ron`'s
 /// distant layers and their images, `distant/<i>.png`).
-const BAKED: [&str; 14] = [
+const BAKED: [&str; 15] = [
     "material.png",
     "front.png",
     "back.png",
@@ -1750,6 +1775,7 @@ const BAKED: [&str; 14] = [
     "look/surface.png",
     "look/surface-back.png",
     "look/glass.png",
+    "loose.png",
 ];
 
 /// The baked files of `pack` (a composed level) that differ from what its
@@ -1787,7 +1813,10 @@ pub fn differing(level: &LevelSource, baked: &LevelSource) -> Result<Vec<String>
         let glow = |d: &DistantLayer| d.glow.as_ref().map(|g| (g.group, g.strength));
         l.distant.iter().map(|d| (d.at, d.depth, glow(d))).collect::<Vec<_>>()
     };
-    if entries(level) != entries(baked) || level.distant_surfaces != baked.distant_surfaces {
+    if entries(level) != entries(baked)
+        || level.distant_surfaces != baked.distant_surfaces
+        || level.loose != baked.loose
+    {
         out.push("level.ron".into());
     }
     let n = level.distant.len().max(baked.distant.len());

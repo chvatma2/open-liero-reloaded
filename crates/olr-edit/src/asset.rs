@@ -25,6 +25,7 @@ use olr_format::assets::{
     ASSET_FILE, AssetFile, AssetSource, ExposedSource, HealthSource, NORMAL_STATE, SCRIPT_FILE,
     as_composition, check_asset, owners, read_asset_files, start_index, write_asset_files,
 };
+use olr_format::levels::LooseSource;
 use olr_format::levels::{
     Element, ElementGlow, ElementKind, ElementMaterial, Folder, LevelSource, MAX_ART_SCALE, element_box,
     level_thumbnail, surface_back_file, surface_file, surface_map_size,
@@ -110,6 +111,8 @@ pub struct Asset {
     pub folders: Vec<Folder>,
     pub groups: Vec<GlowGroupSource>,
     pub materials: Vec<MaterialSource>,
+    /// The loose materials its dirt layers name (the loose dirt design).
+    pub loose: Vec<LooseSource>,
     pub states: Vec<State>,
     pub start: usize,
     pub exposed: Vec<ExposedSource>,
@@ -137,6 +140,7 @@ impl Asset {
             folders: Vec::new(),
             groups,
             materials,
+            loose: Vec::new(),
             states: vec![State::new(NORMAL_STATE)],
             start: 0,
             exposed: Vec::new(),
@@ -173,6 +177,8 @@ pub struct LevelPieces<'a> {
     pub size: (u32, u32),
     pub art_scale: u32,
     pub look: Option<&'a LookSource>,
+    /// The level's loose materials (the loose dirt design).
+    pub loose: &'a [LooseSource],
 }
 
 /// An element as an asset holds it: shown, unlocked and in no folder (a
@@ -403,6 +409,18 @@ fn carried_materials(
     all.iter().zip(&used).filter(|(_, u)| **u).map(|(m, _)| m.clone()).take(255).collect()
 }
 
+/// The loose materials of `all` (the level's) that `pieces` name, in its
+/// order (the loose dirt design); a piece naming none of them is plain
+/// dirt.
+fn carried_loose(pieces: &mut [Piece], all: &[LooseSource]) -> Vec<LooseSource> {
+    for p in pieces.iter_mut() {
+        if p.element.loose.as_ref().is_some_and(|id| !all.iter().any(|m| m.id == *id)) {
+            p.element.loose = None;
+        }
+    }
+    all.iter().filter(|m| pieces.iter().any(|p| p.element.loose.as_ref() == Some(&m.id))).cloned().collect()
+}
+
 /// The glow groups and surface materials of `look` that `pieces` (of an
 /// asset or level of `size`) name, as an asset carries them: the groups
 /// their glows name, a glow naming none of them gone; the materials they
@@ -469,8 +487,9 @@ pub fn from_elements(level: &LevelPieces, ids: &[String], name: &str) -> Result<
     let groups = named_groups(&pieces, level.look);
     drop_dangling(&mut pieces, &groups);
     let materials = carried_materials(&mut pieces, level.look, size);
+    let loose = carried_loose(&mut pieces, level.loose);
     let size = (side(x1 - x0), side(y1 - y0));
-    Ok(Asset::new(name, s, size, pieces, groups, materials))
+    Ok(Asset { loose, ..Asset::new(name, s, size, pieces, groups, materials) })
 }
 
 /// An asset cut out of world rectangle `rect` of `level` (the editor's
@@ -525,6 +544,7 @@ pub fn cut_rect(
                 && o.element.back_surface == made.element.back_surface
                 && o.surface_map == made.surface_map
                 && o.back_surface_map == made.back_surface_map
+                && o.element.loose == made.element.loose
         };
         if !pieces.iter().any(same) {
             pieces.push(made);
@@ -538,7 +558,8 @@ pub fn cut_rect(
     let groups = named_groups(&pieces, level.look);
     drop_dangling(&mut pieces, &groups);
     let materials = carried_materials(&mut pieces, level.look, size);
-    Ok(Asset::new(name, s, (rect.w, rect.h), pieces, groups, materials))
+    let loose = carried_loose(&mut pieces, level.loose);
+    Ok(Asset { loose, ..Asset::new(name, s, (rect.w, rect.h), pieces, groups, materials) })
 }
 
 /// `r` within a level of `size`.
@@ -587,6 +608,9 @@ pub fn land(
     // Its surface materials stay behind (issue #37: their painted maps are
     // not a piece's, and the level landed in may lack the materials).
     let mut e = piece.element.clone().without_surfaces();
+    // So does its loose material (the loose dirt design): the level may
+    // list none of that id.
+    e.loose = None;
     // It lands in no folder: the editor's placing groups an asset's pieces.
     e.folder = None;
     let names = to.elements.iter().map(|x| if x.name.is_empty() { x.id.as_str() } else { x.name.as_str() });
@@ -1157,6 +1181,7 @@ fn decode_checked(src: &AssetSource) -> Result<Asset, AssetError> {
         folders: f.folders.clone(),
         groups: f.glow_groups.clone(),
         materials: f.materials.clone(),
+        loose: f.loose.clone(),
         states,
         start: start_index(f).unwrap_or(0),
         exposed: f.exposed.clone(),
@@ -1293,6 +1318,7 @@ pub struct DecodedLevel {
     pub size: (u32, u32),
     pub art_scale: u32,
     pub look: Option<LookSource>,
+    pub loose: Vec<LooseSource>,
 }
 
 impl DecodedLevel {
@@ -1334,7 +1360,7 @@ impl DecodedLevel {
                 back_surface_map: maps.get(&surface_back_file(&e.id)).cloned(),
             });
         }
-        Ok(DecodedLevel { pieces, size, art_scale: s, look: level.look.clone() })
+        Ok(DecodedLevel { pieces, size, art_scale: s, look: level.look.clone(), loose: level.loose.clone() })
     }
 
     /// Its pieces as an asset is cut from them.
@@ -1344,6 +1370,7 @@ impl DecodedLevel {
             size: self.size,
             art_scale: self.art_scale,
             look: self.look.as_ref(),
+            loose: &self.loose,
         }
     }
 }

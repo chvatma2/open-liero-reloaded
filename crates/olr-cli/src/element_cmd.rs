@@ -129,7 +129,7 @@ fn parse_colours(s: &str) -> Result<Colours, String> {
 
 #[derive(Subcommand)]
 pub(crate) enum ElementCommand {
-    /// Print each element, bottom first: `<index>: <id> <kind> <material>["<name>"][ hidden][ locked][ distant <depth>%][ glow <strength>% <group>[ masked]][ surface <id>][ back-surface <id>][ surface-map][ back-surface-map]`;
+    /// Print each element, bottom first: `<index>: <id> <kind> <material>["<name>"][ hidden][ locked][ distant <depth>%][ glow <strength>% <group>[ masked]][ surface <id>][ back-surface <id>][ surface-map][ back-surface-map][ loose <id>]`;
     /// a layer folder as `folder <id>["<name>"][ hidden][ locked][ collapsed]`
     /// before its members, each member indented two spaces per folder.
     List { pack: PathBuf },
@@ -253,6 +253,11 @@ pub(crate) enum ElementCommand {
         /// art, a raster).
         #[arg(long, value_parser = parse_surface)]
         back_surface: Option<Surface>,
+        /// Its dirt is loose dirt of this material: the id of one of the
+        /// level's loose materials (`level loose add`), or none (the loose
+        /// dirt design; a dirt layer, or a mixed layer's dirt).
+        #[arg(long, value_parser = parse_surface)]
+        loose: Option<Surface>,
         #[command(flatten)]
         content: ContentArg,
     },
@@ -588,6 +593,9 @@ fn list(dir: &Path) -> anyhow::Result<bool> {
                 line.push_str(&format!(" {label}"));
             }
         }
+        if let Some(id) = &e.loose {
+            line.push_str(&format!(" loose {id}"));
+        }
         println!("{line}");
     }
     Ok(true)
@@ -668,6 +676,7 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
             distant,
             surface,
             back_surface,
+            loose,
             content,
         } => edit(pack, content, |p| {
             let glow = glow_property(
@@ -695,6 +704,7 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
                 distant.map(|d| Property::Distant((d > 0).then_some(d))),
                 surface.clone().map(|Surface(m)| Property::Surface(m)),
                 back_surface.clone().map(|Surface(m)| Property::BackSurface(m)),
+                loose.clone().map(|Surface(m)| Property::Loose(m)),
                 locked.filter(|l| *l).map(Property::Locked),
             ];
             let properties: Vec<Property> = properties.into_iter().flatten().collect();

@@ -24,9 +24,9 @@ use olr_format::FormatError;
 use olr_format::assets::AssetSource;
 use olr_format::image_io::{self, LEVEL_ART};
 use olr_format::levels::{
-    AssetOrigin, Composition, Element, ElementKind, LevelSource, PlacedCopy, PlacedSource, check_placed,
-    element_box, gather_groups, gather_materials, stretch_offset, stretch_span, surface_back_file,
-    surface_file,
+    AssetOrigin, Composition, Element, ElementKind, LevelSource, LooseSource, PlacedCopy, PlacedSource,
+    check_placed, element_box, gather_groups, gather_loose, gather_materials, stretch_offset, stretch_span,
+    surface_back_file, surface_file,
 };
 use olr_format::look::{GlowGroupSource, MAX_GROUPS};
 use olr_format::materials::MaterialSource;
@@ -314,6 +314,8 @@ pub struct LaidCopy {
     pub pieces: Vec<LaidPiece>,
     pub groups: Vec<GlowGroupSource>,
     pub materials: Vec<MaterialSource>,
+    /// Its asset's loose materials (the loose dirt design).
+    pub loose: Vec<LooseSource>,
 }
 
 /// Copy `c` of `asset` posed in its state (none: the asset's start) with
@@ -348,7 +350,7 @@ pub fn lay_copy(c: &PlacedCopy, asset: &Asset, s: u32) -> Result<LaidCopy, Place
             })
         })
         .collect();
-    Ok(LaidCopy { pieces, groups: p.groups, materials: p.materials })
+    Ok(LaidCopy { pieces, groups: p.groups, materials: p.materials, loose: p.loose })
 }
 
 /// How one copy's glow groups and materials are named in the level
@@ -501,6 +503,7 @@ fn bake_copies(
     let (size, s) = (level.size, level.art_scale);
     let mut groups: Vec<GlowGroupSource> = Vec::new();
     let mut materials: Vec<MaterialSource> = Vec::new();
+    let mut loose: Vec<LooseSource> = Vec::new();
     let mut baked = Baked::default();
     let (mut distant, mut near): (Vec<Flat>, Vec<Flat>) = (Vec::new(), Vec::new());
     for c in &src.file.copies {
@@ -512,9 +515,17 @@ fn bake_copies(
         let ids = gather_copy(&mut groups, &mut materials, &c.id, &laid.groups, &laid.materials);
         baked.groups_renamed.extend(ids.groups_renamed.iter().cloned());
         baked.materials_renamed.extend(ids.materials_renamed.iter().cloned());
+        // Its loose materials, gathered as the surface materials are.
+        let loose_ids: BTreeMap<String, String> =
+            laid.loose.iter().map(|m| m.id.clone()).zip(gather_loose(&mut loose, &laid.loose)).collect();
         for piece in laid.pieces {
             let mut e = piece.element;
             ids.name(&mut e);
+            if let Some(id) = e.loose.as_mut()
+                && let Some(to) = loose_ids.get(id.as_str())
+            {
+                *id = to.clone();
+            }
             let flat = Flat {
                 element: e,
                 decoded: piece.decoded,
@@ -532,6 +543,8 @@ fn bake_copies(
             groups.len()
         )));
     }
+    // The loose materials the elements name (`check_placed` bounds them).
+    level.loose = loose;
     // The look: the level's own settings, the gathered groups and
     // materials.
     let before = level.look.clone();
@@ -620,7 +633,9 @@ pub fn stale(pack: &Pack, back_tile: &RgbaImage) -> Result<Vec<String>, PlacedEr
     let gathered = |l: &LevelSource| {
         l.look.as_ref().map(|k| (k.glow_groups.clone(), k.materials.clone())).unwrap_or_default()
     };
-    if gathered(level) != gathered(&baked) && !out.iter().any(|f| f == "level.ron") {
+    if (gathered(level) != gathered(&baked) || level.loose != baked.loose)
+        && !out.iter().any(|f| f == "level.ron")
+    {
         out.push("level.ron".into());
     }
     Ok(out)
@@ -701,6 +716,9 @@ pub fn edit_ground<T, E>(pack: &mut Pack, edit: impl FnOnce(&mut Pack) -> Result
         look.glow_groups = ground.file.glow_groups.clone();
         look.materials = ground.file.materials.clone();
     }
+    if let Source::Level(l) = &mut scope.source {
+        l.loose = ground.file.loose.clone();
+    }
     let out = edit(&mut scope)?;
     let (Source::Level(edited), Some(src)) = (&scope.source, &scope.composition) else { return Ok(out) };
     let look = edited.look.clone();
@@ -715,6 +733,7 @@ pub fn edit_ground<T, E>(pack: &mut Pack, edit: impl FnOnce(&mut Pack) -> Result
             .collect();
         g.file.glow_groups = look.as_ref().map(|l| l.glow_groups.clone()).unwrap_or_default();
         g.file.materials = look.as_ref().map(|l| l.materials.clone()).unwrap_or_default();
+        g.file.loose = edited.loose.clone();
     }
     if let Source::Level(l) = &mut pack.source {
         l.look = look;
