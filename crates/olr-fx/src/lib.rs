@@ -67,6 +67,9 @@ pub struct FxTick<'a> {
     pub lost: Option<LostArea>,
     /// The world's terrain after the tick, to rebuild a lost area from.
     pub material: &'a Terrain,
+    /// The tick's loose dirt moves (`World::loose_moves`, the loose dirt
+    /// design): `(from, to)` cell indices, in order, after its edits.
+    pub loose_moves: &'a [(u32, u32)],
 }
 
 impl<'a> FxTick<'a> {
@@ -78,6 +81,7 @@ impl<'a> FxTick<'a> {
             dt: world.settings().lx56_physics_dt(),
             lost: events.lost_area(),
             material: world.terrain(),
+            loose_moves: world.loose_moves(),
         }
     }
 }
@@ -365,7 +369,9 @@ impl Fx {
     /// Replays one tick: walks its events in order, applying terrain edits
     /// to `color` and spawning cosmetics, and runs entity pass `k` right
     /// before the first event of a later sub-step (spec §19), then the
-    /// passes left; finally rebuilds the area of edits the tick dropped.
+    /// passes left; then moves the tick's loose dirt grains, which the
+    /// simulation moved after its edits; finally rebuilds the area of
+    /// edits the tick dropped.
     /// This is the only place the colour map follows the simulation's
     /// edits: the caller must not also replay them (`olr_content::apply_edits`).
     pub fn step_tick(&mut self, tick: &FxTick, color: &mut ColorMap, assets: &FxAssets) {
@@ -390,6 +396,7 @@ impl Fx {
             self.simulate(tick.dt, color, assets);
             passes += 1;
         }
+        olr_content::move_grains(color, tick.loose_moves);
         if let Some(area) = tick.lost {
             color.rebuild_area(olr_content::lost_area(area), tick.material);
         }

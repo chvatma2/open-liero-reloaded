@@ -1,8 +1,8 @@
 //! The colour map's inputs (spec §19 E7) and the simulation's terrain edits
 //! as it replays them (plan 5, ruling R1: `olr-terrain` cannot see `olr-sim`).
 
-use olr_sim::{EventKind, LostArea, StampId, TerrainOp, TickEvents};
-use olr_terrain::{Area, ColorEdit, ColorMap, Terrain, ThemeArt};
+use olr_sim::{EventKind, LostArea, StampId, TerrainOp, TickEvents, World};
+use olr_terrain::{Area, ColorEdit, ColorMap, ThemeArt};
 
 use crate::{LoadedLevel, LoadedTheme};
 
@@ -20,8 +20,7 @@ impl LoadedLevel {
     /// ([`ColorMap::new_see_through`]) when the level has distant layers.
     pub fn color_map(&self, theme: &LoadedTheme) -> ColorMap {
         let make = if self.distant.is_empty() { ColorMap::new } else { ColorMap::new_see_through };
-        let mut map =
-            make(&Terrain::from_grid(&self.material), &self.front, &self.back, self.art_scale, theme.art());
+        let mut map = make(&self.terrain(), &self.front, &self.back, self.art_scale, theme.art());
         // Glow or clear flags that do not fit the map (they always do from
         // a checked pack) are left out.
         map.set_glow(self.glow.clone());
@@ -50,17 +49,30 @@ pub fn lost_area(a: LostArea) -> Area {
     Area { x0: a.x0, y0: a.y0, x1: a.x1, y1: a.y1 }
 }
 
-/// Replays a tick's terrain edits on `map` in order, then rebuilds the area
-/// of any edit the tick dropped from `material` (the world's terrain after
-/// the tick). A renderer that samples `Dirt { probe }` colours between the
+/// Moves the grains of a tick's loose dirt on `map`, in order: `moves`
+/// are `World::loose_moves`, `(from, to)` cell indices of the map's
+/// terrain (`y * width + x`).
+pub fn move_grains(map: &mut ColorMap, moves: &[(u32, u32)]) {
+    let w = map.material().width().max(1);
+    for &(from, to) in moves {
+        map.move_grain((from % w, from / w), (to % w, to / w));
+    }
+}
+
+/// Replays the tick `world` just ran on `map`: its terrain edits
+/// (`events`) in order, then its loose dirt's moves
+/// (`World::loose_moves`, which follow the edits in the tick), then
+/// rebuilds the area of any edit the tick dropped from the world's
+/// terrain. A renderer that samples `Dirt { probe }` colours between the
 /// edits iterates the events itself with [`color_edit`].
-pub fn apply_edits(map: &mut ColorMap, events: &TickEvents, material: &Terrain) {
+pub fn apply_edits(map: &mut ColorMap, events: &TickEvents, world: &World) {
     for e in events {
         if let Some(edit) = color_edit(&e.kind) {
             map.apply(edit);
         }
     }
+    move_grains(map, world.loose_moves());
     if let Some(area) = events.lost_area() {
-        map.rebuild_area(lost_area(area), material);
+        map.rebuild_area(lost_area(area), world.terrain());
     }
 }

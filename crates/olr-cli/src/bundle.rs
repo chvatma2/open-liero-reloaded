@@ -16,8 +16,9 @@ pub const BUNDLE_MAGIC: [u8; 4] = *b"OLDS";
 /// 2: `NetSpec` gained its migration fields (plan 12c). 3: withdrawals
 /// (`DesyncBundle::gone`, plan 12d). 4: 16-bit keys (issue #23). 5: the
 /// keys' bits 11-15 are Weapon 1-5 (issue #48). 6: the states' live
-/// copies (`WorldState`'s last field, issue #86).
-pub const BUNDLE_VERSION: u16 = 6;
+/// copies (`WorldState`'s field, issue #86). 7: its loose dirt (the
+/// loose dirt design).
+pub const BUNDLE_VERSION: u16 = 7;
 
 /// A peer's record of a desync.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

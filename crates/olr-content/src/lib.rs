@@ -40,7 +40,7 @@ pub use cache::{
     PendingInstall, SKIN_LIMITS, archive_limits,
 };
 pub use catalog::{Catalog, LevelInfo, MAX_THUMB_BYTES, MAX_THUMB_SIDE, ModInfo, PackSource, ThumbRef};
-pub use color::{apply_edits, color_edit, lost_area};
+pub use color::{apply_edits, color_edit, lost_area, move_grains};
 pub use core_assets::{CORE_PACK_ID, CORE_SPRITES, CorePack};
 pub use live::{CopyLight, GroupProps, LiveLight, LoadedLive, live_frame, live_level, live_look};
 pub use live_sounds::{LiveLoop, LiveSounds, LiveStart, copy_centre};
@@ -49,7 +49,8 @@ pub use locate::{
     materials_dir,
 };
 pub use maps::{
-    DEFAULT_SKIN, LoadedLevel, LoadedSkin, LoadedTheme, MAX_ART_SCALE, MAX_COLOR_MAP_BYTES, NO_SKIN_HASH,
+    DEFAULT_SKIN, LoadedLevel, LoadedLoose, LoadedSkin, LoadedTheme, MAX_ART_SCALE, MAX_COLOR_MAP_BYTES,
+    NO_SKIN_HASH,
 };
 pub use matches::{
     BuiltMatch, CPU_COLOURS, MatchAssets, MatchOptions, Player, WeaponChoice, build_match,

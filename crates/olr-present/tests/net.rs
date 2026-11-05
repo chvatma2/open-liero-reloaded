@@ -76,7 +76,7 @@ fn apply_one(
     events: Vec<Event>,
 ) -> (usize, u64) {
     let (spawned, mut sounds) = (net.spawned(), Vec::new());
-    let t = TickedTick { tick, resim: false, substeps: 2, lost: None, events };
+    let t = TickedTick { tick, resim: false, substeps: 2, lost: None, events, loose_moves: Vec::new() };
     net.apply(present, world, &[], &[t], &mut sounds);
     (sounds.len(), net.spawned() - spawned)
 }
@@ -453,7 +453,14 @@ fn keys_from_the_confirmed_tick_on_survive() {
     net.apply(&mut present, sim.world(), &[], &rec.take_ticked(), &mut sounds);
     // Hand-made ticks with a sound each and no terrain edit.
     let beep = ev(0, EventKind::Sound { id: SoundId(3), pos: olr_math::Vec2::new(10.0, 10.0) });
-    let tick = |tick, resim| TickedTick { tick, resim, substeps: 0, lost: None, events: vec![beep] };
+    let tick = |tick, resim| TickedTick {
+        tick,
+        resim,
+        substeps: 0,
+        lost: None,
+        events: vec![beep],
+        loose_moves: Vec::new(),
+    };
     sounds.clear();
     net.apply(&mut present, sim.world(), &[], &[tick(1, false), tick(2, false)], &mut sounds);
     assert_eq!(sounds.len(), 2);
@@ -530,6 +537,7 @@ fn a_drift_is_counted_not_a_panic() {
         substeps: 1,
         lost: None,
         events: events.iter().copied().collect(),
+        loose_moves: Vec::new(),
     };
     net.apply(&mut present, &w, &[], &[tick(0, &events)], &mut Vec::new());
     assert_eq!(net.drifts(), 0);
@@ -587,7 +595,14 @@ fn every_death_plays_its_sound_and_gibs_once_under_corrections() {
     let mut net = NetPresenter::new();
     let mut sounds = Vec::new();
     net.apply(&mut present, sim.world(), &[], &rec.take_ticked(), &mut sounds);
-    let tick = |resim, events: Vec<Event>| TickedTick { tick: 1, resim, substeps: 2, lost: None, events };
+    let tick = |resim, events: Vec<Event>| TickedTick {
+        tick: 1,
+        resim,
+        substeps: 2,
+        lost: None,
+        events,
+        loose_moves: Vec::new(),
+    };
     let mut step = |resim, events: Vec<Event>| {
         let (spawned, mut sounds) = (net.spawned(), Vec::new());
         net.apply(&mut present, sim.world(), &[], &[tick(resim, events)], &mut sounds);
@@ -618,7 +633,7 @@ fn a_death_moved_to_another_tick_by_a_correction_shows_once() {
     net.apply(&mut present, sim.world(), &[], &first, &mut Vec::new());
     let mut step = |tick, events: Vec<Event>| {
         let (spawned, mut sounds) = (net.spawned(), Vec::new());
-        let t = TickedTick { tick, resim: false, substeps: 2, lost: None, events };
+        let t = TickedTick { tick, resim: false, substeps: 2, lost: None, events, loose_moves: Vec::new() };
         net.apply(&mut present, sim.world(), &[], &[t], &mut sounds);
         (sounds.len(), net.spawned() - spawned)
     };

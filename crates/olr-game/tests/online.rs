@@ -417,7 +417,14 @@ fn an_online_match_runs_headless() {
     // A next match's start in a poll, and everything after it, are handed
     // back unpresented (that match's session presents them); the ticks
     // before it are this match's.
-    let tick = |tick| TickedTick { tick, resim: false, substeps: 1, lost: None, events: Vec::new() };
+    let tick = |tick| TickedTick {
+        tick,
+        resim: false,
+        substeps: 1,
+        lost: None,
+        events: Vec::new(),
+        loose_moves: Vec::new(),
+    };
     let next = OnlineEvent::MatchStarting { start: start.clone(), my_slot };
     let poll =
         vec![OnlineEvent::Ticked(vec![tick(90_000)]), next.clone(), OnlineEvent::Ticked(vec![tick(90_001)])];

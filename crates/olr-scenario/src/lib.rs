@@ -405,9 +405,7 @@ pub fn color_after(content: &Content, sc: &Scenario, expected: &Trace) -> anyhow
     let level = content.load_level(&olx_level_id(&sc.level))?;
     let theme = content.load_theme(&level.theme).with_context(|| format!("level {}", sc.level))?;
     let mut map = level.color_map(&theme);
-    play(content, sc, expected, |world, _, events| {
-        olr_content::apply_edits(&mut map, events, world.terrain())
-    })?;
+    play(content, sc, expected, |world, _, events| olr_content::apply_edits(&mut map, events, world))?;
     Ok(map)
 }
 

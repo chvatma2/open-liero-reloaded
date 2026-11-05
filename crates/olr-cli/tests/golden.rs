@@ -34,10 +34,12 @@ fn goldens(c: &Content, dir: &str, at_least: usize, check: bool) {
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
         let run = play(c, &golden.spec, &Options::default()).unwrap();
         assert!(run.failure().is_none(), "{name}: {}", run.summary());
-        if check {
-            if let Some(f) = verify(c, &run).unwrap() {
-                panic!("{}", capture(&run, &f));
-            }
+        if check && let Some(f) = verify(c, &run).unwrap() {
+            panic!("{}", capture(&run, &f));
+        }
+        // A level without live copies (the loose dirt design's loose-test)
+        // has no scripts to run.
+        if check && c.load_level(&golden.spec.level_id).is_ok_and(|l| l.live.is_some()) {
             // The scripts ran: states changed, motions arrived, none
             // failed.
             let count = |kind: &str| {

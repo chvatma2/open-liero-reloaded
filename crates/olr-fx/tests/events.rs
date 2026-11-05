@@ -58,7 +58,7 @@ fn a_lost_area_is_rebuilt_from_the_material() {
     let hole = olr_terrain::Stamp::from_image(&common::solid(5, 5, Rgba::MAGENTA));
     material.carve_hole(&hole, 85, 30);
     let lost = Some(LostArea { x0: 83, y0: 28, x1: 88, y1: 33 });
-    let tick = FxTick { events: &[], substeps: 0, dt: DT, lost, material: &material };
+    let tick = FxTick { events: &[], substeps: 0, dt: DT, lost, material: &material, loose_moves: &[] };
     s.fx.step_tick(&tick, &mut s.map, &s.assets);
     assert_eq!(art(&s.map, 85, 30), [SKY; 4]);
     assert_eq!(art(&s.map, 82, 30), [DIRT; 4]);
@@ -129,4 +129,29 @@ fn entities_stay_on_the_world_grid_under_a_sub_pixel_camera() {
     assert_eq!(at(10.0), [29.5, 20.0]);
     assert_eq!(at(10.3), [29.5, 20.0]);
     assert_eq!(at(10.6), [29.5, 20.0]);
+}
+
+/// The loose dirt design: a tick's grains move on the colour map after
+/// its edits, their art with them.
+#[test]
+fn a_ticks_grains_move_after_its_edits() {
+    let mut s = Setup::new();
+    let cell = |x: u32, y: u32| y * 100 + x;
+    // A carve beside the grain first; then the grain from the dirt wall's
+    // (84, 30) into the open at (70, 30).
+    let events = [carve(0, 0, 90, 40)];
+    let moves = [(cell(84, 30), cell(70, 30))];
+    let tick = FxTick {
+        events: &events,
+        substeps: 0,
+        dt: DT,
+        lost: None,
+        material: &s.terrain,
+        loose_moves: &moves,
+    };
+    s.fx.step_tick(&tick, &mut s.map, &s.assets);
+    assert_eq!(art(&s.map, 70, 30), [DIRT; 4]);
+    assert_eq!(art(&s.map, 84, 30), [SKY; 4]);
+    assert_eq!(art(&s.map, 90, 40), [SKY; 4], "the carve applied too");
+    assert_eq!(s.map.material().material(70, 30), Some(olr_data::level::Material::Dirt));
 }

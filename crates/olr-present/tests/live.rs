@@ -521,6 +521,7 @@ fn a_hidden_copy_is_silent() {
             death: false,
             kind: olr_sim::EventKind::LiveSound { copy: press, sound: hum },
         }],
+        loose_moves: Vec::new(),
     };
     // Hidden (press_on 0): no loop, and its sound starts nothing.
     o.sim.world_mut().set_live_value(press, shown, 0).unwrap();

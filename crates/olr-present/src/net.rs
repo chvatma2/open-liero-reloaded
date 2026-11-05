@@ -258,8 +258,14 @@ impl NetPresenter {
         for t in ticks {
             let keys = event_keys(t.tick, &t.events);
             self.death_parts(t.tick, &t.events);
-            let fx =
-                |events, substeps| FxTick { events, substeps, dt, lost: t.lost, material: world.terrain() };
+            let fx = |events, substeps| FxTick {
+                events,
+                substeps,
+                dt,
+                lost: t.lost,
+                material: world.terrain(),
+                loose_moves: &t.loose_moves,
+            };
             self.kept.clear();
             if t.tick >= self.next {
                 for ((e, k), part) in t.events.iter().zip(&keys).zip(&self.parts) {

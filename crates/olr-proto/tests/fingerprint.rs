@@ -42,10 +42,11 @@ fn the_fingerprint_hashes_the_simulation_and_session_sources() {
 
 /// Issue #86: the state transfer's live copies changed every state's
 /// encoding; issue #88: their script state; issue #89: their motions;
-/// issue #90: their crush counts.
+/// issue #90: their crush counts; the loose dirt design: the loose dirt's
+/// kinds and moving grains.
 #[test]
-fn the_protocol_version_is_10() {
-    assert_eq!(olr_proto::PROTOCOL_VERSION, 10);
+fn the_protocol_version_is_11() {
+    assert_eq!(olr_proto::PROTOCOL_VERSION, 11);
 }
 
 /// Issue #88: the scripts' runtime is in the fingerprint, and with it the

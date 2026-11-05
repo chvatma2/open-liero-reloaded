@@ -96,12 +96,11 @@ impl Content {
 pub fn replay_assets_from(m: &LoadedMod, level: &LoadedLevel, theme: &LoadedTheme) -> Assets {
     Assets {
         sim_mod: m.sim.clone(),
-        terrain: olr_terrain::Terrain::from_grid(&level.material),
+        terrain: level.terrain(),
         holes: theme.stamps(),
         green_mask: theme.green_mask(),
         live: level.live_sim(),
         director: level.live_director(),
-        // Task 5 of the loose dirt plan loads them.
-        loose: None,
+        loose: level.loose_sim(),
     }
 }

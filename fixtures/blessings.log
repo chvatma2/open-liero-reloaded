@@ -344,3 +344,5 @@
   fixtures/render/factory-line.png
 2026-11-05 bless-regression: Liero Factory Reloaded: emergency lamps removed, the drive's casing a part of the Dirt-ball line, the end crate rock, the press kills a worm it wedges (the user's playtest, 2026-11-05)
   fixtures/matches-live/classic-factory-live-4dm.ron
+2026-11-05 bless-regression: loose dirt: the loose-test level's golden
+  fixtures/matches-live/classic-loose-test-4chaos.ron

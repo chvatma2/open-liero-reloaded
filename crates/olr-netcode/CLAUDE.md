@@ -462,7 +462,7 @@ model that tests it in one process (spec §9.1).
   **Tick records** (`olr_netcode::world_sim`, for plan 10's game):
   `TickRecorder::simulated(sim, info)` from `Driver::simulated` keeps a
   `TickedTick` per simulated tick (resim flag, substeps, lost area, all
-  events; `take_ticked`) and one `ConfirmedTick` candidate per tick
+  events, its loose dirt moves, `World::loose_moves`; `take_ticked`) and one `ConfirmedTick` candidate per tick
   (gameplay events only, `World::scores`, the deathmatch's time left via
   `mode_state()` downcast, `World::result`, every worm's position),
   replaced when the tick is re-simulated; `take_confirmed(confirmed)`

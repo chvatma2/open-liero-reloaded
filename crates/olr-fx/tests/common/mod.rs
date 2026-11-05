@@ -150,7 +150,7 @@ impl Setup {
 
     /// One tick of `substeps` sub-steps with these events.
     pub fn tick(&mut self, events: &[Event], substeps: u8) {
-        let tick = FxTick { events, substeps, dt: DT, lost: None, material: &self.terrain };
+        let tick = FxTick { events, substeps, dt: DT, lost: None, material: &self.terrain, loose_moves: &[] };
         self.fx.step_tick(&tick, &mut self.map, &self.assets);
     }
 

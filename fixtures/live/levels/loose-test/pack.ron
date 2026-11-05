@@ -1,0 +1,10 @@
+(
+    format_version: 5,
+    id: "olr-level-loose-test",
+    name: "Loose Test",
+    version: "0.1.0",
+    kind: Level,
+    authors: [],
+    origin: None,
+    license: None,
+)

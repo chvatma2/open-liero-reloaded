@@ -173,6 +173,7 @@ impl GenLevel {
             surface: None,
             distant_surface: Vec::new(),
             live: None,
+            loose: None,
         }
     }
 }

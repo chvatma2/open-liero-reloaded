@@ -537,13 +537,19 @@ mod tests {
                 "--mod olx-classic --level olr-level-live-test --bots 4 --difficulty mixed --personality dm \
                  --seed 1 --ticks 3000 --kill-limit 15 --time-limit 6 --bonus-frequency 5",
             ),
+            (
+                "classic-loose-test-4chaos",
+                "--mod olx-classic --level olr-level-loose-test --bots 4 --difficulty mixed --personality chaos \
+                 --seed 1 --ticks 3000 --kill-limit 15 --time-limit 6 --bonus-frequency 5",
+            ),
         ];
         let found = goldens(true).unwrap();
         assert_eq!(found.len(), want.len());
         for (g, (name, flags)) in found.iter().zip(want) {
             assert_eq!(g.stem, name);
             assert_eq!(g.spec.flags().join(" "), flags, "{}", g.stem);
-            assert_eq!(g.live, name.contains("live"), "{name}");
+            // The loose dirt design's loose-test plays on the fixture levels too.
+            assert_eq!(g.live, name.contains("live") || name.contains("loose"), "{name}");
         }
     }
 
@@ -555,7 +561,13 @@ mod tests {
         let stems: Vec<&str> = found.iter().map(|g| g.stem.as_str()).collect();
         assert_eq!(
             stems,
-            [CHECK_GOLDEN, "classic-factory-live-4dm", "classic-live-test-4chaos", "classic-live-test-4dm"]
+            [
+                CHECK_GOLDEN,
+                "classic-factory-live-4dm",
+                "classic-live-test-4chaos",
+                "classic-live-test-4dm",
+                "classic-loose-test-4chaos"
+            ]
         );
         assert!(found.iter().any(|g| g.live));
         assert_eq!(

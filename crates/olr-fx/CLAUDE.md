@@ -92,8 +92,10 @@ fx.step_tick(&FxTick::new(&world, &events), &mut color_map, &fx_assets);
 
 `step_tick` walks the events in order: it applies each `TerrainEdit` to the
 colour map (`olr_content::color_edit`), spawns each cosmetic right before
-entity pass `substep` (spec §19), runs the passes left, and rebuilds a
-`lost_area`. So a `Dirt` particle samples the colour image after the edits
+entity pass `substep` (spec §19), runs the passes left, moves the tick's
+loose dirt grains (`FxTick::loose_moves`, `World::loose_moves`, through
+`olr_content::move_grains`; the loose dirt design) and rebuilds a
+`lost_area` (`a_ticks_grains_move_after_its_edits`). So a `Dirt` particle samples the colour image after the edits
 before it, and stains land between the edits as in OLX. **The caller must not
 also call `olr_content::apply_edits` for the same tick.** Per drawn frame,
 `fx.draw(&fx_assets, lit, &mut list)` (`lit`: a match with a look, see

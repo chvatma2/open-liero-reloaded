@@ -142,6 +142,9 @@ pub struct TickedTick {
     pub lost: Option<LostArea>,
     /// Its events, in order.
     pub events: Vec<Event>,
+    /// Its loose dirt moves (`World::loose_moves`, the loose dirt design):
+    /// `(from, to)` cell indices, in order, after its events' edits.
+    pub loose_moves: Vec<(u32, u32)>,
 }
 
 /// One confirmed tick for the HUD, the log and the results (spec §3.4):
@@ -195,6 +198,7 @@ impl TickRecorder {
             substeps: world.substeps_last_tick(),
             lost: events.lost_area(),
             events: events.as_slice().to_vec(),
+            loose_moves: world.loose_moves().to_vec(),
         });
         if info.tick < self.taken {
             return;

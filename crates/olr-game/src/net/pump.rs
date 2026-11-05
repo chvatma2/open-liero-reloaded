@@ -842,6 +842,7 @@ mod tests {
             substeps: 1,
             lost: None,
             events: Vec::new(),
+            loose_moves: Vec::new(),
         }])
     }
 

@@ -59,6 +59,10 @@ pub struct LoadedLevel {
     /// Its live copies (`live.ron` and `live/`, issue #85), `None` without
     /// any: [`LoadedLevel::live_sim`] is the simulation's share.
     pub live: Option<crate::LoadedLive>,
+    /// Its loose dirt (`loose.png` and `level.ron`'s `loose`, the loose
+    /// dirt design), `None` without a loose map: [`LoadedLevel::terrain`]
+    /// and [`LoadedLevel::loose_sim`] are what a world takes.
+    pub loose: Option<LoadedLoose>,
     /// What loading left out of a look that did not check, to log once.
     pub warnings: Vec<String>,
 }
@@ -80,19 +84,42 @@ impl LoadedLevel {
             surface: src.surface.clone(),
             distant_surface: olr_format::levels::distant_surface_values(src),
             live: src.live.clone(),
+            loose: olr_format::levels::compile_loose(src),
+            loose_map: src.loose_map.clone(),
         };
         LoadedLevel::from_level(olr_format::levels::compile_level(src)?, extras, Vec::new())
     }
 
     fn from_level(l: Level, extras: Extras, warnings: Vec<String>) -> anyhow::Result<LoadedLevel> {
-        let Extras { look, glow, clear, glass, glow_beams, haze, distant, surface, distant_surface, live } =
-            extras;
+        let Extras {
+            look,
+            glow,
+            clear,
+            glass,
+            glow_beams,
+            haze,
+            distant,
+            surface,
+            distant_surface,
+            live,
+            loose,
+            loose_map,
+        } = extras;
         check_art_size(l.material.width(), l.material.height(), l.def.art_scale)?;
         let level_groups: Vec<String> =
             look.as_ref().map_or_else(Vec::new, |l| l.groups.iter().map(|g| g.id.clone()).collect());
         let live = live.map(|src| crate::LoadedLive::new(src, &level_groups)).transpose()?;
         let mut warnings = warnings;
         warnings.extend(live.iter().flat_map(|l| l.warnings.iter().cloned()));
+        let loose = match loose_map {
+            Some(kinds) => {
+                // The format checked the rates; the simulation checks them again.
+                let sim = olr_sim::LooseLevel::new(loose)
+                    .ok_or_else(|| anyhow::anyhow!("the level's loose materials are out of range"))?;
+                Some(LoadedLoose { kinds, sim: std::sync::Arc::new(sim) })
+            }
+            None => None,
+        };
         Ok(LoadedLevel {
             name: l.def.name,
             material: l.material,
@@ -111,8 +138,29 @@ impl LoadedLevel {
             surface,
             distant_surface,
             live,
+            loose,
             warnings,
         })
+    }
+
+    /// The level's terrain before any edit: its material grid with its
+    /// loose dirt's kinds (the loose dirt design), what every world and
+    /// colour map of it starts from.
+    pub fn terrain(&self) -> olr_terrain::Terrain {
+        let terrain = olr_terrain::Terrain::from_grid(&self.material);
+        match &self.loose {
+            // The kinds are the level's size (the format checked them).
+            Some(l) => terrain
+                .with_loose(l.kinds.clone())
+                .unwrap_or_else(|| olr_terrain::Terrain::from_grid(&self.material)),
+            None => terrain,
+        }
+    }
+
+    /// The simulation's share of its loose dirt (the loose dirt design),
+    /// shared by every world of a match; `None` without any.
+    pub fn loose_sim(&self) -> Option<std::sync::Arc<olr_sim::LooseLevel>> {
+        self.loose.as_ref().map(|l| l.sim.clone())
     }
 
     /// The level has a look, glows, has clear solids or (issue #87) live
@@ -172,7 +220,22 @@ struct Extras {
     surface: Option<olr_look::SurfaceMaps>,
     distant_surface: Vec<u8>,
     live: Option<olr_format::levels::LiveSource>,
+    loose: Vec<olr_data::level::LooseMaterial>,
+    loose_map: Option<Vec<u8>>,
 }
+
+/// A level's loose dirt as loaded (the loose dirt design).
+#[derive(Clone, Debug)]
+pub struct LoadedLoose {
+    /// `loose.png`'s kinds per world pixel: 0 not loose, `k + 1` the
+    /// `k`-th material.
+    pub kinds: Vec<u8>,
+    /// The materials' rates, for `olr_sim::MatchSetup::loose`.
+    pub sim: std::sync::Arc<olr_sim::LooseLevel>,
+}
+
+// The format's bound is the simulation's.
+const _: () = assert!(olr_format::levels::MAX_LOOSE == olr_sim::MAX_LOOSE_MATERIALS);
 
 /// A theme: the stamps the map is edited with and the tiles dirt is drawn
 /// from. Images keep OLX's raw colours (see [`olr_data::theme::Theme`]).
@@ -264,6 +327,8 @@ impl Content {
             surface: pack.surface,
             distant_surface: pack.distant_surface,
             live: pack.live,
+            loose: pack.loose,
+            loose_map: pack.loose_map,
         };
         LoadedLevel::from_level(pack.level, extras, warnings).with_context(|| format!("level pack {id}"))
     }

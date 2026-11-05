@@ -198,10 +198,24 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
 - **Colour terrain** (`color.rs`, plan 5 ruling R1): `LoadedTheme::art()`,
   `LoadedLevel::color_map(&theme)` (before any edit; spawn holes come with
   the first tick), `color_edit(&EventKind)` converts a `TerrainEdit`, and
-  `apply_edits(map, events, terrain)` replays a tick's edits and rebuilds a
-  `lost_area` (for callers without `olr-fx`, whose `Fx::step_tick` replays
+  `apply_edits(map, events, world)` replays a tick's edits, moves its loose
+  dirt grains (`move_grains(map, world.loose_moves())`: cell indices to
+  `ColorMap::move_grain`) and rebuilds a `lost_area` from the world's
+  terrain (for callers without `olr-fx`, whose `Fx::step_tick` replays
   them itself between its entity passes: never both). `tests/color.rs` plays 3000-tick matches and checks every
   pixel's colour against the material (Review Focus 2).
+- **Loose dirt** (`maps.rs`, the loose dirt design,
+  `docs/superpowers/specs/2026-11-05-loose-dirt-design.md`):
+  `LoadedLevel::loose` (`LoadedLoose { kinds, sim }`, `None` without any)
+  holds `loose.png`'s kinds and the level's `olr_sim::LooseLevel`, from
+  `olr_pack::LevelPack` or `from_source`'s `compile_loose`; materials
+  `LooseLevel::new` refuses refuse the level. `LoadedLevel::terrain()`
+  (`Terrain::from_grid` plus `with_loose`) is the one way the setups
+  (`match_setup`, `replay_assets_from`) and `color_map` make the terrain,
+  and `loose_sim()` their `MatchSetup::loose`/`Assets::loose`. Tests:
+  `tests/loose.rs` on `fixtures/live/levels/loose-test` (made by
+  `fixtures/live/make-loose-test.py`): `a_loose_level_loads_its_kinds_and_materials`,
+  `colour_follows_the_grains`.
 - **Replays** (`replay.rs`, spec §20 F8): `replay_packs(mod, level)` names
   a match's packs (the level's theme too) with their `olr_pack::content_hash`;
   `replay_assets`, `world_for_replay` and `play_replay` refuse a replay whose

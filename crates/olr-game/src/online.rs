@@ -328,6 +328,7 @@ mod tests {
                     substeps: world.substeps_last_tick(),
                     lost: events.lost_area(),
                     events: events.as_slice().to_vec(),
+                    loose_moves: Vec::new(),
                 }
             })
             .collect()

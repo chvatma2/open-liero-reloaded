@@ -3,7 +3,6 @@
 use anyhow::Context as _;
 use olr_math::AbsTime;
 use olr_sim::{Loadout, MAX_WORMS, MatchSetup, OracleMode, SimSettings, Slot, World, WormSetup};
-use olr_terrain::Terrain;
 
 use crate::{Content, LoadedLevel, LoadedMod, LoadedTheme};
 
@@ -94,7 +93,7 @@ pub fn match_setup(
             (0..5).filter_map(|s| ids.get(s % ids.len().max(1))).map(|&weapon| Slot::ready(weapon)).collect();
         worms.push(WormSetup { team: 0, loadout: Loadout::new(slots, &settings), spawn: w.pos });
     }
-    let terrain = Terrain::from_grid(&level.material);
+    let terrain = level.terrain();
     Ok(MatchSetup {
         holes: theme.stamps(),
         green_mask: theme.green_mask(),
@@ -104,6 +103,7 @@ pub fn match_setup(
         bonus_weapons: Some(m.weapon_rules(&setup.restrictions).bonus_weapons()),
         live: level.live_sim(),
         director: level.live_director(),
+        loose: level.loose_sim(),
         ..MatchSetup::new(settings, m.sim.clone(), terrain)
     })
 }

@@ -1,0 +1,16 @@
+(
+    name: "Loose Test",
+    size: (200, 120),
+    theme: "olx-theme-dirt",
+    loose: [
+        (
+            id: "sand",
+            name: "Sand",
+            repose: 30,
+        ),
+        (
+            id: "gravel",
+            name: "Gravel",
+        ),
+    ],
+)
