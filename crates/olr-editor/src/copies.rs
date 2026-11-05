@@ -54,6 +54,9 @@ pub(crate) struct CopyCache {
     /// The glow groups' and materials' ids the bake was last made with: a
     /// change rebakes the whole level.
     baked_ids: Option<Vec<String>>,
+    /// The loose materials the last placed bake gathered (the loose dirt
+    /// design): what `loose.png`'s values name while copies are placed.
+    pub(crate) loose: Vec<olr_format::levels::LooseSource>,
 }
 
 /// The ids a look numbers its glow groups and materials by, in order.
@@ -224,6 +227,7 @@ impl Document {
         let mut a =
             Asset::new(&self.ground_name(), self.level.art_scale, self.level.size, pieces, groups, materials);
         a.folders = self.folders.clone();
+        a.loose = self.level.loose.clone();
         a
     }
 
@@ -352,6 +356,7 @@ impl Document {
         let mut l = self.level.clone();
         if let Some(look) = &self.placed_look {
             l.look = look.clone();
+            l.loose = self.copy_cache.loose.clone();
         }
         l
     }
@@ -367,6 +372,22 @@ impl Document {
         let own = self.level.look.clone();
         let (own_groups, own_materials) = self.own_look_parts();
         let (mut groups, mut materials) = (Vec::new(), Vec::new());
+        // The loose materials, gathered as `olr_edit::placed::bake` does
+        // (the loose dirt design): each copy's ids as named in the level.
+        let mut loose = Vec::new();
+        let loose_ids: Vec<BTreeMap<String, String>> = copies
+            .iter()
+            .zip(&laid)
+            .map(|(c, l)| {
+                let list = match l {
+                    Some(l) => &l.loose[..],
+                    None if self.plain_ground(c) => &self.level.loose[..],
+                    None => &[][..],
+                };
+                let to = olr_format::levels::gather_loose(&mut loose, list);
+                list.iter().map(|m| m.id.clone()).zip(to).collect()
+            })
+            .collect();
         let ids: Vec<Option<CopyIds>> = copies
             .iter()
             .zip(&laid)
@@ -385,14 +406,15 @@ impl Document {
         });
         let (size, s) = (self.level.size, self.level.art_scale);
         let all = Rect { x: 0, y: 0, w: size.0, h: size.1 };
-        let key = look_ids(gathered.as_ref());
+        let mut key = look_ids(gathered.as_ref());
+        key.extend(loose.iter().map(|m| format!("~{}", m.id)));
         let mut rect = if self.copy_cache.baked_ids.as_ref() != Some(&key) { all } else { rect };
         // The flattened pieces, their masks and maps by their ids.
         let view = self.folder_view();
         let (mut distant, mut near): (Vec<Flat>, Vec<Flat>) = (Vec::new(), Vec::new());
         let mut masks = GlowMasks::new();
         let mut surfaces = PaintedSurfaces::new();
-        for ((c, l), ids) in copies.iter().zip(&laid).zip(&ids) {
+        for (((c, l), ids), loose_ids) in copies.iter().zip(&laid).zip(&ids).zip(&loose_ids) {
             let Some(ids) = ids else { continue };
             let pieces: Vec<BakePiece> = match l {
                 Some(l) => l
@@ -420,6 +442,11 @@ impl Document {
             };
             for (mut e, d, mask, [front, back], opacity) in pieces {
                 ids.name(&mut e);
+                if let Some(id) = e.loose.as_mut()
+                    && let Some(to) = loose_ids.get(id.as_str())
+                {
+                    *id = to.clone();
+                }
                 if let Some(m) = mask {
                     masks.insert(e.id.clone(), m.clone());
                 }
@@ -442,6 +469,8 @@ impl Document {
         let whole = rect.x == 0 && rect.y == 0 && rect.w >= size.0 && rect.h >= size.1;
         let holes_before = if whole { 0 } else { crate::document::holes(&self.level.back, rect, s) };
         let own_look = std::mem::replace(&mut self.level.look, gathered.clone());
+        let own_loose = std::mem::replace(&mut self.level.loose, loose.clone());
+        self.copy_cache.loose = loose;
         bake_elements_with_opacity(
             &mut self.level,
             &items,
@@ -467,6 +496,7 @@ impl Document {
             self.distant_generation += 1;
         }
         self.level.look = own_look;
+        self.level.loose = own_loose;
         self.see_through = see_through;
         let all_holes = crate::document::holes(&self.level.back, all, s);
         self.holes = if whole {

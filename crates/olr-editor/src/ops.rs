@@ -135,6 +135,9 @@ pub(crate) fn with_property(
         Property::Surface(m) => e.surface = m,
         Property::BackSurface(_) if !e.has_back_art() => return Err(wrong("an element with back art")),
         Property::BackSurface(m) => e.back_surface = m,
+        // The loose dirt design (`Document::set` checks the id is one of the
+        // level's loose materials, `check_elements` the layer's kind).
+        Property::Loose(m) => e.loose = m,
         // Issue #11: an image or drawn element (`Document::set_distant`
         // keeps the order).
         Property::Distant(_) if matches!(e.kind, ElementKind::Raster) => {
@@ -835,6 +838,11 @@ impl Document {
             && self.material_value(m).is_none()
         {
             return Err(DocError::Bad(format!("no material {m:?} in the level's materials (add it first)")));
+        }
+        if let Property::Loose(Some(m)) = &property
+            && !self.level.loose.iter().any(|x| x.id == *m)
+        {
+            return Err(DocError::Bad(format!("no loose material {m:?} in the level (add it first)")));
         }
         let before = self.items[index].element.clone();
         let mut after = before.clone();
@@ -1800,7 +1808,17 @@ impl Document {
                 self.glow_masks = g.masks.clone();
                 self.surface_maps = g.surfaces.clone();
                 self.level.look = g.look.clone();
+                self.level.loose = g.loose.clone();
                 self.all()
+            }
+            Edit::Loose { before, after } => {
+                let (from, to) = if forward { (before, after) } else { (after, before) };
+                self.level.loose = to.clone();
+                // The bake numbers them by their order: others, another bake.
+                let ids = |l: &[olr_format::levels::LooseSource]| {
+                    l.iter().map(|m| m.id.clone()).collect::<Vec<_>>()
+                };
+                if ids(from) == ids(to) { NOTHING } else { self.all() }
             }
             Edit::Look { before, after } => {
                 let (from, to) = if forward { (before, after) } else { (after, before) };

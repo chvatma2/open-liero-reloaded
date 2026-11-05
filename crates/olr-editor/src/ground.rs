@@ -134,6 +134,7 @@ impl Document {
             masks: self.glow_masks.clone(),
             surfaces: self.surface_maps.clone(),
             look: self.level.look.clone(),
+            loose: self.level.loose.clone(),
         }
     }
 
@@ -162,6 +163,7 @@ impl Document {
             && self.glow_masks == ground.glow_masks
             && self.surface_maps == ground.surface_maps
             && ground_look(self.level.look.as_ref()) == ground_look(ground.level.look.as_ref())
+            && self.level.loose == ground.level.loose
     }
 
     /// The level's own settings, as `level` now has them, in the ground's

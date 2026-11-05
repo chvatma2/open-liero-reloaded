@@ -18,6 +18,7 @@ pub mod history;
 pub mod level_tab;
 pub mod links;
 pub mod look_ops;
+pub mod loose_ops;
 pub mod notice;
 pub mod ops;
 pub mod parts_ops;

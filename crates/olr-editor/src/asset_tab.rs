@@ -229,7 +229,7 @@ impl Document {
             surface: None,
             distant_surfaces: Vec::new(),
             live: None,
-            loose: Vec::new(),
+            loose: asset.loose.clone(),
             loose_map: None,
         };
         let mut originals = BTreeMap::new();
@@ -370,6 +370,7 @@ impl Document {
         let (groups, materials) = carried_look(&mut pieces, self.level.look.as_ref(), size);
         let mut asset = Asset::new(&self.level.name, self.level.art_scale, size, pieces, groups, materials);
         asset.folders = self.folders();
+        asset.loose = self.named_loose();
         if let Some(p) = &self.asset {
             asset.states = p.states.iter().map(StateEntry::to_state).collect();
             // The shown state's own pictures are the items' (issue #79):
@@ -398,6 +399,13 @@ impl Document {
         asset
     }
 
+    /// The loose materials the layers name, in the level's order (an asset
+    /// lists only those: `check_asset`); the ground, the level's own, all.
+    fn named_loose(&self) -> Vec<olr_format::levels::LooseSource> {
+        let named = |id: &str| self.items.iter().any(|i| i.element.loose.as_deref() == Some(id));
+        self.level.loose.iter().filter(|m| self.ground || named(&m.id)).cloned().collect()
+    }
+
     /// `asset.ron`'s metadata as the document now is: what the state and
     /// exposure rules read (no pixels).
     pub(crate) fn asset_file(&self, parts: &AssetParts) -> AssetFile {
@@ -407,6 +415,7 @@ impl Document {
             folders: self.folders(),
             glow_groups: look.map_or_else(Vec::new, |l| l.glow_groups.clone()),
             materials: look.map_or_else(Vec::new, |l| l.materials.clone()),
+            loose: self.named_loose(),
             states: parts.states.iter().map(StateEntry::source).collect(),
             start: parts.states.get(parts.start).map(|s| s.name.clone()),
             exposed: parts.exposed.clone(),

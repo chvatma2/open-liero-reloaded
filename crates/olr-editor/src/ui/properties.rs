@@ -222,6 +222,7 @@ fn element(ui: &mut Ui, state: &EditorState, data: &mut EditorData, id: &str, ou
     }
     super::look::element_glow(ui, state, data, e, out);
     super::look::element_surfaces(ui, state, e, out);
+    super::loose::element_loose(ui, state, e, out);
     place(ui, data, e, out);
     ui.separator();
     let open = state.settings().more_open;

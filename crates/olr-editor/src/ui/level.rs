@@ -121,6 +121,7 @@ pub(super) fn asset(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out
         ui.label(format!("{}: {}", labels::ART_SCALE, l.art_scale));
         super::look::level_look(ui, state, data, LookScope::Ground, out);
         super::look::level_materials(ui, state, out);
+        super::loose::level_loose(ui, state, data, out);
         return;
     }
     ui.heading("Asset");
@@ -145,4 +146,5 @@ pub(super) fn asset(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out
     ui.label(format!("{}: {}", labels::ART_SCALE, l.art_scale));
     super::look::level_look(ui, state, data, LookScope::Asset, out);
     super::look::level_materials(ui, state, out);
+    super::loose::level_loose(ui, state, data, out);
 }

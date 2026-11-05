@@ -19,6 +19,7 @@ mod level_script;
 mod level_tab;
 mod library;
 mod look;
+mod loose;
 mod parts;
 mod previews;
 mod properties;
@@ -240,6 +241,16 @@ pub mod labels {
     /// A surface picker's "no material".
     pub const NO_SURFACE: &str = "None";
     pub const TOOL_SURFACE: &str = "Surface brush";
+    // Loose dirt (the loose dirt design).
+    pub const LOOSE_DIRT: &str = "Loose dirt";
+    pub const ADD_LOOSE: &str = "Add loose dirt";
+    /// A dirt layer's loose material picker, and its "plain dirt".
+    pub const LOOSE: &str = "Loose";
+    pub const NOT_LOOSE: &str = "None";
+    pub const REPOSE: &str = "Angle °";
+    pub const GRAVITY: &str = "Gravity";
+    pub const TOP_SPEED: &str = "Top speed";
+    pub const SLIDE_SPEED: &str = "Slide speed";
     // Directional glow and haze (the directional-glow design).
     pub const DIRECTIONAL: &str = "Directional";
     pub const DIRECTION: &str = "Direction °";

@@ -1196,6 +1196,37 @@ fn the_level_tabs_shortcuts() {
 /// library, a surface picked for an element, the Surface brush on its
 /// front and back (each stroke one undo), the Materials view's legend, and
 /// a save that bakes the maps and opens again as it was.
+/// The loose dirt design: Add loose dirt in the ground's panel, a dirt
+/// picture's Loose picker, and Remove disabled while it is used.
+#[test]
+fn loose_dirt_through_the_panels() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    let loose = |h: &Harness<'static, App>| -> Vec<String> {
+        h.state().state.active_document().unwrap().loose().iter().map(|m| m.id.clone()).collect()
+    };
+    h.get_by_label(labels::ADD_LOOSE).scroll_to_me();
+    h.run();
+    h.get_by_label(labels::ADD_LOOSE).click();
+    h.run();
+    assert_eq!(loose(&h), ["loose"]);
+    h.get_by_label("Gradient").click();
+    h.run();
+    h.get_by_role_and_label(Role::ComboBox, labels::LOOSE).click();
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Loose dirt").click();
+    h.run();
+    let d = h.state().state.active_document().unwrap();
+    assert_eq!(d.items()[d.index_of("gradient").unwrap()].element.loose.as_deref(), Some("loose"));
+    // A rock picture shows no Loose picker.
+    h.get_by_label("Tiny").click();
+    h.run();
+    assert!(h.query_by_role_and_label(Role::ComboBox, labels::LOOSE).is_none());
+    act(&mut h, A::Select(Selection::None));
+    h.get_by_label(&labels::remove_material("Loose dirt")).scroll_to_me();
+    h.run();
+    assert!(h.get_by_label(&labels::remove_material("Loose dirt")).accesskit_node().is_disabled());
+}
+
 #[test]
 fn materials_through_the_panels() {
     let Some((_tmp, mut h)) = opened() else { return };

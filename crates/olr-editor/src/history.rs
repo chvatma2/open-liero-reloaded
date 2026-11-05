@@ -9,7 +9,7 @@ use std::sync::Arc;
 use olr_data::image::RgbaImage;
 use olr_data::level::Material;
 use olr_edit::compose::{Decoded, Rect};
-use olr_format::levels::{Element, Folder, LevelObject, LevelSource};
+use olr_format::levels::{Element, Folder, LevelObject, LevelSource, LooseSource};
 use olr_format::look::LookSource;
 
 use crate::document::Item;
@@ -154,6 +154,12 @@ pub enum Edit {
     /// Issue #83: the step's name ("Update Strip light"), which Undo's
     /// hover shows; applied, it changes nothing.
     Name(String),
+    /// The level's loose materials (the loose dirt design), the whole list
+    /// before and after.
+    Loose {
+        before: Vec<LooseSource>,
+        after: Vec<LooseSource>,
+    },
 }
 
 /// A side of `Edit::Placement` (issue #82): the placement's file, the
@@ -200,6 +206,8 @@ pub struct GroundSnap {
     pub masks: olr_edit::compose::GlowMasks,
     pub surfaces: olr_edit::compose::PaintedSurfaces,
     pub look: Option<LookSource>,
+    /// The ground's loose materials (the loose dirt design).
+    pub loose: Vec<LooseSource>,
 }
 
 impl GroundSnap {
@@ -209,6 +217,7 @@ impl GroundSnap {
         self.items.iter().map(item).sum::<usize>()
             + self.folders.iter().map(folder).sum::<usize>()
             + std::mem::size_of::<LookSource>()
+            + self.loose.len() * std::mem::size_of::<LooseSource>()
     }
 
     /// Its image grids, masks, maps and originals, by address, with their
@@ -417,6 +426,7 @@ impl Edit {
                     && after.assets.is_empty()
             }
             Edit::Look { before, after } => before == after,
+            Edit::Loose { before, after } => before == after,
             Edit::Name(_) => true,
             Edit::Haze { before, after, .. } => before == after,
             Edit::GlowMask { before, after, .. } | Edit::SurfaceMap { before, after, .. } => before == after,
@@ -447,6 +457,9 @@ impl Edit {
             }
             Edit::Whole { before, after } => before.bytes() + after.bytes(),
             Edit::Look { .. } => 2 * std::mem::size_of::<LookSource>(),
+            Edit::Loose { before, after } => {
+                (before.len() + after.len()) * std::mem::size_of::<LooseSource>()
+            }
             Edit::Haze { before, after, .. } => before.len() + after.len(),
             // Masks count once each, by address, as grids do (`grids`).
             Edit::GlowMask { .. } | Edit::SurfaceMap { .. } => 0,

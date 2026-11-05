@@ -524,6 +524,18 @@ pub enum EditorAction {
     /// Removes the level's material `id` (refused while in use, naming the
     /// elements using it); one step.
     RemoveMaterial(String),
+    // Loose dirt (the loose dirt design).
+    /// Adds a loose material of the default rates; one step.
+    AddLoose,
+    /// Replaces loose material `id`'s name and rates (its id kept); one
+    /// step, refused out of range.
+    SetLoose {
+        id: String,
+        material: olr_format::levels::LooseSource,
+    },
+    /// Removes loose material `id` (refused while a layer names it); one
+    /// step.
+    RemoveLoose(String),
     /// What the Surface brush paints: one of the level's materials, by id;
     /// `None` the element's default.
     SurfacePaint(Option<String>),
@@ -2224,6 +2236,9 @@ impl EditorState {
                 }
                 cmds
             }
+            EditorAction::AddLoose => self.edits(|d| d.add_loose()),
+            EditorAction::SetLoose { id, material } => self.edits(|d| d.set_loose(&id, material)),
+            EditorAction::RemoveLoose(id) => self.edits(|d| d.remove_loose(&id)),
             EditorAction::RemoveMaterial(id) => {
                 let cmds = self.edits(|d| d.remove_material(&id));
                 if self.surface_paint.as_ref() == Some(&id) && !cmds.is_empty() {
@@ -3206,6 +3221,9 @@ impl EditorState {
             | EditorAction::GlowSelection(_)
             | EditorAction::AddMaterial { .. }
             | EditorAction::RemoveMaterial(_)
+            | EditorAction::AddLoose
+            | EditorAction::SetLoose { .. }
+            | EditorAction::RemoveLoose(_)
             | EditorAction::SaveAsAsset => true,
             EditorAction::Select(s) => {
                 matches!(s, Selection::Element(_) | Selection::Folder(_) | Selection::Many(_))

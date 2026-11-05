@@ -16,6 +16,7 @@ mod level_tab;
 mod library_notice;
 mod library_panel;
 mod look;
+mod loose;
 mod materials;
 mod properties;
 mod state;

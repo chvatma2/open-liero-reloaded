@@ -418,6 +418,40 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     options: the brush, its Material (`BRUSH_MATERIAL`, "Element's" or
     the level's) in a fixed slot, then Front and Back when the selected
     element has back art. Save as asset and Play needed no change.
+- **Loose dirt** (the loose dirt design,
+  `docs/superpowers/specs/2026-11-05-loose-dirt-design.md`; the bake is
+  `olr_edit::compose`'s, the list the level's `loose`):
+  - **Document** (`loose_ops.rs`): `loose()`, `loose_users(id)` (the
+    elements naming it, by name), `add_loose` (`NEW_LOOSE_NAME` "Loose
+    dirt", the default rates, its id `NEW_LOOSE_ID` "loose" made unique),
+    `set_loose(id, material)` (the id kept) and `remove_loose` (refused
+    while used, naming the users), each checked as `level.ron`'s list
+    (`olr_format::loose::check_loose`) and one `Edit::Loose { before,
+    after }` step (a change of the ids' order rebakes the whole level).
+    `set` refuses a `Property::Loose` naming no loose material of the
+    level; `check_elements` refuses one on rock, background or a distant
+    layer. The ground carries the list both ways (`GroundSnap::loose`,
+    `same_ground`), the asset tab opens an asset's (`open_asset`) and
+    saves those its layers name (`to_asset`, `asset_file`:
+    `named_loose`; the ground all), and the level tab's placed bake
+    gathers the copies' lists (`olr_format::levels::gather_loose`, their
+    pieces' ids renamed; `CopyCache::loose`), which `playable` and
+    `to_pack` give the level (the ground keeps its own).
+  - **Actions**: `AddLoose`, `SetLoose { id, material }`,
+    `RemoveLoose(id)`; the level tab refuses them (`level_refuses`: the
+    ground's layers are the asset tab's).
+  - **Panels** (`ui/loose.rs`): the ground's and an asset's panel end with
+    `labels::LOOSE_DIRT`: each material's Name, `REPOSE`, `GRAVITY`,
+    `TOP_SPEED`, `SLIDE_SPEED` (each committed once, one step) and
+    Remove (`labels::remove_material(name)`, disabled while used, "used
+    by …"), then `ADD_LOOSE`; a dirt picture or layer, or a mixed layer,
+    not distant, shows the `LOOSE` picker under its surfaces (`NOT_LOOSE`
+    or a material).
+  - Tests: `tests/loose.rs` (`adding_a_loose_material_is_undoable`,
+    `a_dirt_layer_takes_a_loose_material`,
+    `removing_a_used_material_is_refused_with_a_notice`,
+    `a_saved_level_keeps_its_loose_dirt`) and `flows.rs`'
+    `loose_dirt_through_the_panels`.
 - **Layer folders** (issue #60; STATUS.md "Layer folders"; the format
   and every tree computation are issue #59's `olr_edit::folders`, never
   duplicated here):

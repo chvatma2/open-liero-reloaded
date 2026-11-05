@@ -192,6 +192,7 @@ pub struct PackSnapshot {
     glow_masks: GlowMasks,
     surface_maps: PaintedSurfaces,
     placed_look: Option<Option<olr_format::look::LookSource>>,
+    placed_loose: Vec<olr_format::levels::LooseSource>,
     back_tile: RgbaImage,
 }
 
@@ -212,6 +213,7 @@ impl PackSnapshot {
             &self.glow_masks,
             &self.surface_maps,
             self.placed_look.as_ref(),
+            &self.placed_loose,
             &self.back_tile,
         )
     }
@@ -233,6 +235,7 @@ fn pack_of(
     glow_masks: &GlowMasks,
     surface_maps: &PaintedSurfaces,
     placed_look: Option<&Option<olr_format::look::LookSource>>,
+    placed_loose: &[olr_format::levels::LooseSource],
     back_tile: &RgbaImage,
 ) -> Pack {
     let mut files = BTreeMap::new();
@@ -273,8 +276,12 @@ fn pack_of(
         if let Some(g) = placed.as_mut().and_then(|p| p.assets.get_mut(GROUND_KEY)) {
             g.file.glow_groups = level.look.as_ref().map(|l| l.glow_groups.clone()).unwrap_or_default();
             g.file.materials = level.look.as_ref().map(|l| l.materials.clone()).unwrap_or_default();
+            g.file.loose = level.loose.clone();
         }
         level.look = look.clone();
+        // The loose materials as the bake gathered them (the loose dirt
+        // design): `loose.png`'s values name these.
+        level.loose = placed_loose.to_vec();
     }
     // A placement without the ground has no composition.
     let grounded = placed.as_ref().is_none_or(|p| p.file.assets.iter().any(|a| a.key == GROUND_KEY));
@@ -759,6 +766,7 @@ impl Document {
             &self.glow_masks,
             &self.surface_maps,
             self.placed_look.as_ref(),
+            &self.copy_cache.loose,
             &self.back_tile,
         )
     }
@@ -780,6 +788,7 @@ impl Document {
             glow_masks: self.glow_masks.clone(),
             surface_maps: self.surface_maps.clone(),
             placed_look: self.placed_look.clone(),
+            placed_loose: self.copy_cache.loose.clone(),
             back_tile: self.back_tile.clone(),
         }
     }
