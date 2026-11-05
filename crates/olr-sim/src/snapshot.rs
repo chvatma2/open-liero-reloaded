@@ -95,7 +95,9 @@ impl World {
             (None, false) => {
                 // The snapshot's copy of the map, loaded so that the whole
                 // map is reported restored.
-                if !self.terrain.load_cells(s.world.terrain.cells()) {
+                if !self.terrain.load_cells(s.world.terrain.cells())
+                    || !self.terrain.load_loose(s.world.terrain.loose_cells())
+                {
                     return Err(RestoreError::NotThisWorld);
                 }
                 self.take_snapshot(&s.world);

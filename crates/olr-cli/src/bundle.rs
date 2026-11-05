@@ -115,6 +115,7 @@ pub const FIELDS: &[&str] = &[
     "game_over_sent",
     "gone",
     "live",
+    "loose",
 ];
 
 /// Replays the bundle's inputs from the start world, withdrawing each

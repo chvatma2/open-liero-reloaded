@@ -77,6 +77,11 @@ pub struct MatchSetup {
     /// tick; `None` (the default) for a level without scripts, whose world
     /// hashes, transfers and plays exactly as before. Needs `live`.
     pub director: Option<Box<dyn Director>>,
+    /// The level's loose materials (the loose dirt design), present exactly
+    /// when the terrain has a loose layer; `None` (the default) for a level
+    /// without loose dirt, whose world hashes, transfers and plays exactly
+    /// as before.
+    pub loose: Option<Arc<crate::LooseLevel>>,
 }
 
 impl MatchSetup {
@@ -106,6 +111,7 @@ impl MatchSetup {
             bonus_weapons: None,
             live: None,
             director: None,
+            loose: None,
         }
     }
 
@@ -140,6 +146,17 @@ impl MatchSetup {
                 return Err(SetupError::Live);
             }
         }
+        // The loose dirt design: materials exactly with a loose layer, and
+        // every kind one of them.
+        match &self.loose {
+            Some(l)
+                if !self.terrain.has_loose() || !crate::loose::LooseWorld::kinds_fit(l, &self.terrain) =>
+            {
+                return Err(SetupError::Loose);
+            }
+            None if self.terrain.has_loose() => return Err(SetupError::Loose),
+            _ => {}
+        }
         match (&self.live, &self.director) {
             (None, Some(_)) => return Err(SetupError::Live),
             (Some(live), Some(_)) if crate::script::live_instances(live).len() > usize::from(u16::MAX) => {
@@ -165,6 +182,9 @@ pub enum SetupError {
     /// `u16` indexes, more rock parts than [`crate::MAX_LIVE_SOLID_PARTS`],
     /// or scripts without copies.
     Live,
+    /// Loose materials without a loose layer or the reverse, or a loose
+    /// kind past the materials.
+    Loose,
 }
 
 impl fmt::Display for SetupError {
@@ -178,6 +198,7 @@ impl fmt::Display for SetupError {
             SetupError::TooManySlots { worm, slots } => {
                 write!(f, "worm {worm}: {slots} weapon slots, at most {MAX_SLOTS}")
             }
+            SetupError::Loose => write!(f, "loose dirt without its materials, or a kind past them"),
             SetupError::Live => {
                 write!(
                     f,
@@ -248,6 +269,7 @@ impl World {
             bonus_weapons,
             live,
             director,
+            loose,
         } = setup;
         let terrain_min = terrain.width().min(terrain.height());
         let map = (terrain.width(), terrain.height());
@@ -279,7 +301,9 @@ impl World {
             spare: Spare::new(MAX_WORMS.saturating_sub(worms.len())),
             setup_worms: 0,
             live: live.map(|l| LiveWorld::new(l, director, seed, start, map)),
+            loose: None,
         };
+        world.loose = loose.map(|l| crate::loose::LooseWorld::new(l, &world.terrain));
         if let Some(ids) = bonus_weapons {
             world.set_bonus_weapons(&ids);
         }
@@ -293,6 +317,9 @@ impl World {
         }
         world.apply_commands();
         world.setup_worms = world.worms.len();
+        // The loose dirt design: setup's edits wake nothing (every loose
+        // chunk starts awake), so the touched list is empty between ticks.
+        world.terrain.take_touched().for_each(drop);
         if let Some(live) = &world.live {
             live.announce_start(&mut world.draws.events);
         }

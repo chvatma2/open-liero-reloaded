@@ -130,6 +130,7 @@ impl Terrain {
                 && k.iter().zip(&self.cells).all(|(&k, &c)| k == 0 || c == Material::Dirt as u8)
         };
         match (kinds, self.loose.is_some()) {
+            (None, false) => return true,
             (Some(k), true) if fits(k) => {
                 for (i, &v) in k.iter().enumerate() {
                     self.set_value(i, self.cells[i] | v << 2);

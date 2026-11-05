@@ -146,6 +146,8 @@ impl ReplaySetup {
             live: _,
             // Its scripts: compiled from the same played form.
             director: _,
+            // Its loose dirt: in its pack hash too.
+            loose: _,
         } = setup;
         ReplaySetup {
             packs,
@@ -169,7 +171,7 @@ impl ReplaySetup {
 
     /// The [`MatchSetup`] this describes, made of `assets`.
     pub fn match_setup(&self, assets: Assets) -> MatchSetup {
-        let Assets { sim_mod, terrain, holes, green_mask, live, director } = assets;
+        let Assets { sim_mod, terrain, holes, green_mask, live, director, loose } = assets;
         MatchSetup {
             settings: self.settings.clone(),
             sim_mod,
@@ -183,6 +185,7 @@ impl ReplaySetup {
             bonus_weapons: self.bonus_weapons.clone(),
             live,
             director,
+            loose,
         }
     }
 }

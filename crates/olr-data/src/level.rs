@@ -159,6 +159,28 @@ impl DistantLayer {
     }
 }
 
+/// A loose material (the loose dirt design): how its grains fall and pile,
+/// in the format's units. The simulation checks the ranges
+/// (`olr_sim::LooseLevel::new`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LooseMaterial {
+    /// The angle of repose, degrees, 5 to 85.
+    pub repose: u8,
+    /// Pixels a second squared, 1 to 2000.
+    pub gravity: u16,
+    /// A falling grain's top speed, pixels a second, 1 to 500.
+    pub top_speed: u16,
+    /// How fast a grain slides down a slope steeper than its repose,
+    /// pixels a second, 0 to 100.
+    pub slide_speed: u8,
+}
+
+impl LooseMaterial {
+    /// The spike's values, approved by the maintainer (2026-11-05).
+    pub const DEFAULT: LooseMaterial =
+        LooseMaterial { repose: 45, gravity: 200, top_speed: 50, slide_speed: 25 };
+}
+
 /// A loaded level.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Level {

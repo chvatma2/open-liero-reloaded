@@ -115,7 +115,15 @@ impl World {
     /// events waiting for the next tick too), the spawn work counter and
     /// scratch and spare buffers.
     pub fn checksum(&self) -> u64 {
-        self.hash_state(self.terrain.material_hash())
+        // The loose dirt design: the kinds with the material, only where
+        // the level has loose dirt (the oracle's `mh` stays the material's).
+        let kinds = self.terrain.loose_cells().map(|k| {
+            let mut h = Fnv::new();
+            h.bytes(k);
+            h.finish()
+        });
+        let m = self.terrain.material_hash();
+        self.hash_state(kinds.map_or(m, |k| m ^ k.rotate_left(29)))
     }
 
     /// [`World::checksum`] with the terrain as its cell hash
@@ -150,6 +158,7 @@ impl World {
             spare: _,
             setup_worms: _,
             live,
+            loose,
         } = self;
         let mut h = Fnv::new();
         h.u32(terrain.width());
@@ -171,6 +180,10 @@ impl World {
         // hashes exactly as before (match goldens, oracle traces).
         if let Some(live) = live {
             live.hash(&mut h);
+        }
+        // Likewise only with loose dirt (the loose dirt design).
+        if let Some(l) = loose {
+            l.state.hash(&mut h);
         }
         h.finish()
     }

@@ -82,6 +82,9 @@ pub struct World {
     /// The level's live copies' state (issue #86), present exactly when
     /// the setup's [`crate::MatchSetup::live`] is.
     pub(crate) live: Option<LiveWorld>,
+    /// The level's loose dirt (the loose dirt design), present exactly when
+    /// the setup's [`crate::MatchSetup::loose`] is.
+    pub(crate) loose: Option<crate::loose::LooseWorld>,
 }
 
 /// Buffers only: they hold no state, so they never make two worlds unequal.
@@ -110,6 +113,27 @@ impl World {
 
     pub fn terrain(&self) -> &Terrain {
         &self.terrain
+    }
+
+    /// The grains of loose dirt the last tick moved, `(from, to)` cell
+    /// indices in order (the loose dirt design): the colour map replays them
+    /// ([`olr_terrain::ColorMap::move_grain`]). Empty without loose dirt.
+    pub fn loose_moves(&self) -> &[(u32, u32)] {
+        self.loose.as_ref().map_or(&[], |l| l.moves())
+    }
+
+    /// How many grains of loose dirt are moving (tests and statistics).
+    pub fn loose_state_len(&self) -> usize {
+        self.loose.as_ref().map_or(0, |l| l.state.moving_len())
+    }
+
+    /// The loose dirt's step, once a tick (the loose dirt design).
+    fn loose_phase(&mut self, frozen: bool) {
+        let World { loose, terrain, worms, live, server_frame, .. } = self;
+        if let Some(l) = loose {
+            let parts = live.as_ref().and_then(LiveWorld::solid_parts);
+            l.step(terrain, worms, parts, *server_frame as u32, frozen);
+        }
     }
 
     pub fn sim_mod(&self) -> &SimMod {
@@ -547,6 +571,9 @@ impl World {
         self.mode_tick();
         // Issue #88: the level's scripts, after the mode and its commands.
         self.script_phase(frozen);
+        // The loose dirt design: grains fall and slide after everything
+        // else this tick did.
+        self.loose_phase(frozen);
         self.time += frame;
     }
 

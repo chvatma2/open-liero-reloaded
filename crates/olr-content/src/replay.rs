@@ -101,5 +101,7 @@ pub fn replay_assets_from(m: &LoadedMod, level: &LoadedLevel, theme: &LoadedThem
         green_mask: theme.green_mask(),
         live: level.live_sim(),
         director: level.live_director(),
+        // Task 5 of the loose dirt plan loads them.
+        loose: None,
     }
 }

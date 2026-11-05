@@ -129,6 +129,7 @@ pub fn assets() -> Assets {
         green_mask: None,
         live: None,
         director: None,
+        loose: None,
     }
 }
 

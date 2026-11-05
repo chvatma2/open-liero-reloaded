@@ -413,6 +413,43 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   `a_live_sound_event_changes_no_state` (issue #92),
   `a_bad_script_part_is_refused`, `script_peak_is_not_state`,
   `hostile_script_parts_never_panic` (proptest).
+- **Loose dirt** (`loose.rs`, spec
+  `docs/superpowers/specs/2026-11-05-loose-dirt-design.md`; no OLX
+  counterpart): `MatchSetup::loose` (`Option<Arc<LooseLevel>>`,
+  `LooseLevel::new(Vec<LooseMaterial>)`: at most `MAX_LOOSE_MATERIALS` 16,
+  repose 5-85, gravity 1-2000, top speed 1-500, slide 0-100; the type is
+  `olr-data`'s, `LooseMaterial::DEFAULT` 45/200/50/25) exactly with a
+  terrain loose layer whose kinds name its materials, else
+  `SetupError::Loose`. `World::loose` (`LooseWorld`) steps at the end of
+  `frame`, after the script phase, skipped when frozen (the tick's
+  edits, `Terrain::take_touched`, the living worms' boxes grown by 4 and
+  the live rock parts whose footprint changed, old and new box grown by
+  1, wake 16 px chunks either way): rows bottom-up, the direction
+  alternating with `(tick + y) & 1`, each grain of an awake chunk once
+  (a grain landing in its row is not visited again). Falling or riding
+  on a moving grain: speed `min(v + g, top)` in 256ths a tick, the whole
+  pixels of the remainder fallen where open; stopped by anything but a
+  moving grain, it rests. Resting: it slides when the side column is
+  open `k ≈ tan(repose)` px down (steeper than 45°) or a drop lies within
+  `n ≈ 1/tan` px along the row (flatter), `k`/`n` dithered by position
+  (`hash`, a fixed integer mix), sides ordered by `hash(x, y, tick, 1)`,
+  at the slide chance. Open: background on the ground, no live rock part,
+  no living worm's box (`|dx| ≤ 3`, `-4 ≤ dy ≤ 5`). At most
+  `MAX_LOOSE_MOVES` (20 000) moves a tick: the rest's chunks stay awake.
+  `LooseState` (moving grains sorted by cell, the next tick's chunk bits,
+  the parts' boxes) is the state: hashed after the live copies' and the
+  kinds with the material in `checksum` only in a world with loose dirt
+  (`a_world_without_live_copies_hashes_as_before` still pins the rest),
+  carried by `WorldState::loose` (kinds and state; `StateError::Loose`
+  for one that does not fit) and by snapshots. Its scratch (an
+  open-addressed map of the moving grains' speeds) clones empty, so a
+  cloned loose world's first step allocates. `World::loose_moves()` is
+  the tick's moves (`(from, to)` cells, output for the colour map),
+  `loose_state_len()` the moving grains. Tests: `loose_tests.rs`
+  (the fall, a column as one body, a dug hole filling, piles at 25°, 45°
+  and 65° within 8° (measured 23.5°, 41.5°, 63.4°), a worm and a live
+  part holding grains up, frozen, the cap, the edges, waking, two worlds,
+  restores with and without rollback, a state transfer, a dug grain).
 - **Checksum** (`checksum.rs`): FNV-1a 64 over all mutable state, through an
   exhaustive destructuring of each type; a new field must be hashed there
   (types with private fields hash themselves in their module, the mode

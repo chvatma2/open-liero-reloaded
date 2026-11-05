@@ -95,6 +95,9 @@ pub struct WorldState {
     /// The live copies' part, in a world with them (issue #86): the
     /// layout's last field.
     live: Option<LiveWire>,
+    /// The loose dirt, in a world with it (the loose dirt design): each
+    /// cell's kind and the step's state.
+    loose: Option<(Vec<u8>, crate::LooseState)>,
 }
 
 /// Why a [`WorldState`] was refused: it did not decode, or which part of it
@@ -132,6 +135,9 @@ pub enum StateError {
     /// another copy or value count than its setup, a state out of range,
     /// or a value outside its limits.
     Live,
+    /// Loose dirt where the receiver has none or the reverse, a kind off
+    /// dirt or past the materials, or a step state that does not fit.
+    Loose,
 }
 
 impl fmt::Display for StateError {
@@ -150,6 +156,7 @@ impl fmt::Display for StateError {
             StateError::Rng => write!(f, "a world state with broken generators"),
             StateError::Mode(e) => write!(f, "the game mode refused its state: {e:?}"),
             StateError::Live => write!(f, "a world state with live copies this level cannot have"),
+            StateError::Loose => write!(f, "a world state with loose dirt this level cannot have"),
         }
     }
 }
@@ -233,6 +240,7 @@ impl World {
             spare: _,
             setup_worms,
             live,
+            loose,
         } = self;
         let Draws { rand, mt, ents, events: _, rot_bumped, spawn_work: _, actions: _, hits: _ } = draws;
         let Referee { mode, commands: _, over, over_frame, game_over_sent, gone } = referee;
@@ -261,6 +269,7 @@ impl World {
             game_over_sent: *game_over_sent,
             gone: *gone,
             live: live.as_ref().map(|l| l.wire()),
+            loose: loose.as_ref().map(|l| (terrain.loose_cells().unwrap_or(&[]).to_vec(), l.state.clone())),
         }
     }
 
@@ -299,10 +308,17 @@ impl World {
             game_over_sent,
             gone,
             live,
+            loose,
         } = s;
         if !self.terrain.load_cells(&cells) {
             return Err(StateError::Terrain);
         }
+        // Checked by `validate`: the kinds fit the cells just loaded.
+        if let (Some(l), Some((kinds, state))) = (&mut self.loose, loose) {
+            self.terrain.load_loose(Some(&kinds));
+            l.state = state;
+        }
+        self.terrain.take_touched().for_each(drop);
         // From here on nothing fails; every buffer keeps its capacity.
         self.spare = Spare::new(MAX_WORMS - worms.len());
         self.worms.clear();
@@ -337,6 +353,12 @@ impl World {
 
         let t = &self.terrain;
         check(s.width == t.width() && s.height == t.height() && t.can_load(&s.cells), StateError::Terrain)?;
+        let loose_ok = match (&self.loose, &s.loose) {
+            (None, None) => true,
+            (Some(l), Some((kinds, state))) => l.wire_fits(&s.cells, kinds, state),
+            _ => false,
+        };
+        check(loose_ok, StateError::Loose)?;
 
         let n = s.worms.len();
         check(

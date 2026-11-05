@@ -22,6 +22,9 @@ pub struct Assets {
     /// The level's scripts (issue #88: `olr_script`'s runtime, compiled
     /// from the same played form), if it has any.
     pub director: Option<Box<dyn Director>>,
+    /// The level's loose materials (the loose dirt design), exactly when
+    /// `terrain` has a loose layer.
+    pub loose: Option<Arc<olr_sim::LooseLevel>>,
 }
 
 /// Makes setup call number `index` on `world`; gives `find_spot`'s position.

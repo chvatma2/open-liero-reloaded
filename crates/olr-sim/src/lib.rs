@@ -31,6 +31,7 @@ mod input;
 mod live;
 mod live_damage;
 mod live_step;
+mod loose;
 mod mod_rt;
 mod mode;
 mod physics;
@@ -69,6 +70,7 @@ pub use live::{
     LiveState, LiveTarget, LiveView, LiveWire, MAX_GROUP_INTENSITY, MAX_MOTION_SPEED, MAX_PART_STEP,
     PUSH_OUT_PX,
 };
+pub use loose::{LooseLevel, LooseState, MAX_LOOSE_MATERIALS, MAX_LOOSE_MOVES};
 pub use mod_rt::{
     MAX_AMOUNT, MAX_DEPTH, MAX_PROJECTILES, SimMod, SimModError, SimProjectile, SimWeapon, SpawnInfo,
     WeaponType,
@@ -77,6 +79,7 @@ pub use mode::{
     COMMAND_CAPACITY, CommandError, EndReason, GameMode, KillCredit, MatchResult, Message, ModeCtx,
     ModeStateError, OracleMode, Score, StampOp, TextId,
 };
+pub use olr_data::level::LooseMaterial;
 pub use projectile::{Projectile, ProjectilePool};
 pub use rope::NinjaRope;
 pub use script::{
