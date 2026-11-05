@@ -176,9 +176,10 @@ pub struct LooseMaterial {
 }
 
 impl LooseMaterial {
-    /// The spike's values, approved by the maintainer (2026-11-05).
+    /// The spike's values, approved by the maintainer (2026-11-05), the fall
+    /// quickened from 200 px/s² and 50 px/s after a playtest (2026-11-06).
     pub const DEFAULT: LooseMaterial =
-        LooseMaterial { repose: 45, gravity: 200, top_speed: 50, slide_speed: 25 };
+        LooseMaterial { repose: 45, gravity: 300, top_speed: 80, slide_speed: 25 };
 }
 
 /// A loaded level.

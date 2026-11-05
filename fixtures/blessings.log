@@ -352,3 +352,6 @@
   fixtures/render/factory-line.png
 2026-11-05 bless-regression: Liero Factory Reloaded: loose mine spoil
   fixtures/matches-live/classic-factory-live-4dm.ron
+2026-11-05 bless-regression: loose dirt falls faster by default: gravity 300 px/s², top speed 80 px/s (were 200 and 50), after the first playtest
+  fixtures/matches-live/classic-factory-live-4dm.ron
+  fixtures/matches-live/classic-loose-test-4chaos.ron

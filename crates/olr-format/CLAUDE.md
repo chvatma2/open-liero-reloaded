@@ -207,8 +207,8 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   `pack check`'s.
 - **Loose dirt** (`loose.rs`, `levels/`; spec
   `docs/superpowers/specs/2026-11-05-loose-dirt-design.md`): `LooseSource
-  { id, name, notes, repose 5-85 default 45, gravity 1-2000 default 200,
-  top_speed 1-500 default 50, slide_speed 0-100 default 25 }` (ids by
+  { id, name, notes, repose 5-85 default 45, gravity 1-2000 default 300,
+  top_speed 1-500 default 80, slide_speed 0-100 default 25 }` (ids by
   `valid_material_id`, unique; the defaults are literals for the docs,
   `the_defaults_are_the_simulations` holds them to
   `olr_data::level::LooseMaterial::DEFAULT`), `check_loose(list, file,

@@ -8151,7 +8151,7 @@ OLX's dirt never moves once drawn.
   `loose` list of up to 16 materials, `loose.png` naming one per pixel).
   Loose grains fall, ride a falling body as one and slide off a pile
   steeper than their material's angle of repose (5-85°, default 45);
-  gravity (default 200), top speed (50) and slide speed (25) are each
+  gravity (default 300), top speed (80) and slide speed (25) are each
   material's, far slower than a dropped worm. Ordinary dirt, rock and
   levels without a `loose` list play exactly as before: their goldens
   and the oracle are unchanged.

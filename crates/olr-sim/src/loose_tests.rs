@@ -102,10 +102,10 @@ fn a_grain_falls_from_rest_and_reaches_its_top_speed() {
     ticks(&mut w, 1);
     assert_eq!(grains(&w), [(50, 10)], "0.02 px fallen after a tick");
     ticks(&mut w, 99);
-    // Gravity 200 px/s² is 5 sub-pixels a tick a tick, the top speed
-    // 50 px/s 128: Σ min(5t, 128) for t in 1..=100 is 11225 sub-pixels.
+    // Gravity 300 px/s² is 8 sub-pixels a tick a tick, the top speed
+    // 80 px/s 205: Σ min(8t, 205) for t in 1..=100 is 17975 sub-pixels.
     let (_, y) = grains(&w)[0];
-    assert!((52..=54).contains(&y), "fell {} px, 11225/256 = 43.8 expected", y - 10);
+    assert!((79..=81).contains(&y), "fell {} px, 17975/256 = 70.2 expected", y - 10);
     ticks(&mut w, 400);
     assert_eq!(grains(&w), [(50, 119)], "landed on the floor");
     ticks(&mut w, 10);
@@ -116,7 +116,9 @@ fn a_grain_falls_from_rest_and_reaches_its_top_speed() {
 #[test]
 fn a_column_falls_as_one() {
     let mut w = world(cave(100, 140, 120, |x, y| x == 50 && (10..20).contains(&y)));
-    for t in 0..200 {
+    // It lands at about tick 138 (100 px: 2600 sub-pixels by tick 25, then
+    // 205 a tick), and then its top slides off.
+    for t in 0..130 {
         ticks(&mut w, 1);
         let ys: Vec<u32> = grains(&w).iter().map(|&(_, y)| y).collect();
         assert_eq!(ys.len(), 10);

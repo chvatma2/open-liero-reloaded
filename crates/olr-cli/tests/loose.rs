@@ -73,15 +73,15 @@ fn loose_add_set_remove_round_trip() {
     let before = ok(&["level", "loose", "list", pack]);
     assert_eq!(
         before,
-        "1: sand \"Sand\" repose 30° gravity 200 top-speed 50 slide-speed 25\n\
-         2: gravel \"Gravel\" repose 45° gravity 200 top-speed 50 slide-speed 25\n"
+        "1: sand \"Sand\" repose 30° gravity 300 top-speed 80 slide-speed 25\n\
+         2: gravel \"Gravel\" repose 45° gravity 300 top-speed 80 slide-speed 25\n"
     );
     let out = ok(&["level", "loose", "add", pack, "--id", "mud", "--name", "Mud", "--repose", "70"]);
     assert!(out.contains("added loose material mud (3)"), "{out}");
     ok(&["level", "loose", "set", pack, "mud", "--name", "Wet mud", "--gravity", "400"]);
     let list = ok(&["level", "loose", "list", pack]);
     assert!(
-        list.ends_with("3: mud \"Wet mud\" repose 70° gravity 400 top-speed 50 slide-speed 25\n"),
+        list.ends_with("3: mud \"Wet mud\" repose 70° gravity 400 top-speed 80 slide-speed 25\n"),
         "{list}"
     );
     checks(pack);

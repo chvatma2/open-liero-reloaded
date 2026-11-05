@@ -648,7 +648,7 @@ fn the_new_factory_bakes_as_after_dark() {
     let loose = |dir: &Path| {
         String::from_utf8(cli(&["level", "loose", "list", dir.to_str().unwrap()]).stdout).unwrap()
     };
-    assert_eq!(loose(&ours), "1: spoil \"Mine spoil\" repose 35° gravity 200 top-speed 50 slide-speed 25\n");
+    assert_eq!(loose(&ours), "1: spoil \"Mine spoil\" repose 35° gravity 300 top-speed 80 slide-speed 25\n");
     assert_eq!(loose(&theirs), "");
     for file in ["material.png", "front.png", "back.png"] {
         let decode =

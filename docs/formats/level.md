@@ -302,8 +302,8 @@ A loose material: one of `level.ron`'s or `asset.ron`'s `loose`.
 | `name` | string | required | Shown in the editors, 1 to 64 characters. |
 | `notes` | string | `""` | Free text for authors; ignored by the game. |
 | `repose` | integer | `45` | The angle of repose, degrees, 5 (it spreads nearly flat) to 85 (it stands in near columns): a pile's sides settle at it. Default 45. |
-| `gravity` | integer | `200` | How fast a falling grain gathers speed, pixels a second squared, 1 to 2000. Default 200. |
-| `top_speed` | integer | `50` | A falling grain's top speed, pixels a second, 1 to 500. Default 50. |
+| `gravity` | integer | `300` | How fast a falling grain gathers speed, pixels a second squared, 1 to 2000. Default 300. |
+| `top_speed` | integer | `80` | A falling grain's top speed, pixels a second, 1 to 500. Default 80. |
 | `slide_speed` | integer | `25` | How fast a grain slides down a slope steeper than its repose, pixels a second, 0 (it never slides) to 100. Default 25. |
 
 <a id="livecopyfile"></a>

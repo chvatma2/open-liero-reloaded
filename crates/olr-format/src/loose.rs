@@ -32,13 +32,13 @@ fn is_repose(v: &u8) -> bool {
     *v == repose()
 }
 fn gravity() -> u16 {
-    200
+    300
 }
 fn is_gravity(v: &u16) -> bool {
     *v == gravity()
 }
 fn top_speed() -> u16 {
-    50
+    80
 }
 fn is_top_speed(v: &u16) -> bool {
     *v == top_speed()
@@ -68,10 +68,10 @@ pub struct LooseSource {
     #[serde(default = "repose", skip_serializing_if = "is_repose")]
     pub repose: u8,
     /// How fast a falling grain gathers speed, pixels a second squared, 1
-    /// to 2000. Default 200.
+    /// to 2000. Default 300.
     #[serde(default = "gravity", skip_serializing_if = "is_gravity")]
     pub gravity: u16,
-    /// A falling grain's top speed, pixels a second, 1 to 500. Default 50.
+    /// A falling grain's top speed, pixels a second, 1 to 500. Default 80.
     #[serde(default = "top_speed", skip_serializing_if = "is_top_speed")]
     pub top_speed: u16,
     /// How fast a grain slides down a slope steeper than its repose,
@@ -164,7 +164,7 @@ mod tests {
     fn the_defaults_are_the_simulations() {
         let m = LooseSource::new("sand", "Sand").material();
         assert_eq!(m, LooseMaterial::DEFAULT);
-        assert_eq!((repose(), gravity(), top_speed(), slide_speed()), (45, 200, 50, 25));
+        assert_eq!((repose(), gravity(), top_speed(), slide_speed()), (45, 300, 80, 25));
         let read: LooseSource = crate::ron_io::from_canonical("t", "(id: \"sand\", name: \"Sand\")").unwrap();
         assert_eq!(read.material(), LooseMaterial::DEFAULT);
     }
