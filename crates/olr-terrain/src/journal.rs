@@ -5,8 +5,11 @@
 //! and `place_green_dirt` first records the old bytes of the clipped
 //! rectangle it may change; `undo_to` puts them back newest first, so a
 //! restore costs what changed since the mark, not the map's size. The cell
-//! hash is the wrapping sum of `mix((index << 8) | material)` over all
-//! cells: order-independent, so one changed cell updates it in O(1).
+//! hash is the wrapping sum of `mix((index << 8) | value)` over all
+//! cells, a cell's value its material with its loose kind (the loose dirt
+//! design) above it, `material | kind << 2` (just the material without
+//! loose dirt): order-independent, so one changed cell updates it in O(1).
+//! A recorded byte is that value, so undo puts back the kinds too.
 
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
@@ -147,10 +150,13 @@ impl Terrain {
                 for col in (0..w).rev() {
                     let old = j.bytes.pop_back().expect("an edit's bytes are recorded with it");
                     let i = (e.y0 as usize + row) * width + e.x0 as usize + col;
-                    let cur = self.cells[i];
+                    let cur = self.cells[i] | self.loose.as_ref().map_or(0, |k| k[i] << 2);
                     if cur != old {
                         j.hash = j.hash.wrapping_sub(term(i, cur)).wrapping_add(term(i, old));
-                        self.cells[i] = old;
+                        self.cells[i] = old & 3;
+                        if let Some(k) = self.loose.as_mut() {
+                            k[i] = old >> 2;
+                        }
                     }
                 }
             }
@@ -197,20 +203,55 @@ impl Terrain {
     }
 
     fn scratch_hash(&self) -> u64 {
-        self.cells.iter().enumerate().fold(0u64, |h, (i, &c)| h.wrapping_add(term(i, c)))
+        (0..self.cells.len()).fold(0u64, |h, i| h.wrapping_add(term(i, self.value(i))))
     }
 
-    /// Records the old cells of `[x0, x1) x [y0, y1)` before a write (no-op
-    /// without a journal or for an empty rectangle).
+    /// The tracked hash recomputed (a loose layer given).
+    pub(crate) fn rehash(&mut self) {
+        let hash = self.scratch_hash();
+        if let Some(j) = self.journal.as_mut() {
+            j.hash = hash;
+        }
+    }
+
+    /// Cell `i`'s loose kind (0 without a layer).
+    #[inline]
+    pub(crate) fn kind(&self, i: usize) -> u8 {
+        self.loose.as_ref().map_or(0, |k| k[i])
+    }
+
+    /// Cell `i`'s journaled value: its material, its loose kind above.
+    #[inline]
+    fn value(&self, i: usize) -> u8 {
+        self.cells[i] | self.kind(i) << 2
+    }
+
+    /// Records the old cells of `[x0, x1) x [y0, y1)` before a carve or
+    /// dirt edit (no-op without a journal or for an empty rectangle); with
+    /// a loose layer, notes the rectangle ([`Terrain::take_touched`]).
     pub(crate) fn record(&mut self, x0: u32, y0: u32, x1: u32, y1: u32) {
+        if self.loose.is_some() && x0 < x1 && y0 < y1 {
+            let a = Area { x0: x0 as i32, y0: y0 as i32, x1: x1 as i32, y1: y1 as i32 };
+            note_restored(&mut self.touched, a);
+        }
+        self.record_quiet(x0, y0, x1, y1);
+    }
+
+    /// [`Terrain::record`] without noting the rectangle (a grain's move).
+    pub(crate) fn record_quiet(&mut self, x0: u32, y0: u32, x1: u32, y1: u32) {
         let width = self.width as usize;
+        let (cells, loose) = (&self.cells, self.loose.as_deref());
         let Some(j) = self.journal.as_mut() else { return };
         if x0 >= x1 || y0 >= y1 {
             return;
         }
         for y in y0..y1 {
             let row = y as usize * width;
-            j.bytes.extend(&self.cells[row + x0 as usize..row + x1 as usize]);
+            let span = row + x0 as usize..row + x1 as usize;
+            match loose {
+                None => j.bytes.extend(&cells[span]),
+                Some(k) => j.bytes.extend(span.map(|i| cells[i] | k[i] << 2)),
+            }
         }
         let serial = j.next_serial;
         j.next_serial += 1;
@@ -229,15 +270,29 @@ impl Terrain {
         j.next_serial += 1;
     }
 
-    /// Writes one cell, keeping the tracked hash.
+    /// Writes one cell, keeping the tracked hash; a cell that changes
+    /// loses its loose kind (dug or placed dirt is never loose).
     #[inline]
     pub(crate) fn set_cell(&mut self, i: usize, v: u8) {
-        let old = self.cells[i];
+        if self.cells[i] != v {
+            self.set_value(i, v);
+        }
+    }
+
+    /// Writes cell `i`'s value (its material, its loose kind above it; a
+    /// kind without a layer is dropped), keeping the tracked hash.
+    #[inline]
+    pub(crate) fn set_value(&mut self, i: usize, v: u8) {
+        let v = if self.loose.is_some() { v } else { v & 3 };
+        let old = self.value(i);
         if old != v {
             if let Some(j) = self.journal.as_mut() {
                 j.hash = j.hash.wrapping_sub(term(i, old)).wrapping_add(term(i, v));
             }
-            self.cells[i] = v;
+            self.cells[i] = v & 3;
+            if let Some(k) = self.loose.as_mut() {
+                k[i] = v >> 2;
+            }
         }
     }
 }

@@ -45,12 +45,22 @@ pub struct Terrain {
     journal: Option<Box<journal::Journal>>,
     /// Areas put back or replaced since [`Terrain::take_restored_areas`].
     restored: Vec<Area>,
+    /// Loose dirt (the loose dirt design): a kind per cell, 0 not loose,
+    /// else 1 + the level's loose material; never on a cell that is not
+    /// dirt. `None` for a level without loose dirt.
+    loose: Option<Box<[u8]>>,
+    /// The rectangles of carves and dirt edits since
+    /// [`Terrain::take_touched`], kept only with a loose layer.
+    touched: Vec<Area>,
 }
 
 /// Equality compares the terrain only: the journal is bookkeeping, not terrain.
 impl PartialEq for Terrain {
     fn eq(&self, other: &Self) -> bool {
-        self.width == other.width && self.height == other.height && self.cells == other.cells
+        self.width == other.width
+            && self.height == other.height
+            && self.cells == other.cells
+            && self.loose == other.loose
     }
 }
 
@@ -68,7 +78,96 @@ impl Terrain {
             cells: grid.cells().iter().map(|m| *m as u8).collect(),
             journal: None,
             restored: Vec::new(),
+            loose: None,
+            touched: Vec::new(),
         }
+    }
+
+    /// This terrain with a loose layer (the loose dirt design): `kinds`
+    /// one per cell, row-major, 0 not loose; a kind on a cell that is not
+    /// dirt is dropped. `None` when `kinds` is not one a cell.
+    pub fn with_loose(mut self, kinds: Vec<u8>) -> Option<Terrain> {
+        if kinds.len() != self.cells.len() {
+            return None;
+        }
+        let mut kinds = kinds.into_boxed_slice();
+        for (k, &c) in kinds.iter_mut().zip(&self.cells) {
+            if c != Material::Dirt as u8 {
+                *k = 0;
+            }
+        }
+        self.loose = Some(kinds);
+        self.rehash();
+        Some(self)
+    }
+
+    /// Whether the terrain has a loose layer (even one with no loose cell).
+    pub fn has_loose(&self) -> bool {
+        self.loose.is_some()
+    }
+
+    /// The loose kind at `(x, y)`: 0 when it is not loose or outside.
+    pub fn loose(&self, x: i64, y: i64) -> u8 {
+        if x < 0 || y < 0 || x >= self.width as i64 || y >= self.height as i64 {
+            return 0;
+        }
+        self.kind(y as usize * self.width as usize + x as usize)
+    }
+
+    /// The loose layer, row-major, when the terrain has one.
+    pub fn loose_cells(&self) -> Option<&[u8]> {
+        self.loose.as_deref()
+    }
+
+    /// Replaces the loose kinds with `kinds` (a received state's, after
+    /// [`Terrain::load_cells`]): all or nothing. Refused (false, nothing
+    /// changed) for a terrain without a layer given `Some`, a wrong length
+    /// or a kind on a cell that is not dirt; `None` clears the layer's
+    /// kinds. Not undoable, as `load_cells`.
+    pub fn load_loose(&mut self, kinds: Option<&[u8]>) -> bool {
+        let fits = |k: &[u8]| {
+            k.len() == self.cells.len()
+                && k.iter().zip(&self.cells).all(|(&k, &c)| k == 0 || c == Material::Dirt as u8)
+        };
+        match (kinds, self.loose.is_some()) {
+            (Some(k), true) if fits(k) => {
+                for (i, &v) in k.iter().enumerate() {
+                    self.set_value(i, self.cells[i] | v << 2);
+                }
+            }
+            (None, _) => {
+                for i in 0..self.cells.len() {
+                    self.set_value(i, self.cells[i]);
+                }
+            }
+            _ => return false,
+        }
+        self.seal_journal();
+        true
+    }
+
+    /// A grain of loose dirt moves (cell indices): `to` becomes dirt of
+    /// `from`'s kind and `from` background, both through the journal.
+    /// Out-of-range indices change nothing.
+    pub fn move_grain(&mut self, from: u32, to: u32) {
+        let n = self.cells.len();
+        let (f, t) = (from as usize, to as usize);
+        if f >= n || t >= n || f == t {
+            return;
+        }
+        let w = self.width;
+        self.record_quiet(from % w, from / w, from % w + 1, from / w + 1);
+        self.record_quiet(to % w, to / w, to % w + 1, to / w + 1);
+        let kind = self.kind(f);
+        self.set_value(t, Material::Dirt as u8 | kind << 2);
+        self.set_value(f, Material::Background as u8);
+    }
+
+    /// The rectangles carves and dirt edits wrote since the last call (a
+    /// terrain with a loose layer only: loose dirt wakes there), at most
+    /// [`Terrain::MAX_RESTORED`], merged into their bounding box beyond.
+    pub fn take_touched(&mut self) -> impl Iterator<Item = Area> + '_ {
+        self.touched.drain(..)
     }
 
     pub fn width(&self) -> u32 {
