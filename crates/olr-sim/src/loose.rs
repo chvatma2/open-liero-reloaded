@@ -254,6 +254,12 @@ pub(crate) struct LooseWorld {
     scratch: Scratch,
     cols: u32,
     rows: u32,
+    /// A bit per chunk that may hold a loose pixel: every chunk holding one
+    /// is set (grains enter a chunk only by a move, which sets it; a
+    /// restore brings the snapshot's). Not state: the step scans no other.
+    holds: Vec<u64>,
+    /// The chunk rows scanned grain by grain in the last step (tests).
+    pub(crate) scanned: u32,
 }
 
 /// Equal worlds have equal states; the moves and buffers are output and
@@ -312,14 +318,29 @@ impl LooseWorld {
             scratch: Scratch::default(),
             cols,
             rows,
+            holds: Vec::new(),
+            scanned: 0,
         };
-        if let Some(kinds) = terrain.loose_cells() {
-            for (i, _) in kinds.iter().enumerate().filter(|(_, k)| **k != 0) {
-                let (x, y) = (i as u32 % w, i as u32 / w);
-                l.wake(i64::from(x), i64::from(y), i64::from(x), i64::from(y));
-            }
-        }
+        l.find_holds(terrain);
+        l.state.next.clone_from(&l.holds);
         l
+    }
+
+    /// `state` on `terrain`, whose loose layer was just loaded with it (a
+    /// state transfer).
+    pub(crate) fn load(&mut self, state: LooseState, terrain: &Terrain) {
+        self.state = state;
+        self.find_holds(terrain);
+    }
+
+    /// Sets `holds` from the terrain's loose layer.
+    fn find_holds(&mut self, terrain: &Terrain) {
+        let w = terrain.width();
+        self.holds = vec![0; bits(self.cols * self.rows)];
+        for (i, _) in terrain.loose_cells().unwrap_or(&[]).iter().enumerate().filter(|(_, k)| **k != 0) {
+            let (x, y) = (i as u32 % w, i as u32 / w);
+            set_bit(&mut self.holds, (y >> CHUNK_SHIFT) * self.cols + (x >> CHUNK_SHIFT));
+        }
     }
 
     /// Whether every kind of `terrain` names one of the level's materials.
@@ -382,7 +403,8 @@ impl LooseWorld {
         if frozen {
             return;
         }
-        let LooseWorld { level, state, moves, scratch, cols, rows } = self;
+        let LooseWorld { level, state, moves, scratch, cols, rows, holds, scanned } = self;
+        *scanned = 0;
         let (cols, rows) = (*cols, *rows);
         scratch.now.clear();
         scratch.now.extend_from_slice(&state.next);
@@ -396,6 +418,12 @@ impl LooseWorld {
         let mut capped = false;
         for y in (0..h).rev() {
             let cy = y >> CHUNK_SHIFT;
+            // A row of chunks asleep, or awake without loose dirt, costs
+            // one look at their bits (once capped, every awake one counts).
+            let worth = if capped { &scratch.now } else { &*holds };
+            if !any_in(&scratch.now, worth, cy * cols, (cy + 1) * cols) {
+                continue;
+            }
             let flip = (tick.wrapping_add(y)) & 1 == 1;
             for k in 0..cols {
                 let cx = if flip { cols - 1 - k } else { k };
@@ -407,6 +435,11 @@ impl LooseWorld {
                     set_bit(&mut state.next, chunk);
                     continue;
                 }
+                // Scanning a chunk without loose dirt would do nothing.
+                if !bit(holds, chunk) {
+                    continue;
+                }
+                *scanned += 1;
                 for j in 0..1u32 << CHUNK_SHIFT {
                     let x = (cx << CHUNK_SHIFT) + if flip { (1 << CHUNK_SHIFT) - 1 - j } else { j };
                     if x >= w {
@@ -437,6 +470,7 @@ impl LooseWorld {
                     let dest = ty * w + tx;
                     let moved = scratch.get(cell);
                     terrain.move_grain(cell, dest);
+                    set_bit(holds, (ty >> CHUNK_SHIFT) * cols + (tx >> CHUNK_SHIFT));
                     scratch.set(cell, 0, 0, false);
                     scratch.set(dest, moved.vel, moved.frac, true);
                     moves.push((cell, dest));
@@ -578,6 +612,21 @@ fn bits(n: u32) -> usize {
 
 fn bit(b: &[u64], i: u32) -> bool {
     b[(i >> 6) as usize] >> (i & 63) & 1 == 1
+}
+
+/// Whether any of bits `from..to` is set in both `a` and `b`.
+fn any_in(a: &[u64], b: &[u64], from: u32, to: u32) -> bool {
+    let (mut i, end) = (from, to);
+    while i < end {
+        let k = (i >> 6) as usize;
+        let w = (a[k] & b[k]) >> (i & 63);
+        let n = (64 - (i & 63)).min(end - i);
+        if w & (u64::MAX >> (64 - n)) != 0 {
+            return true;
+        }
+        i += n;
+    }
+    false
 }
 
 fn set_bit(b: &mut [u64], i: u32) {

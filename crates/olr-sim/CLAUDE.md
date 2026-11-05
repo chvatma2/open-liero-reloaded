@@ -436,6 +436,15 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   at the slide chance. Open: background on the ground, no live rock part,
   no living worm's box (`|dx| ≤ 3`, `-4 ≤ dy ≤ 5`). At most
   `MAX_LOOSE_MOVES` (20 000) moves a tick: the rest's chunks stay awake.
+  Settled grains cost nothing (the spec's goal 6; on Liero Factory
+  Reloaded the spoil cost 30 µs a tick before): a row of chunks none of
+  them both awake and in `holds` (not state: a bit per chunk that may
+  hold a loose pixel, set from the layer at the start and on a state
+  load, `LooseWorld::load`, and by every move; a snapshot brings its
+  own) costs one look at their bits (`any_in`), and an awake chunk
+  outside `holds` is not scanned, so the worms' and parts' wakes
+  change only the hashed bits (`chunks_without_loose_dirt_are_not_scanned`,
+  `LooseWorld::scanned`).
   `LooseState` (moving grains sorted by cell, the next tick's chunk bits,
   the parts' boxes) is the state: hashed after the live copies' and the
   kinds with the material in `checksum` only in a world with loose dirt

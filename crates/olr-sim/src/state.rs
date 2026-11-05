@@ -316,7 +316,7 @@ impl World {
         // Checked by `validate`: the kinds fit the cells just loaded.
         if let (Some(l), Some((kinds, state))) = (&mut self.loose, loose) {
             self.terrain.load_loose(Some(&kinds));
-            l.state = state;
+            l.load(state, &self.terrain);
         }
         self.terrain.take_touched().for_each(drop);
         // From here on nothing fails; every buffer keeps its capacity.

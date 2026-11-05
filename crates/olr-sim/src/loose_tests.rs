@@ -395,3 +395,45 @@ fn a_grain_dug_while_falling_is_gone() {
         "the placed dirt stays"
     );
 }
+
+/// `any_in` (a sleeping chunk row's one look) reads exactly its range of
+/// both sets.
+#[test]
+fn any_in_reads_exactly_its_range() {
+    for set in [0u32, 1, 62, 63, 64, 65, 127, 128, 150, 191] {
+        let mut b = vec![0u64; 3];
+        set_bit(&mut b, set);
+        for from in 0..192 {
+            for to in from..=192 {
+                assert_eq!(any_in(&b, &b, from, to), (from..to).contains(&set), "bit {set}, {from}..{to}");
+                assert!(!any_in(&b, &[0; 3], from, to), "and nothing");
+            }
+        }
+    }
+    assert!(!any_in(&[0u64; 3], &[u64::MAX; 3], 0, 192));
+    assert!(any_in(&[0b110], &[0b011], 0, 64), "both at bit 1");
+    assert!(!any_in(&[0b100], &[0b011], 0, 64));
+}
+
+/// Settled grains cost nothing: a worm far from them keeps its chunks
+/// awake (their bits are state), but a tick scans no chunk without loose
+/// dirt.
+#[test]
+fn chunks_without_loose_dirt_are_not_scanned() {
+    let mut w = world(cave(200, 140, 120, |x, y| (10..20).contains(&x) && (110..120).contains(&y)));
+    w.spawn_worm(150, 110);
+    let mut still = 0;
+    for _ in 0..3000 {
+        ticks(&mut w, 1);
+        still = if w.loose_moves().is_empty() { still + 1 } else { 0 };
+        if still == 50 {
+            break;
+        }
+    }
+    assert_eq!(still, 50, "the pile settled");
+    ticks(&mut w, 1);
+    let l = w.loose.as_ref().unwrap();
+    let chunk = (110 >> CHUNK_SHIFT) * l.cols + (150 >> CHUNK_SHIFT);
+    assert!(bit(&l.scratch.now, chunk), "the worm's chunk was awake");
+    assert_eq!(l.scanned, 0, "chunks scanned");
+}
