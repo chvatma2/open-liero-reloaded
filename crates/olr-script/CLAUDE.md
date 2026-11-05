@@ -119,7 +119,9 @@ checks (`ScriptNames`, `check_level`), `move_to`, `stop`, `moving`,
   same tick) and issue #90's `blocked(name)` (this copy's value `name`
   was stopped by rock, another part or the level's edge, at the last
   place reached: `EventKind::LiveBlocked`, in the same step, so the same
-  tick), and issue #94's `hit(amount)` (an explosion took this copy's
+  tick), 2026-11-05's `crushed(worm)` (a rock part of this copy wedged
+  worm `worm` and dealt it a crushing chunk: `EventKind::Crushed`, in the
+  same step, so the same tick), and issue #94's `hit(amount)` (an explosion took this copy's
   health: `amount` the integer it lost, truncated toward zero, negative
   for a heal) and `wrecked()` (it reached 0), both from
   `EventKind::LiveDamaged`, emitted in the physics, so the same tick:
@@ -178,7 +180,10 @@ checks (`ScriptNames`, `check_level`), `move_to`, `stop`, `moving`,
   (`olr_sim::ScriptRng`, in the world). The match: `this.time()` (ms since
   it started), `this.worm_count()`, `this.worm_alive(i)`,
   `this.worm_x(i)`, `this.worm_y(i)` (whole pixels, truncated),
-  `this.game_over()`. Where a copy is (2026-11-04): `this.centre_x()`,
+  `this.game_over()`; `this.hurt(worm, damage)` (2026-11-05: `damage` 1
+  to `MAX_HURT` 1000, an unknown worm or another amount a script error;
+  `LiveCommand::Hurt`, dealt by nobody, owner -1, as a crushing chunk,
+  once the phase's runs are over; `tests/hurt.rs`). Where a copy is (2026-11-04): `this.centre_x()`,
   `this.centre_y()` and their handle forms, its rectangle's centre moved
   by its `X`/`Y` (whole pixels). The level's glow groups (the factory's
   plant works): `this.group_intensity(id, v)` (0-1000),

@@ -388,7 +388,12 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   `EventKind::LiveSound { copy, sound }`, a cosmetic event for the quota
   that changes no state: presentation plays it); the plant works' (2026-11-04)
   `Group { group, intensity, colour }`, a level glow group's values
-  (`LiveWorld::set_group`: clamped, negative -1 the group's own), `fail(i)` (`EventKind::ScriptError { instance }`,
+  (`LiveWorld::set_group`: clamped, negative -1 the group's own);
+  2026-11-05's `Hurt { worm, damage }` (a worm id, 1 to `MAX_HURT`),
+  queued in the phase's scratch and dealt by `injure_worm` with owner -1
+  in order once the director's run is over (`script_phase`; its events
+  reach handlers next tick), and `ScriptEvent::Crushed { worm, copy }`
+  from `EventKind::Crushed`; `fail(i)` (`EventKind::ScriptError { instance }`,
   switched off at the bound) and `charge(ops)`. `World::script_peak()`
   (`ScriptPeak { run, tick }`, the most operations one run and one tick
   used since the world was made) is not state (`NotState`, like

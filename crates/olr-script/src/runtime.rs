@@ -50,9 +50,10 @@ pub(crate) enum Handler {
     Blocked,
     Hit,
     Wrecked,
+    Crushed,
 }
 
-pub(crate) const HANDLERS: [(Handler, &str, usize); 11] = [
+pub(crate) const HANDLERS: [(Handler, &str, usize); 12] = [
     (Handler::Start, "start", 0),
     (Handler::Tick, "tick", 0),
     (Handler::Entered, "entered", 1),
@@ -64,6 +65,7 @@ pub(crate) const HANDLERS: [(Handler, &str, usize); 11] = [
     (Handler::Blocked, "blocked", 1),
     (Handler::Hit, "hit", 1),
     (Handler::Wrecked, "wrecked", 0),
+    (Handler::Crushed, "crushed", 1),
 ];
 
 /// One compiled script.
@@ -302,6 +304,10 @@ fn tick(inner: &Inner, ctx: &mut LiveCtx<'_>) {
                 }
                 ScriptEvent::Wrecked { copy } if inst.copy == Some(copy) && c.has(Handler::Wrecked) => {
                     ("wrecked", Vec::new())
+                }
+                // 2026-11-05: a part of this copy wedged a worm.
+                ScriptEvent::Crushed { worm, copy } if inst.copy == Some(copy) && c.has(Handler::Crushed) => {
+                    ("crushed", alloc::vec![int(worm.into())])
                 }
                 ScriptEvent::Spawned { worm } if c.has(Handler::Spawned) => {
                     ("spawned", alloc::vec![int(worm.into())])

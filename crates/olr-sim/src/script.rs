@@ -29,6 +29,7 @@ use serde::{Deserialize, Serialize};
 use crate::World;
 use crate::buf::Buf;
 use crate::checksum::Fnv;
+use crate::damage::injure_worm;
 use crate::events::{EventKind, TickEvents};
 use crate::live::{LiveLevel, LiveMotion, LiveParts, LiveView, LiveWorld};
 use crate::worm::Worm;
@@ -278,7 +279,15 @@ pub enum LiveCommand {
     /// its own) and `colour` (`0xRRGGBB`; below 0 its own), `None` keeping
     /// that field (2026-11-04): world state presentation reads.
     Group { group: u16, intensity: Option<i64>, colour: Option<i64> },
+    /// Worm `worm` (its id, as events name it) takes `damage` (at least
+    /// 1, at most [`MAX_HURT`]), dealt by nobody as a crushing chunk is,
+    /// once the phase's runs are over (2026-11-05: the factory's press
+    /// kills what it wedges).
+    Hurt { worm: i32, damage: i64 },
 }
+
+/// The most damage one [`LiveCommand::Hurt`] deals: ten full worms.
+pub const MAX_HURT: i64 = 1000;
 
 /// An event a script's handlers see ([`LiveCtx::events`]): positions in
 /// whole world pixels and amounts truncated toward zero.
@@ -328,6 +337,12 @@ pub enum ScriptEvent {
     Wrecked {
         copy: u16,
     },
+    /// A part of copy `copy` wedged worm `worm` and took a crushing
+    /// chunk (issue #90's [`EventKind::Crushed`], 2026-11-05).
+    Crushed {
+        worm: i32,
+        copy: u16,
+    },
 }
 
 impl ScriptEvent {
@@ -351,6 +366,7 @@ impl ScriptEvent {
             EventKind::LiveState { copy, state } => ScriptEvent::Entered { copy, state },
             EventKind::LiveArrived { copy, prop } => ScriptEvent::Arrived { copy, prop },
             EventKind::LiveBlocked { copy, prop } => ScriptEvent::Blocked { copy, prop },
+            EventKind::Crushed { worm, copy } => ScriptEvent::Crushed { worm, copy },
             EventKind::Spawned { worm } => ScriptEvent::Spawned { worm },
             EventKind::Kill { victim, killer } => ScriptEvent::Killed { victim, killer },
             EventKind::Explosion { pos, damage, .. } => {
@@ -516,6 +532,9 @@ struct Phase {
     entered: Vec<(u16, u16)>,
     reads: LiveReads,
     peak: ScriptPeak,
+    /// The phase's [`LiveCommand::Hurt`]s (worm id, damage), dealt in
+    /// order once its runs are over.
+    hurts: Vec<(i32, f32)>,
 }
 
 /// The scripts' part of [`LiveWorld`] (present when the setup has a
@@ -941,6 +960,13 @@ impl<'a> LiveCtx<'a> {
                 ok
             }
             LiveCommand::Group { group, intensity, colour } => self.live.set_group(group, intensity, colour),
+            LiveCommand::Hurt { worm, damage } => {
+                let ok = self.worms.iter().any(|w| w.id == worm) && (1..=MAX_HURT).contains(&damage);
+                if ok {
+                    self.script_mut().phase.0.hurts.push((worm, damage as f32));
+                }
+                ok
+            }
         };
         if ok {
             self.commands += 1;
@@ -1011,8 +1037,19 @@ impl World {
             LiveCtx::new(live, &mut self.draws.events, &self.worms, (time_ms, self.server_frame, over));
         director.run(&mut ctx);
         ctx.finish();
+        let mut hurts = Vec::new();
         if let Some(s) = &mut live.script {
             s.director.0 = Some(director);
+            hurts = core::mem::take(&mut s.phase.0.hurts);
+        }
+        for &(id, damage) in &hurts {
+            injure_worm(&mut self.harm(), id, damage, -1);
+        }
+        if !hurts.is_empty() {
+            hurts.clear();
+            if let Some(s) = self.live.as_mut().and_then(|l| l.script.as_mut()) {
+                s.phase.0.hurts = hurts;
+            }
         }
     }
 

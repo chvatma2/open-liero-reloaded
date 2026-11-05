@@ -16,7 +16,7 @@ use alloc::vec::Vec;
 
 use olr_sim::{
     LIVE_SUBPIXELS, LiveCommand, LiveCopy, LiveLevel, LiveReads, LiveTarget, LiveTimer, MAX_GROUP_INTENSITY,
-    MAX_LIVE_COMMANDS, MAX_MEMORY_BYTES, MAX_MEMORY_KEYS, MAX_TIMERS, ScriptRng,
+    MAX_HURT, MAX_LIVE_COMMANDS, MAX_MEMORY_BYTES, MAX_MEMORY_KEYS, MAX_TIMERS, ScriptRng,
 };
 use rhai::{Dynamic, Engine, EvalAltResult, INT, ImmutableString, Map, NativeCallContext};
 
@@ -462,6 +462,13 @@ pub(crate) fn register(e: &mut Engine) {
     e.register_fn("worm_alive", |l: &mut Live, i: INT| -> Res<bool> { Ok(l.worm(i)?.0) });
     e.register_fn("worm_x", |l: &mut Live, i: INT| -> Res<INT> { Ok(l.worm(i)?.1) });
     e.register_fn("worm_y", |l: &mut Live, i: INT| -> Res<INT> { Ok(l.worm(i)?.2) });
+    e.register_fn("hurt", |l: &mut Live, worm: INT, damage: INT| -> Res<()> {
+        if !(1..=MAX_HURT).contains(&damage) {
+            return err(format!("hurt takes 1 to {MAX_HURT} damage, not {damage}"));
+        }
+        l.worm(worm)?;
+        l.queue(LiveCommand::Hurt { worm: worm as i32, damage })
+    });
     // Memory.
     e.register_get_set(
         "mem",

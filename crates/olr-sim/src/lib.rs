@@ -80,9 +80,10 @@ pub use mode::{
 pub use projectile::{Projectile, ProjectilePool};
 pub use rope::NinjaRope;
 pub use script::{
-    Director, LiveCommand, LiveCtx, LiveInstance, LiveReads, LiveTimer, MAX_LIVE_COMMANDS, MAX_MEMORY_BYTES,
-    MAX_MEMORY_KEYS, MAX_SCRIPT_ERRORS, MAX_TIMERS, MemValue, MemoryEntries, ScriptEvent, ScriptPeak,
-    ScriptRng, ScriptWire, ScriptWireEdit, live_instances, memory_entries, memory_ok, push_memory,
+    Director, LiveCommand, LiveCtx, LiveInstance, LiveReads, LiveTimer, MAX_HURT, MAX_LIVE_COMMANDS,
+    MAX_MEMORY_BYTES, MAX_MEMORY_KEYS, MAX_SCRIPT_ERRORS, MAX_TIMERS, MemValue, MemoryEntries, ScriptEvent,
+    ScriptPeak, ScriptRng, ScriptWire, ScriptWireEdit, live_instances, memory_entries, memory_ok,
+    push_memory,
 };
 pub use settings::{SettingsError, SimSettings};
 pub use setup::{MAX_SLOTS, MatchSetup, SetupError, WormSetup};
