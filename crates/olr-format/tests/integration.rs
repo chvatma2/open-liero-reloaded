@@ -5,6 +5,7 @@ mod equivalence;
 mod hostile;
 mod levels;
 mod look;
+mod loose;
 mod paths;
 mod roundtrip;
 mod skins;

@@ -198,6 +198,12 @@ pub struct Element {
     /// `back_surface`). Only with back art. Default false.
     #[serde(default, skip_serializing_if = "d::is_false")]
     pub back_surface_map: bool,
+    /// Its dirt pixels are loose dirt (the loose dirt design): the id of
+    /// one of the asset's `loose` materials. Only on a Dirt image or drawn
+    /// layer, or a mixed drawn layer (its dirt pixels); never distant.
+    /// Default none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loose: Option<String>,
 }
 
 impl Element {
@@ -943,6 +949,20 @@ pub fn check_stacked_elements(
                 }
             }
         }
+        if let Some(id) = &e.loose {
+            let dirt = matches!(
+                e.kind,
+                ElementKind::Image { material: ElementMaterial::Dirt, .. }
+                    | ElementKind::Drawn { material: ElementMaterial::Dirt, .. }
+                    | ElementKind::Drawn { mixed: true, .. }
+            );
+            if !dirt || e.distant.is_some() {
+                return Err(bad("loose", "only a dirt layer, or a mixed layer's dirt, can be loose".into()));
+            }
+            if !crate::materials::valid_material_id(id) {
+                return Err(bad("loose", format!("{id:?} is not a loose material id")));
+            }
+        }
         if let Some(g) = &e.glass {
             let background = matches!(
                 e.kind,
@@ -1338,6 +1358,7 @@ mod tests {
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            loose: None,
         };
         CompositionSource {
             composition: Composition {
@@ -1604,6 +1625,37 @@ mod tests {
     }
 
     #[test]
+    fn element_loose_follows_its_rules() {
+        // The loose dirt design: a dirt element's pixels, or a mixed
+        // layer's dirt pixels, may be loose, by an id of a loose material.
+        let mut s = sample();
+        s.composition.elements[2].loose = Some("sand".into());
+        s.composition.elements[3].loose = Some("gravel".into());
+        check_composition(&s, (4, 3), 2).unwrap();
+        let mut fs = MemFs::new();
+        write_composition_files(&mut fs, &s).unwrap();
+        let text = String::from_utf8(fs.read(&VPath::new(COMPOSITION_FILE).unwrap()).unwrap()).unwrap();
+        assert!(text.contains("loose: \"sand\""), "{text}");
+        assert_eq!(read_composition_files(&fs).unwrap().unwrap().composition, s.composition);
+        s.composition.elements[2].loose = Some("Not An Id".into());
+        let e = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
+        assert!(e.contains("elements[2].loose") && e.contains("Not An Id"), "{e}");
+        s.composition.elements[2].loose = None;
+        // Background, a raster and a plain rock layer may not be loose.
+        for i in [0, 1] {
+            s.composition.elements[i].loose = Some("sand".into());
+            let e = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
+            assert!(e.contains(&format!("elements[{i}].loose")) && e.contains("dirt"), "{e}");
+            s.composition.elements[i].loose = None;
+        }
+        if let ElementKind::Drawn { mixed, .. } = &mut s.composition.elements[3].kind {
+            *mixed = false;
+        }
+        let e = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
+        assert!(e.contains("elements[3].loose") && e.contains("dirt"), "{e}");
+    }
+
+    #[test]
     fn distant_elements_follow_their_rules() {
         let mut s = sample();
         // The sky (an image of background) below everything else but the
@@ -1715,6 +1767,7 @@ mod tests {
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            loose: None,
         };
         // A mask's pixels count too: at the limit, a 10 × 10 mask is over.
         let mut at_limit = sample();

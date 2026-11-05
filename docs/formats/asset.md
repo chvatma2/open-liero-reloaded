@@ -19,6 +19,7 @@ An asset (issue #9): a ready-made piece of a level saved once and dropped into a
 | `folders` | list of [Folder](#folder) | `[]` | Its layer folders (issue #59), with a level composition's folder rules (issue #71). Default none. |
 | `glow_groups` | list of [GlowGroupSource](#glowgroupsource) | `[]` | The glow groups its elements name, each named by one at least. Placed in a level, a group the level has (by id) is joined, its own settings kept; a missing one is added with these. A copy's values that change a group's settings (an exposed glow colour, say) bake it as a group of its own, its id numbered (`lamps-2`, …). Default none. |
 | `materials` | list of [MaterialSource](#materialsource) | `[]` | The surface materials its elements name (issue #38), at most 255, ids unique, each named by one at least (a `surface`, a `back_surface` or a painted map's value: `v` is `materials[v - 1]` here, as in a level). Placed in a level, a material the level has (by id) is joined, its own settings kept, and the painted maps follow its index there; a missing one is added with these. Default none. |
+| `loose` | list of [LooseSource](#loosesource) | `[]` | The loose materials its elements name (the loose dirt design), at most `MAX_LOOSE` (16), ids unique, each named by one at least. Placed in a level, a loose material the level has (by id) is joined, its own settings kept; a missing one is added with these. Default none. |
 | `states` | list of [StateSource](#statesource) | `[(name: "Normal")]` | Its named looks (issue #71), 1 to `MAX_STATES` (32), one of them the starting state. Default one state, `Normal`, owning and setting nothing; written `[(name: "Normal")]`. |
 | `start` | string (optional) | none | The starting state's name. Default none: the first state (left out when it names the first). |
 | `exposed` | list of [ExposedSource](#exposedsource) | `[]` | The settable values given a name scripts use (issue #71), at most `MAX_EXPOSED` (64). The asset's states need no entry: every asset can be put in any of its states by name. Default none. |
@@ -82,6 +83,7 @@ One element of a composition.
 | `back_surface` | string (optional) | none | Its back art's surface material: the id of one of the look's materials, landing in `look/surface-back.png`. Only with back art (a drawn layer with `back`, a raster). Default none. |
 | `surface_map` | boolean | `false` | A painted map of its pixels' surface materials (`editor/surface/<id>.png`, 8-bit grey at world resolution: its box, a raster's the level's size): `v` is the look's `materials[v - 1]`, 0 its `surface`. Not on a distant layer. Default false. |
 | `back_surface_map` | boolean | `false` | A painted map of its back art's surface materials (`editor/surface/<id>.back.png`, as `surface_map`'s; 0 its `back_surface`). Only with back art. Default false. |
+| `loose` | string (optional) | none | Its dirt pixels are loose dirt (the loose dirt design): the id of one of the asset's `loose` materials. Only on a Dirt image or drawn layer, or a mixed drawn layer (its dirt pixels); never distant. Default none. |
 
 <a id="folder"></a>
 
@@ -126,6 +128,22 @@ A surface material: a file `<id>.ron` of a material library, or one of a level's
 | `notes` | string | `""` | Free text for authors; ignored by the game. |
 | `light_soak` | integer (optional) | none | How deep light soaks into its rock and dirt from the air beside them, world pixels, 0 to 12 (issue #57): thin for concrete and stone, deeper for furniture. Default none: the level's `look.light_soak`. |
 | `heat` | [HeatSource](#heatsource) (optional) | none | How it takes heat, spreads it, loses it and shows it. Default none: it never heats. |
+
+<a id="loosesource"></a>
+
+## LooseSource
+
+A loose material: one of `level.ron`'s or `asset.ron`'s `loose`.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `id` | string | required | 1 to 64 bytes of `[a-z0-9_-]`, starting with a letter or digit (a surface material's rule); unique in its list. An element's `loose` names it. |
+| `name` | string | required | Shown in the editors, 1 to 64 characters. |
+| `notes` | string | `""` | Free text for authors; ignored by the game. |
+| `repose` | integer | `45` | The angle of repose, degrees, 5 (it spreads nearly flat) to 85 (it stands in near columns): a pile's sides settle at it. Default 45. |
+| `gravity` | integer | `200` | How fast a falling grain gathers speed, pixels a second squared, 1 to 2000. Default 200. |
+| `top_speed` | integer | `50` | A falling grain's top speed, pixels a second, 1 to 500. Default 50. |
+| `slide_speed` | integer | `25` | How fast a grain slides down a slope steeper than its repose, pixels a second, 0 (it never slides) to 100. Default 25. |
 
 <a id="statesource"></a>
 

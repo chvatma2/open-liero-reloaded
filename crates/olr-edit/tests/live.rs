@@ -48,6 +48,8 @@ fn blank(size: (u32, u32), s: u32) -> LevelSource {
         surface: None,
         distant_surfaces: Vec::new(),
         live: None,
+        loose: Vec::new(),
+        loose_map: None,
     }
 }
 
@@ -100,6 +102,7 @@ fn piece(
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            loose: None,
         },
         decoded: Decoded::Drawn { art: img, cells: None, back: None },
         original: None,

@@ -44,6 +44,8 @@ fn pack(w: u32, h: u32, s: u32) -> Pack {
         surface: None,
         distant_surfaces: Vec::new(),
         live: None,
+        loose: Vec::new(),
+        loose_map: None,
     };
     Pack::new(manifest, Source::Level(level))
 }
@@ -492,6 +494,7 @@ fn new_ids_reserve_masks_and_layer_files() {
         back_surface: None,
         surface_map: false,
         back_surface_map: false,
+        loose: None,
     };
     assert_ne!(new_element_id(&[wall], &[], &Default::default(), "wall.material", "layer"), "wall.material");
 }

@@ -532,6 +532,7 @@ impl Document {
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            loose: None,
         };
         let art = olr_format::image_io::encode_rgba(&olr_data::image::RgbaImage::new(s, s));
         let light = |a: &AssetSource| {
@@ -603,6 +604,8 @@ impl Document {
             surface: None,
             distant_surfaces: Vec::new(),
             live: None,
+            loose: Vec::new(),
+            loose_map: None,
         };
         let mut pack = Pack::new(self.manifest.clone(), Source::Level(light));
         pack.placed = Some(before.clone());

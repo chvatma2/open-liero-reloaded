@@ -62,6 +62,8 @@ fn level(look: Option<&str>) -> LevelSource {
         surface: None,
         distant_surfaces: Vec::new(),
         live: None,
+        loose: Vec::new(),
+        loose_map: None,
     };
     if let Some(text) = look {
         let fs = files(&src).with("level.ron", text.as_bytes().to_vec());
@@ -699,6 +701,8 @@ fn white_level(look: &str) -> LevelSource {
         surface: None,
         distant_surfaces: Vec::new(),
         live: None,
+        loose: Vec::new(),
+        loose_map: None,
     };
     let text = format!("(name: \"Thumb\", size: (64, 32), theme: \"olx-theme-dirt\", {look})");
     read_level_files(&files(&src).with("level.ron", text.into_bytes())).unwrap()
@@ -996,6 +1000,7 @@ fn beam_element(id: &str, kind: ElementKind, beam: Option<GlowBeam>) -> Element 
         back_surface: None,
         surface_map: false,
         back_surface_map: false,
+        loose: None,
     }
 }
 

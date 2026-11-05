@@ -44,6 +44,8 @@ fn level() -> LevelSource {
         surface: None,
         distant_surfaces: Vec::new(),
         live: None,
+        loose: Vec::new(),
+        loose_map: None,
     }
 }
 

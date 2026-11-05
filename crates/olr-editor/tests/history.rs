@@ -452,6 +452,7 @@ fn the_new_edits_count_their_bytes() {
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            loose: None,
         },
         decoded: Decoded::Drawn { art, cells: None, back: None },
     };

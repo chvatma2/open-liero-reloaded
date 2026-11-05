@@ -144,6 +144,8 @@ fn room_level() -> olr_pack::LevelPack {
         surface: None,
         distant_surface: Vec::new(),
         live: None,
+        loose: Vec::new(),
+        loose_map: None,
     }
 }
 
@@ -548,6 +550,8 @@ fn scaled_level(id: &str, size: u32, art_scale: u32) -> olr_pack::LevelPack {
         surface: None,
         distant_surface: Vec::new(),
         live: None,
+        loose: Vec::new(),
+        loose_map: None,
     }
 }
 

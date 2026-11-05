@@ -558,6 +558,7 @@ mod tests {
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            loose: None,
         };
         let ground = olr_format::assets::AssetSource::new(
             olr_format::assets::AssetFile::new("Ground", (8, 8), vec![element]),

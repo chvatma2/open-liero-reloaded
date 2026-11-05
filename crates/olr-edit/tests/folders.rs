@@ -31,6 +31,7 @@ fn layer(id: &str) -> Element {
         back_surface: None,
         surface_map: false,
         back_surface_map: false,
+        loose: None,
     }
 }
 
@@ -431,6 +432,8 @@ fn pack() -> Pack {
         surface: None,
         distant_surfaces: Vec::new(),
         live: None,
+        loose: Vec::new(),
+        loose_map: None,
     };
     Pack::new(manifest, Source::Level(level))
 }

@@ -65,6 +65,8 @@ fn pack(w: u32, h: u32, s: u32, look: Option<LookSource>) -> Pack {
         surface: None,
         distant_surfaces: Vec::new(),
         live: None,
+        loose: Vec::new(),
+        loose_map: None,
     };
     Pack::new(manifest, Source::Level(level))
 }
@@ -624,6 +626,7 @@ fn layer(
         back_surface: None,
         surface_map: false,
         back_surface_map: false,
+        loose: None,
     };
     let cells = (size.0 * 2 * size.1 * 2) as usize;
     Piece {

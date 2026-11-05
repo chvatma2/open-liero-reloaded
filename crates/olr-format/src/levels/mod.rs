@@ -116,6 +116,11 @@ pub const GLOW_BEAM_FILES: [&str; 2] = [GLOW_BEAM_FILE, GLOW_BEAM_BACK_FILE];
 /// The haze per world pixel, 8-bit grey: 0 none to 255 the look's `haze`.
 /// Optional, on its own.
 pub const HAZE_FILE: &str = "look/haze.png";
+/// The level's loose dirt per world pixel (the loose dirt design), 8-bit
+/// grey: 0 not loose, `k + 1` the level's `loose[k]`; read only where
+/// `material.png` is dirt. Optional, on its own: none is no loose dirt.
+pub const LOOSE_FILE: &str = "loose.png";
+pub use crate::loose::{LooseSource, MAX_LOOSE};
 /// A level's glow images: all four or none.
 pub const LOOK_FILES: [&str; 4] = [GLOW_FILE, GLOW_BACK_FILE, GROUPS_FILE, GROUPS_BACK_FILE];
 /// The front's surface material per world pixel (the rock and dirt), 8-bit
@@ -281,6 +286,12 @@ pub struct LevelSource {
     /// The played form of its live copies (`live.ron` and `live/`, issue
     /// #85); `None` for a level without live copies.
     pub live: Option<LiveSource>,
+    /// `level.ron`'s loose materials (the loose dirt design), at most
+    /// [`MAX_LOOSE`].
+    pub loose: Vec<LooseSource>,
+    /// `loose.png`'s kinds, `size.0 * size.1`, row-major, when some dirt
+    /// is loose: 0 not loose, `k + 1` `loose[k]`.
+    pub loose_map: Option<Vec<u8>>,
 }
 
 /// A thing placed in a level.
@@ -575,6 +586,7 @@ pub(crate) fn check(src: &LevelSource) -> Result<(), FormatError> {
         check_surface(src, m)?;
     }
     check_distant_layers(&src.distant, src.art_scale)?;
+    check_loose_map(src)?;
     check_distant_surfaces(src)?;
     check_distant_glows(src)?;
     if let Some(live) = &src.live {
@@ -594,6 +606,37 @@ pub(crate) fn check(src: &LevelSource) -> Result<(), FormatError> {
         }
     }
     Ok(())
+}
+
+/// `level.ron`'s loose materials and `loose.png`: the list checked, and
+/// the map the level's size with every value within the list.
+pub(crate) fn check_loose_map(src: &LevelSource) -> Result<(), FormatError> {
+    crate::loose::check_loose(&src.loose, LEVEL_FILE, "loose")?;
+    let Some(map) = &src.loose_map else { return Ok(()) };
+    let (w, h) = src.size;
+    let cells = w as usize * h as usize;
+    if map.len() != cells {
+        return Err(FormatError::invalid(
+            LOOSE_FILE,
+            "",
+            format!("{} kinds, the level needs {cells} ({w}x{h})", map.len()),
+        ));
+    }
+    if let Some(i) = map.iter().position(|&v| usize::from(v) > src.loose.len()) {
+        let (x, y) = (i as u32 % w.max(1), i as u32 / w.max(1));
+        return Err(FormatError::invalid(
+            LOOSE_FILE,
+            "",
+            format!("{} at ({x}, {y}) names no loose material: level.ron lists {}", map[i], src.loose.len()),
+        ));
+    }
+    Ok(())
+}
+
+/// The level's loose materials' rates, in `loose`'s order (`loose.png`'s
+/// `k + 1` is the `k`-th). Checked by [`compile_level`] and the readers.
+pub fn compile_loose(src: &LevelSource) -> Vec<olr_data::level::LooseMaterial> {
+    src.loose.iter().map(LooseSource::material).collect()
 }
 
 /// Makes the runtime level.
@@ -641,6 +684,8 @@ pub fn lift_level(level: &Level, thumb: Option<Vec<u8>>) -> Result<LevelSource, 
         surface: None,
         distant_surfaces: Vec::new(),
         live: None,
+        loose: Vec::new(),
+        loose_map: None,
     };
     if (level.material.width(), level.material.height()) != src.size {
         return Err(LiftError {
@@ -724,6 +769,8 @@ pub(crate) mod tests {
             surface: None,
             distant_surfaces: Vec::new(),
             live: None,
+            loose: Vec::new(),
+            loose_map: None,
         }
     }
 

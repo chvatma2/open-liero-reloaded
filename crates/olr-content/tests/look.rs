@@ -63,6 +63,8 @@ fn lit_level_with(dir: &Path, edit: impl FnOnce(&mut LevelSource)) {
         surface: None,
         distant_surfaces: Vec::new(),
         live: None,
+        loose: Vec::new(),
+        loose_map: None,
     };
     edit(&mut src);
     let mut fs = DirFs::new(dir.join("lit"));

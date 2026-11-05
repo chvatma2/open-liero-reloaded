@@ -739,6 +739,8 @@ fn mini_level(size: (u32, u32), s: u32, look: Option<LookSource>) -> LevelSource
         surface: None,
         distant_surfaces: Vec::new(),
         live: None,
+        loose: Vec::new(),
+        loose_map: None,
     }
 }
 

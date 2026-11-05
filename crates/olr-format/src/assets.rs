@@ -104,6 +104,13 @@ pub struct AssetFile {
     /// none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub materials: Vec<MaterialSource>,
+    /// The loose materials its elements name (the loose dirt design), at
+    /// most `MAX_LOOSE` (16), ids unique, each named by one at least.
+    /// Placed in a level, a loose material the level has (by id) is
+    /// joined, its own settings kept; a missing one is added with these.
+    /// Default none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub loose: Vec<crate::loose::LooseSource>,
     /// Its named looks (issue #71), 1 to `MAX_STATES` (32), one of them the
     /// starting state. Default one state, `Normal`, owning and setting
     /// nothing; written `[(name: "Normal")]`.
@@ -142,6 +149,7 @@ impl AssetFile {
             folders: Vec::new(),
             glow_groups: Vec::new(),
             materials: Vec::new(),
+            loose: Vec::new(),
             states: normal_states(),
             start: None,
             exposed: Vec::new(),
@@ -375,6 +383,29 @@ fn check(src: &AssetSource, own: bool) -> Result<(), FormatError> {
             }
         }
     }
+    crate::loose::check_loose(&f.loose, ASSET_FILE, "loose")?;
+    for (i, e) in f.elements.iter().enumerate() {
+        if let Some(id) = &e.loose
+            && !f.loose.iter().any(|m| m.id == *id)
+        {
+            return Err(invalid(
+                &format!("elements[{i}].loose"),
+                format!("{id:?} is none of the asset's loose materials"),
+            ));
+        }
+    }
+    if !own
+        && let Some((i, m)) = f
+            .loose
+            .iter()
+            .enumerate()
+            .find(|(_, m)| !f.elements.iter().any(|e| e.loose.as_ref() == Some(&m.id)))
+    {
+        return Err(invalid(
+            &format!("loose[{i}]"),
+            format!("no element is made of loose material {:?}", m.id),
+        ));
+    }
     for (name, bytes) in &src.sounds {
         if !f.sounds.contains(name) {
             return Err(io(&sound_file(name), "not listed in asset.ron's sounds".into()));
@@ -601,6 +632,7 @@ mod tests {
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            loose: None,
         };
         let mut file = AssetFile::new("Torch", (4, 3), vec![element]);
         file.art_scale = 2;
@@ -751,6 +783,52 @@ mod tests {
         assert!(check_asset(&s).unwrap_err().to_string().contains("above 255"));
     }
 
+    /// `sample()` made of loose sand (the loose dirt design).
+    fn with_loose() -> AssetSource {
+        let mut s = sample();
+        let e = &mut s.file.elements[0];
+        if let ElementKind::Drawn { material, .. } = &mut e.kind {
+            *material = ElementMaterial::Dirt;
+        }
+        e.loose = Some("sand".into());
+        s.file.loose =
+            vec![crate::loose::LooseSource { repose: 30, ..crate::loose::LooseSource::new("sand", "Sand") }];
+        s
+    }
+
+    #[test]
+    fn an_asset_round_trips_its_loose_materials() {
+        let src = with_loose();
+        check_asset(&src).unwrap();
+        let mut fs = MemFs::new();
+        write_asset_files(&mut fs, &src).unwrap();
+        assert_eq!(read_asset_files(&fs).unwrap(), src);
+        let text = to_canonical(ASSET_FILE, &src.file).unwrap();
+        assert!(
+            text.contains("loose: [") && text.contains("loose: \"sand\"") && text.contains("repose: 30"),
+            "{text}"
+        );
+        assert!(!to_canonical(ASSET_FILE, &sample().file).unwrap().contains("loose"));
+    }
+
+    #[test]
+    fn bad_loose_materials_are_refused_with_a_message() {
+        let mut s = with_loose();
+        s.file.elements[0].loose = Some("gravel".into());
+        let e = check_asset(&s).unwrap_err().to_string();
+        assert!(e.contains("elements[0].loose") && e.contains("gravel"), "{e}");
+        let mut s = with_loose();
+        s.file.loose.push(crate::loose::LooseSource::new("gravel", "Gravel"));
+        let e = check_asset(&s).unwrap_err().to_string();
+        assert!(e.contains("loose[1]") && e.contains("gravel"), "{e}");
+        // A level's own asset may list one no element names.
+        check_own_asset(&s).unwrap();
+        let mut s = with_loose();
+        s.file.loose[0].gravity = 0;
+        let e = check_asset(&s).unwrap_err().to_string();
+        assert!(e.contains("asset.ron") && e.contains("loose[0].gravity"), "{e}");
+    }
+
     /// A material named only by a painted map's value is used.
     #[test]
     fn a_painted_value_names_its_material() {
@@ -792,6 +870,7 @@ mod tests {
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            loose: None,
         }
     }
 

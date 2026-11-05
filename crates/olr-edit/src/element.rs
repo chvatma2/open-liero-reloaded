@@ -391,6 +391,7 @@ pub fn add_image_with(
                 back_surface: None,
                 surface_map: false,
                 back_surface_map: false,
+                loose: None,
             },
         )?;
         for p in settings {
@@ -425,6 +426,7 @@ pub fn add_layer(pack: &mut Pack, material: ElementMaterial, name: &str) -> Resu
                 back_surface: None,
                 surface_map: false,
                 back_surface_map: false,
+                loose: None,
             },
         )?;
         Ok(id)
@@ -1335,6 +1337,7 @@ pub fn split(pack: &mut Pack, id: &str) -> Result<Vec<String>, ElementError> {
                 back_surface: None,
                 surface_map: false,
                 back_surface_map: false,
+                loose: None,
             });
             new
         })

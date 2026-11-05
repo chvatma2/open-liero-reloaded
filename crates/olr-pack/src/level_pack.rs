@@ -60,6 +60,14 @@ pub struct LevelPack {
     /// #85; their sounds checked as a mod's), `None` without any. Not
     /// written by [`write_level`].
     pub live: Option<olr_format::levels::LiveSource>,
+    /// The level's loose materials' rates (`level.ron`'s `loose`, the loose
+    /// dirt design), in order; empty without any. Not written by
+    /// [`write_level`].
+    pub loose: Vec<olr_data::level::LooseMaterial>,
+    /// `loose.png`'s kinds (0 not loose, `k + 1` `loose[k]`), `None`
+    /// without it. Read strictly, as live copies: a bad map refuses the
+    /// level. Not written by [`write_level`].
+    pub loose_map: Option<Vec<u8>>,
     /// What [`read_level`] left out of a look that did not check.
     pub warnings: Vec<String>,
 }
@@ -152,6 +160,7 @@ pub fn read_level(src: &dyn ContentSource) -> Result<LevelPack, PackError> {
     let level = compile_level(&src)?;
     let look = olr_format::levels::compile_look(&src)?;
     let distant_surface = olr_format::levels::distant_surface_values(&src);
+    let loose = olr_format::levels::compile_loose(&src);
     // Issue #85: a live sound that does not play refuses the level, as
     // the rest of its played form does.
     if let Some(live) = &src.live {
@@ -173,6 +182,8 @@ pub fn read_level(src: &dyn ContentSource) -> Result<LevelPack, PackError> {
         surface: src.surface,
         distant_surface,
         live: src.live,
+        loose,
+        loose_map: src.loose_map,
         warnings,
     })
 }
@@ -219,6 +230,8 @@ pub(crate) mod tests {
             surface: None,
             distant_surface: Vec::new(),
             live: None,
+            loose: Vec::new(),
+            loose_map: None,
             warnings: Vec::new(),
         }
     }

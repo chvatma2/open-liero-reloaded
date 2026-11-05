@@ -1380,6 +1380,8 @@ fn as_level(
         surface: None,
         distant_surfaces: Vec::new(),
         live: None,
+        loose: Vec::new(),
+        loose_map: None,
     }
 }
 
@@ -1546,6 +1548,7 @@ pub fn distant_elements(level: &LevelSource) -> Vec<(Element, Decoded, Option<El
                 back_surface: None,
                 surface_map: false,
                 back_surface_map: false,
+                loose: None,
             };
             (e, Decoded::Drawn { art: d.image.clone(), cells: None, back: None }, mask)
         })
@@ -1572,6 +1575,7 @@ pub fn compose_from(level: &LevelSource) -> CompositionSource {
         back_surface: None,
         surface_map: false,
         back_surface_map: false,
+        loose: None,
     };
     let [m, f, b] = raster_files(&element.id);
     let mut files: BTreeMap<String, Vec<u8>> = [
@@ -1654,6 +1658,7 @@ pub fn split_layers(
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            loose: None,
         };
         (e, Decoded::Drawn { art, cells: None, back: None })
     };

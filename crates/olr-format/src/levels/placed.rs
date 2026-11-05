@@ -330,6 +330,29 @@ pub fn gather_materials(gathered: &mut Vec<MaterialSource>, materials: &[Materia
         .collect()
 }
 
+/// Gathers loose materials (the loose dirt design) into `gathered` as
+/// [`gather_materials`] gathers surface materials: returns each one's id
+/// there.
+pub fn gather_loose(
+    gathered: &mut Vec<crate::loose::LooseSource>,
+    loose: &[crate::loose::LooseSource],
+) -> Vec<String> {
+    use crate::loose::LooseSource;
+    loose
+        .iter()
+        .map(|m| {
+            let find = |id: &str| {
+                gathered.iter().find(|x| x.id == id).map(|x| *x == LooseSource { id: id.into(), ..m.clone() })
+            };
+            let (id, shared) = gather_id(&m.id, MAX_MATERIAL_ID, &find);
+            if !shared {
+                gathered.push(LooseSource { id: id.clone(), ..m.clone() });
+            }
+            id
+        })
+        .collect()
+}
+
 /// An asset's box `[b, b + n)` along one axis (asset pixels) in a copy
 /// stretched from `from` to `to` pixels: `[floor(b × to / from),
 /// floor((b + n) × to / from))` (floor division, a negative `b`
@@ -590,6 +613,7 @@ pub fn check_placed(src: &PlacedSource, level_size: (u32, u32), art_scale: u32) 
     let mut pixels = 0u64;
     let mut groups: Vec<GlowGroupSource> = Vec::new();
     let mut materials: Vec<MaterialSource> = Vec::new();
+    let mut loose: Vec<crate::loose::LooseSource> = Vec::new();
     let (mut distant, mut distant_pixels) = (0usize, 0u64);
     let (mut live, mut scripts) = (0usize, usize::from(f.script));
     for (i, c) in f.copies.iter().enumerate() {
@@ -780,6 +804,13 @@ pub fn check_placed(src: &PlacedSource, level_size: (u32, u32), art_scale: u32) 
             return Err(bad(
                 "asset",
                 format!("the level's gathered materials are more than {MAX_MATERIALS}"),
+            ));
+        }
+        gather_loose(&mut loose, &file.loose);
+        if loose.len() > crate::loose::MAX_LOOSE {
+            return Err(bad(
+                "asset",
+                format!("the level's gathered loose materials are more than {}", crate::loose::MAX_LOOSE),
             ));
         }
     }
@@ -1086,6 +1117,17 @@ mod tests {
     }
 
     #[test]
+    fn loose_materials_gather_as_materials_do() {
+        use crate::loose::LooseSource;
+        let m = |id: &str, repose: u8| LooseSource { repose, ..LooseSource::new(id, "Sand") };
+        let mut all = Vec::new();
+        assert_eq!(gather_loose(&mut all, &[m("sand", 45)]), ["sand"]);
+        assert_eq!(gather_loose(&mut all, &[m("sand", 45), m("gravel", 30)]), ["sand", "gravel"]);
+        assert_eq!(gather_loose(&mut all, &[m("sand", 20)]), ["sand-2"]);
+        assert_eq!(all, [m("sand", 45), m("gravel", 30), m("sand-2", 20)]);
+    }
+
+    #[test]
     fn the_byte_bound_is_an_unpacked_packs() {
         assert_eq!(MAX_PLACED_BYTES, olr_pack::archive::MAX_UNPACKED);
     }
@@ -1128,6 +1170,7 @@ mod tests {
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            loose: None,
         }
     }
 
@@ -1251,6 +1294,26 @@ mod tests {
         assert_eq!(fs.read(&VPath::new("editor/b/layers/body.png").unwrap()).unwrap(), odd);
         // A level without placed.ron has no placement.
         assert_eq!(read_placed_files(&MemFs::new()).unwrap(), None);
+    }
+
+    #[test]
+    fn the_gathered_loose_materials_are_bounded() {
+        use crate::loose::{LooseSource, MAX_LOOSE};
+        let mut src = sample();
+        let sand = |i: usize| LooseSource::new(&format!("s{i}"), "Sand");
+        // The ground (a level's own asset) lists the most; a dust heap adds one.
+        src.assets.get_mut(GROUND_KEY).unwrap().file.loose = (0..MAX_LOOSE).map(sand).collect();
+        let mut dust = asset("Dust", ElementMaterial::Dirt, (3, 1));
+        dust.file.elements[0].loose = Some("dust".into());
+        dust.file.loose = vec![LooseSource::new("dust", "Dust")];
+        src.assets.insert("b".into(), dust.clone());
+        let e = refused(&src);
+        assert!(e.contains("copies[3]") && e.contains("loose materials are more than 16"), "{e}");
+        // Sharing one the level has fits.
+        dust.file.elements[0].loose = Some("s0".into());
+        dust.file.loose = vec![sand(0)];
+        src.assets.insert("b".into(), dust);
+        check_placed(&src, LEVEL, 1).unwrap();
     }
 
     #[test]

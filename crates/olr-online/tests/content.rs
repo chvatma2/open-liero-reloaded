@@ -88,6 +88,8 @@ fn generated_level(root: &Path, id: &str, seed: u32) -> PathBuf {
             surface: None,
             distant_surface: Vec::new(),
             live: None,
+            loose: Vec::new(),
+            loose_map: None,
         },
     )
     .unwrap();

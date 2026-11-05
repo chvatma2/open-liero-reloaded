@@ -42,6 +42,8 @@ fn level(w: u32, h: u32, s: u32) -> LevelSource {
         surface: None,
         distant_surfaces: Vec::new(),
         live: None,
+        loose: Vec::new(),
+        loose_map: None,
     }
 }
 
@@ -79,6 +81,7 @@ fn element(id: &str, kind: ElementKind) -> Element {
         back_surface: None,
         surface_map: false,
         back_surface_map: false,
+        loose: None,
     }
 }
 

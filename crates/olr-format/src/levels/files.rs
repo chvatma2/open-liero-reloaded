@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     BACK_FILE, CLEAR_FILE, FRONT_FILE, GLASS_FILE, GLOW_BACK_FILE, GLOW_BEAM_BACK_FILE, GLOW_BEAM_FILE,
-    GLOW_BEAM_FILES, GLOW_FILE, GROUPS_BACK_FILE, GROUPS_FILE, HAZE_FILE, LEVEL_FILE, LOOK_FILES,
+    GLOW_BEAM_FILES, GLOW_FILE, GROUPS_BACK_FILE, GROUPS_FILE, HAZE_FILE, LEVEL_FILE, LOOK_FILES, LOOSE_FILE,
     LevelHeader, LevelObject, LevelSource, MATERIAL_FILE, MAX_DISTANT, MAX_THUMB_BYTES, SURFACE_BACK_FILE,
     SURFACE_FILE, SURFACE_FILES, SurfaceMaps, THUMB_FILE, check, check_distant_layers, check_header,
     check_thumb, distant_file, distant_glow_file,
@@ -58,6 +58,10 @@ pub(crate) struct LevelFile {
     /// They show where `back.png` is see-through (alpha 0). Default none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     distant: Vec<DistantEntry>,
+    /// The level's loose materials (the loose dirt design), at most
+    /// `MAX_LOOSE` (16): `loose.png`'s `k + 1` is the `k`-th. Default none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    loose: Vec<crate::loose::LooseSource>,
 }
 
 /// A distant (parallax) layer (issue #11): its image `distant/<i>.png` is
@@ -143,6 +147,9 @@ pub fn file_paths(src: &LevelSource) -> Vec<String> {
     if src.haze.is_some() {
         out.push(HAZE_FILE.into());
     }
+    if src.loose_map.is_some() {
+        out.push(LOOSE_FILE.into());
+    }
     if src.surface.is_some() {
         out.extend(SURFACE_FILES.map(String::from));
     }
@@ -186,6 +193,7 @@ pub fn write_level_files(sink: &mut dyn ContentSink, src: &LevelSource) -> Resul
                 glow_group: d.glow.as_ref().and_then(|g| group_id(src, g.group)),
             })
             .collect(),
+        loose: src.loose.clone(),
     };
     write_text(sink, LEVEL_FILE, &to_canonical(LEVEL_FILE, &file)?)?;
     write_bytes(sink, MATERIAL_FILE, &super::encode_material(src.size, &src.material))?;
@@ -220,6 +228,9 @@ pub fn write_level_files(sink: &mut dyn ContentSink, src: &LevelSource) -> Resul
     }
     if let Some(h) = &src.haze {
         write_bytes(sink, HAZE_FILE, &image_io::encode_grey(src.size.0, src.size.1, h))?;
+    }
+    if let Some(k) = &src.loose_map {
+        write_bytes(sink, LOOSE_FILE, &image_io::encode_grey(src.size.0, src.size.1, k))?;
     }
     if let Some(m) = &src.surface {
         let (w, h) = m.world;
@@ -306,7 +317,10 @@ fn read_distant_mask(
 
 /// Reads an 8-bit grey look image, checking its header size first.
 fn read_grey(src: &dyn ContentSource, file: &str, expected: (u32, u32)) -> Result<Vec<u8>, FormatError> {
-    let bytes = read_bytes(src, file)?;
+    read_grey_bytes(&read_bytes(src, file)?, file, expected)
+}
+
+fn read_grey_bytes(bytes: &[u8], file: &str, expected: (u32, u32)) -> Result<Vec<u8>, FormatError> {
     let mismatch = |(w, h): (u32, u32)| {
         FormatError::invalid(
             file,
@@ -314,12 +328,12 @@ fn read_grey(src: &dyn ContentSource, file: &str, expected: (u32, u32)) -> Resul
             format!("{file} is {w}x{h}, the level needs {}x{}", expected.0, expected.1),
         )
     };
-    if let Some(size) = image_io::png_size(&bytes)
+    if let Some(size) = image_io::png_size(bytes)
         && size != expected
     {
         return Err(mismatch(size));
     }
-    let (w, h, values) = image_io::decode_grey_within(&bytes, LEVEL_ART)
+    let (w, h, values) = image_io::decode_grey_within(bytes, LEVEL_ART)
         .map_err(|message| FormatError::Io { file: file.into(), message })?;
     if (w, h) != expected {
         return Err(mismatch((w, h)));
@@ -361,6 +375,21 @@ fn read_clear(src: &dyn ContentSource, world: (u32, u32)) -> Result<Option<Vec<u
         return Ok(None);
     }
     read_grey(src, CLEAR_FILE, world).map(Some)
+}
+
+/// `loose.png`, when present: an 8-bit grey PNG (by its header; a 16-bit
+/// one would read normalised, its kinds lost) of the world's size. Never
+/// lenient: loose dirt is gameplay.
+fn read_loose(src: &dyn ContentSource, world: (u32, u32)) -> Result<Option<Vec<u8>>, FormatError> {
+    if !VPath::new(LOOSE_FILE).is_ok_and(|p| src.exists(&p)) {
+        return Ok(None);
+    }
+    let bytes = read_bytes(src, LOOSE_FILE)?;
+    // IHDR's bit depth and colour type follow its width and height.
+    if image_io::png_size(&bytes).is_some() && (bytes.get(24), bytes.get(25)) != (Some(&8), Some(&0)) {
+        return Err(FormatError::invalid(LOOSE_FILE, "", "not an 8-bit grey PNG"));
+    }
+    read_grey_bytes(&bytes, LOOSE_FILE, world).map(Some)
 }
 
 /// `look/glass.png`, when present, at art size `art`.
@@ -508,6 +537,7 @@ pub fn read_level_files_without_thumb(src: &dyn ContentSource) -> Result<LevelSo
     level.glow_beams = read_glow_beams(src, level.size)?;
     level.haze = read_haze(src, level.size)?;
     level.surface = read_surface(src, level.size)?;
+    level.loose_map = read_loose(src, level.size)?;
     level.distant = distant?;
     level.live = read_live(src, &level)?;
     check(&level)?;
@@ -593,9 +623,11 @@ pub fn read_level_files_lenient(src: &dyn ContentSource) -> Result<(LevelSource,
         warnings.push(format!("{e}: the level plays without its glow beams"));
         level.glow_beams = None;
     }
-    // Live copies are gameplay: a played form that does not check
-    // refuses the level (issue #85).
+    // Live copies and loose dirt are gameplay: a played form or a loose
+    // map that does not check refuses the level (issue #85, the loose
+    // dirt design).
     level.live = read_live(src, &level)?;
+    level.loose_map = read_loose(src, level.size)?;
     check(&level)?;
     Ok((level, warnings))
 }
@@ -666,6 +698,8 @@ fn read_base(
         surface: None,
         distant_surfaces,
         live: None,
+        loose: file.loose,
+        loose_map: None,
     };
     Ok((level, glow, distant))
 }

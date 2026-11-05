@@ -53,6 +53,8 @@ fn pack(w: u32, h: u32, s: u32) -> Pack {
         surface: None,
         distant_surfaces: Vec::new(),
         live: None,
+        loose: Vec::new(),
+        loose_map: None,
     };
     Pack::new(manifest, Source::Level(level))
 }

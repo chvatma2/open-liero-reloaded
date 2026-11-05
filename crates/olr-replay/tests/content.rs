@@ -128,6 +128,8 @@ fn level_pack(rock: bool) -> olr_pack::LevelPack {
         surface: None,
         distant_surface: Vec::new(),
         live: None,
+        loose: Vec::new(),
+        loose_map: None,
     }
 }
 

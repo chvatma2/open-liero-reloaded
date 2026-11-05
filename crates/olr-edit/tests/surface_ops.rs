@@ -62,6 +62,8 @@ fn level(s: u32) -> Pack {
         surface: None,
         distant_surfaces: Vec::new(),
         live: None,
+        loose: Vec::new(),
+        loose_map: None,
     };
     let mut p = Pack::new(manifest, Source::Level(level));
     add_layer(&mut p, ElementMaterial::Dirt, "Layer").unwrap();

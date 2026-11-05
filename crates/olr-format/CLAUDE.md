@@ -205,6 +205,39 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   and a look that does not check (which drops its glow too);
   `level.ron` that does not parse still fails, and the strict readers stay
   `pack check`'s.
+- **Loose dirt** (`loose.rs`, `levels/`; spec
+  `docs/superpowers/specs/2026-11-05-loose-dirt-design.md`): `LooseSource
+  { id, name, notes, repose 5-85 default 45, gravity 1-2000 default 200,
+  top_speed 1-500 default 50, slide_speed 0-100 default 25 }` (ids by
+  `valid_material_id`, unique; the defaults are literals for the docs,
+  `the_defaults_are_the_simulations` holds them to
+  `olr_data::level::LooseMaterial::DEFAULT`), `check_loose(list, file,
+  path)` (at most `MAX_LOOSE` 16, each field's error naming
+  `loose[i].<field>`). `LevelSource::loose` (`level.ron`'s `loose`) and
+  `loose_map` (`LOOSE_FILE` `loose.png`, 8-bit grey at the world size, 0
+  not loose, `k + 1` `loose[k]`; `check_loose_map` in `check`: the size
+  and every value within the list; a value on rock or background is no
+  error, the terrain reads it only on dirt). `read_loose` refuses a PNG
+  that is not 8-bit grey by its header (a 16-bit one would read
+  normalised). Both readers are strict, the lenient one too (loose dirt
+  is gameplay, as live copies: the spec's "the level does not load").
+  `compile_loose(src)` gives the rates in order. `Element::loose` (an id
+  of the asset's `loose`): `check_elements` allows it on a Dirt image or
+  drawn layer or a mixed drawn layer, never distant;
+  `AssetFile::loose` (`check_asset`: the list checked, every element's
+  id listed, and in a library asset every material named;
+  `check_own_asset` allows unnamed ones). `gather_loose` mirrors
+  `gather_materials`; `check_placed` bounds the gathered list by
+  `MAX_LOOSE`. Tests: `tests/loose.rs` (`loose_round_trips`,
+  `a_level_without_loose_writes_none`, `loose_limits`,
+  `a_hostile_loose_map_is_refused`, `loose_on_rock_is_not_refused`,
+  `the_loose_file_is_hashed_and_known`, the proptest
+  `mutated_loose_files_never_panic`), `composition.rs`'
+  `element_loose_follows_its_rules`, `assets.rs`'
+  `an_asset_round_trips_its_loose_materials`,
+  `bad_loose_materials_are_refused_with_a_message`, `placed.rs`'
+  `loose_materials_gather_as_materials_do`,
+  `the_gathered_loose_materials_are_bounded`.
 - **Looks** (`look.rs`, plan 15a): the shared authoring types of levels and
   mods and their compilers to `olr-look`. Every value is an integer
   (percent, milliseconds, world pixels); colours are the format's hex

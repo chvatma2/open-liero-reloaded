@@ -61,6 +61,8 @@ fn level_pack(id: &str, name: &str) -> Pack {
         surface: None,
         distant_surfaces: Vec::new(),
         live: None,
+        loose: Vec::new(),
+        loose_map: None,
     };
     let manifest = PackManifest {
         format_version: PACK_FORMAT_VERSION,
@@ -101,6 +103,7 @@ fn piece(id: &str, material: ElementMaterial, at: (i32, i32), size: (u32, u32), 
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            loose: None,
         },
         decoded: Decoded::Drawn { art: img, cells: None, back: None },
         original: None,

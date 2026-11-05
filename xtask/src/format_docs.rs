@@ -77,6 +77,7 @@ const PAGES: &[Page] = &[
             "crates/olr-format/src/assets/states.rs",
             "crates/olr-format/src/look.rs",
             "crates/olr-format/src/materials.rs",
+            "crates/olr-format/src/loose.rs",
             "crates/olr-format/src/colour.rs",
         ],
         roots: &[("LevelFile", "level.ron"), ("LiveFile", "live.ron"), ("PlacedFile", "editor/placed.ron")],
@@ -93,6 +94,7 @@ const PAGES: &[Page] = &[
             "look/clear.png",
             "look/surface.png",
             "look/surface-back.png",
+            "loose.png",
             "distant/<i>.png",
             "distant/<i>-glow.png",
             // Issue #85: the live copies' played form.
@@ -166,6 +168,7 @@ const PAGES: &[Page] = &[
             "crates/olr-format/src/levels/composition.rs",
             "crates/olr-format/src/look.rs",
             "crates/olr-format/src/materials.rs",
+            "crates/olr-format/src/loose.rs",
             "crates/olr-format/src/colour.rs",
         ],
         roots: &[("AssetFile", "asset.ron")],

@@ -82,6 +82,12 @@ header's size); content hashing; validation.
   `validate_checks_the_placement`, `a_leftover_composition_is_a_warning`. A mod's `editor/mod.ron`
   (issue #17, the mod editor's file) counts as read; one that does not
   parse as `ModEditorFile` is a warning.
+- **Loose dirt** (the loose dirt design): `LevelPack::loose` (the
+  compiled `LooseMaterial`s, `olr_format::levels::compile_loose`) and
+  `loose_map` (`loose.png`'s kinds) are read with the level, strictly as
+  live copies are (a bad map refuses the level); `write_level` writes
+  neither. `loose.png` is a format file (`file_paths`) and content
+  (hashed; `olr-format`'s `the_loose_file_is_hashed_and_known`).
 - **Surface materials** (issue #37): a level's `look/surface.png` and
   `look/surface-back.png` are format files (`file_paths`) and content
   (hashed), checked by the strict reader (size, values within the look's

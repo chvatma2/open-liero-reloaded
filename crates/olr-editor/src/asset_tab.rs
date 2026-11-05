@@ -169,6 +169,7 @@ impl NewAsset {
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            loose: None,
         };
         let piece = Piece {
             element,
@@ -228,6 +229,8 @@ impl Document {
             surface: None,
             distant_surfaces: Vec::new(),
             live: None,
+            loose: Vec::new(),
+            loose_map: None,
         };
         let mut originals = BTreeMap::new();
         let mut glow_masks = BTreeMap::new();
