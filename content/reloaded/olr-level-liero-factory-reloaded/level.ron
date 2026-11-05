@@ -1,6 +1,6 @@
 (
     name: "Liero Factory Reloaded",
-    notes: "Liero Factory After Dark rebuilt from assets (issue #96): the ground is the level\'s own asset, the night sky a copy of its own at depth 90, and the strip lights, the ceiling lamp, the control room\'s screen and desk, the lit sign, a roof beacon, the terminal, the crane, the console and the gauge are copies of the built-in assets where After Dark has them. Since issue #97 the crane\'s claw crosses its rail every couple of seconds, humming and pushing worms in its way, and the terminal left of it goes red while it moves (issue #100); since issue #98 three of the ceiling strips fail like faulty tubes, stuttering, buzzing and ticking; since issue #99 the control room\'s screen is a security camera, the 13-37 sign, the desk\'s lamps and the gauge change now and then, and an orange warning beacon under the crane\'s trolley turns while it moves. The night shift lights the mine\'s back wall, the lower hall, the red duct and the chimney, colours the strips by area and sets a city and its industry before the stars. The plant works: a horn starts the shift and the line under the sign stamps dirt into balls that roll up the incline into the crate, its belt red when stopped and white when running; a lift, a mine cart and a forklift go about their work; a big blast or a quick run of kills sounds the roof\'s sirens and tints the lamps red; shooting the generator by the gauge cuts the power (red emergency lamps, the machines stopped) until it is repaired; strips can be shot out and are mended now and then, the lab\'s flask bubbles and the office panes shatter.",
+    notes: "Liero Factory After Dark rebuilt from assets (issue #96): the ground is the level\'s own asset, the night sky a copy of its own at depth 90, and the strip lights, the ceiling lamp, the control room\'s screen and desk, the lit sign, a roof beacon, the terminal, the crane, the console and the gauge are copies of the built-in assets where After Dark has them. Since issue #97 the crane\'s claw crosses its rail every couple of seconds, humming and pushing worms in its way, and the terminal left of it goes red while it moves (issue #100); since issue #98 three of the ceiling strips fail like faulty tubes, stuttering, buzzing and ticking; since issue #99 the control room\'s screen is a security camera, the 13-37 sign, the desk\'s lamps and the gauge change now and then, and an orange warning beacon under the crane\'s trolley turns while it moves. The night shift lights the mine\'s back wall, the lower hall, the red duct and the chimney, colours the strips by area and sets a city and its industry before the stars. The plant works: a horn starts the shift and the line under the sign stamps dirt into balls that roll up the incline into the crate, its belt red when stopped and white when running; a lift, a mine cart and a forklift go about their work; a big blast or a quick run of kills sounds the roof\'s sirens and tints the lamps red; shooting the generator by the gauge cuts the power (the lamps out, the machines stopped) until it is repaired; strips can be shot out and are mended now and then, the lab\'s flask bubbles and the office panes shatter.",
     size: (1200, 480),
     theme: "olx-theme-dirt",
     look: (
@@ -119,17 +119,6 @@
                     low: 0,
                     high: 100,
                     shape: Square,
-                ),
-            ),
-            (
-                id: "emergency",
-                colour: Tint("#ff2010"),
-                intensity: 0,
-                reach: Pixels(70),
-                animation: Pulse(
-                    period_ms: 2000,
-                    low: 50,
-                    high: 100,
                 ),
             ),
             (

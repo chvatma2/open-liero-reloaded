@@ -337,3 +337,10 @@
   fixtures/render/factory-screen.png
 2026-11-04 bless-render: the glow light's cascades drawn only where the views need them: walls outside bounce nothing (the user's ruling 2026-11-04)
   fixtures/render/lit-hashes.ron
+2026-11-05 bless-render: Liero Factory Reloaded: emergency lamps removed, the dirt balls roll through the drive's casing (a layer of the Dirt-ball line now), the end crate rock (the user's playtest, 2026-11-05)
+  fixtures/render/factory-beacon-side.png
+  fixtures/render/factory-blackout.png
+  fixtures/render/factory-crane.png
+  fixtures/render/factory-line.png
+2026-11-05 bless-regression: Liero Factory Reloaded: emergency lamps removed, the drive's casing a part of the Dirt-ball line, the end crate rock, the press kills a worm it wedges (the user's playtest, 2026-11-05)
+  fixtures/matches-live/classic-factory-live-4dm.ron

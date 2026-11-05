@@ -537,7 +537,7 @@ The headless command-line tool. Its commands:
   `factory-line.png` (tick 2600, `--at 990,330`: the Dirt-ball line
   running, a ball on the belt and one on the incline) and
   `factory-blackout.png` (tick 60, `--at 900,200`, `--live
-  generator=Wrecked`: the lamps out, the emergency lamps lit).
+  generator=Wrecked`: the lamps out).
 - `olr-cli frame-hashes <match flags> [--frames 30] [--content DIR] [--out f.ron]`
   (issue #34, `frame_hash.rs`, the command in `frame_hashes_cmd.rs`):
   byte identity. Plays a headless bot match as `render-match` does (the
@@ -1272,9 +1272,13 @@ strip; the steady ones `Steady` with `steady.rhai` of their own), and
 `tests/factory_works.rs` checks its behaviour on the factory's world
 (`World::explode_for_test` for the blasts): `the_line_runs_its_shift`
 (the horn at 1500, Lit 1 to Lit 7 a 40-tick step apart, the die down 18
-px, a ball shown and vanished into the crate, Stopped 3000 ticks on),
+px, a ball shown and vanished into the crate, never a shown ball moving
+more than a pixel a tick (2026-11-05: through the drive, not past it),
+Stopped 3000 ticks on), `the_press_kills_a_worm_it_wedges` (a worm
+standing on the belt under the die killed by nobody in the tick of its
+first `Crushed`, the die down on the belt: `line.rhai`'s `crushed`),
 `the_generator_cuts_the_power_until_it_is_repaired` (every strip Dark,
-the lamp groups at 0, the emergency group at 1000, the line, crane, lift
+the lamp groups at 0, the line, crane, lift
 and cart stopped; repaired after 3000 ticks, all at rest again),
 `a_big_blast_sounds_the_alarm` (the siren in Alarm with turning beams,
 the groups and strips red, calm after 1000 ticks, not again for 2000),

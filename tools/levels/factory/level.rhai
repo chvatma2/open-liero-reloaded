@@ -12,8 +12,7 @@
 //   colour); then none for REARM() ticks.
 // - The blackout: while the generator is wrecked the plant's lamps are
 //   out (the level's groups at 0, the strips Dark), the line, the crane,
-//   the lift and the mine cart stop, and the red emergency lamps light;
-//   all come back when it runs again (its own script repairs it).
+//   the lift and the mine cart stop; all come back when it runs again (its own script repairs it).
 // - Maintenance: every MAINTAIN() ticks one broken strip is mended.
 // - A blast within NEAR() px of a lit strip flickers it (set Off: its own
 //   script bursts).
@@ -28,7 +27,6 @@ fn KILL_SPAN() { 1000 } // within these ticks sound it too
 fn ALARM() { 1000 }     // ticks it sounds (10 s)
 fn REARM() { 2000 }     // ticks after it before another (20 s)
 fn MAINTAIN() { 2000 }  // ticks between mendings (20 s)
-fn EMERGENCY() { 1000 } // the emergency lamps' intensity in a blackout
 fn NEAR() { 40 }        // px from a strip's centre a blast flickers it
 
 // The level's lamp groups, their alarm intensity and the alarm's colour.
@@ -159,7 +157,6 @@ fn strip_lamp(id, own) {
 fn blackout() {
   this.mem.dark = true;
   this.lamps();
-  this.group_intensity("emergency", EMERGENCY());
   for s in STRIPS() {
     let c = this.copy(s);
     if this.state(c) != "Broken" { this.set_state(c, "Dark"); }
@@ -176,7 +173,6 @@ fn blackout() {
 fn power() {
   this.mem.dark = false;
   this.lamps();
-  this.group_reset("emergency");
   let strips = STRIPS();
   let rest = STRIP_REST();
   for i in 0..strips.len() {

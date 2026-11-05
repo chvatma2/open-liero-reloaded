@@ -82,14 +82,15 @@ byte for byte, and running one again changes nothing.
   `<name>-mask.png`/`<name>-tile.png` pairs for `level element draw
   --mask … --tile …`, level-sized grey `<name>-glow.png` masks, and state
   pictures the size of their layer's box); `ground(run, out)` edits the
-  ground while it is alone (the belt's stripe and the incline's painted
-  dirt balls, which the Dirt-ball line takes; the lab flask's liquid; the
+  ground while it is alone (the belt's stripe, the drive's casing,
+  `DRIVE`, and the incline's painted dirt balls, which the Dirt-ball line
+  takes; the line's end crate, `CRATE`, its dirt moved onto a Rock layer
+  of wood (2026-11-05); the lab flask's liquid; the
   lift's shaft right of the ramp's mouth, x 1186-1197, from the hall
   floor through the mine's big chamber's wall to a landing; the mine
   cart's rails on the left tunnel's floor, row 473; the doorway's
   threshold plate behind the forklift, `THRESHOLD`, its art moved onto
-  the backdrop so the wheels roll over it; the emergency lamps, group
-  `emergency` at intensity 0; the truck's hazard lights, a Rock layer on
+  the backdrop so the wheels roll over it; the truck's hazard lights, a Rock layer on
   the truck's own rock, and lit cab); `place(run, out, assets)` places the Lift, the Mine cart and the
   Forklift. `factory_assets.py` makes the Dirt-ball line, Lift, Mine cart,
   Forklift, Generator, Siren, Lab flask and Window pane by their blocks

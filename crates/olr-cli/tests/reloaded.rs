@@ -597,25 +597,14 @@ fn night_art(x: u32, y: u32) -> bool {
 }
 
 /// The plant works' (2026-11-04) ground outside the live copies
-/// (`tools/levels/factory_works.py`): the emergency lamps (a 4 x 3 housing
-/// from a pixel up and left of each bulb), the truck's hazard lights, the
+/// (`tools/levels/factory_works.py`): the truck's hazard lights, the
 /// lift's landing and the mine cart's rails (rock, so the material differs
 /// there too).
-const WORKS_ART: [Box4; 10] = [
-    (711, 107, 4, 3),
-    (1149, 107, 4, 3),
-    (799, 291, 4, 3),
-    (1159, 299, 4, 3),
-    (179, 329, 4, 3),
-    (469, 329, 4, 3),
-    (43, 405, 1, 2),
-    (175, 404, 2, 2),
-    (1186, 456, 12, 3),
-    (10, 473, 181, 1),
-];
-/// Where the plant works' ground is rock After Dark's is not: the landing
-/// and the rails.
-const WORKS_ROCK: [Box4; 2] = [(1186, 456, 12, 3), (10, 473, 181, 1)];
+const WORKS_ART: [Box4; 4] = [(43, 405, 1, 2), (175, 404, 2, 2), (1186, 456, 12, 3), (10, 473, 181, 1)];
+/// Where the plant works' ground is rock After Dark's is not: the landing,
+/// the rails and (2026-11-05) the Dirt-ball line's end crate, After Dark's
+/// dirt (`factory_works.py`'s `CRATE`).
+const WORKS_ROCK: [Box4; 3] = [(1186, 456, 12, 3), (10, 473, 181, 1), (1053, 330, 60, 35)];
 /// The truck's cab window, glowing dimly in `cab`.
 const CAB_BOX: Box4 = (50, 378, 23, 16);
 
@@ -746,16 +735,9 @@ fn the_new_factory_bakes_as_after_dark() {
             10,
             ", animation: Pulse(period_ms: 2000, low: 0, high: 100, shape: Square)",
         ),
-        // The plant works' (`factory_works.py`'s `EMERGENCY_GROUP`,
-        // `HAZARD_GROUP`, `CAB_GROUP`); the strips are all live copies now,
-        // so no static strip brings a group of a new colour.
-        night(
-            "emergency",
-            r##"Tint("#ff2010")"##,
-            0,
-            70,
-            ", animation: Pulse(period_ms: 2000, low: 50, high: 100)",
-        ),
+        // The plant works' (`factory_works.py`'s `HAZARD_GROUP`,
+        // `CAB_GROUP`); the strips are all live copies now, so no static
+        // strip brings a group of a new colour.
         night(
             "hazard",
             r##"Tint("#ffa020")"##,

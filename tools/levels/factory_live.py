@@ -121,7 +121,7 @@ NOTES = (
     "that roll up the incline into the crate, its belt red when stopped and white when running; "
     "a lift, a mine cart and a forklift go about their work; a big blast or a quick run of kills "
     "sounds the roof's sirens and tints the lamps red; shooting the generator by the gauge cuts "
-    "the power (red emergency lamps, the machines stopped) until it is repaired; strips can be "
+    "the power (the lamps out, the machines stopped) until it is repaired; strips can be "
     "shot out and are mended now and then, the lab's flask bubbles and the office panes shatter."
 )
 

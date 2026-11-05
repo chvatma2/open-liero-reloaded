@@ -1,6 +1,6 @@
 // The Dirt-ball line's default script (the plant works, 2026-11-04): while
 // it runs (any state but Stopped) the stamp counts down on its LEDs (Lit 1
-// to Lit 7, a tick each), drops its die onto the belt (crushing what is
+// to Lit 7, a tick each), drops its die onto the belt (killing a worm
 // under it), thumps, rises again, and a dirt ball leaves it along the belt,
 // through the drive and up the incline, falling into the crate at the
 // top, where it vanishes. Stopped (the level script's shift, or a power
@@ -12,15 +12,18 @@ fn DROP() { 400 }   // the die's speed down, px a second (4 a tick)
 fn PRESS() { 15 }   // ticks it stays down
 fn RISE() { 60 }    // its speed up, px a second
 fn BELT() { 12 }    // the belt's speed, px a second
+fn LIFT() { 2 }     // a ball's speed up in the drive, onto the incline's foot
 fn FALL() { 60 }    // a ball's speed falling into the crate
+fn KILL() { 1000 }  // the damage the die deals a worm it wedges
 
 // A ball's path, from its place leaving the stamp (each ball's own place
-// is BASE() x (i - 1) px further along the flat run): to the drive, out
-// of it at the incline's foot, up to its top, over the end, down into
-// the crate.
+// is BASE() x (i - 1) px further along the flat run): into the drive
+// (inside its casing, drawn over the balls), through it and up onto the
+// incline's foot (the user's playtest, 2026-11-05: no jump), up to its
+// top, over the end, down into the crate.
 fn BASE() { 4 }
 fn BALLS() { 6 }
-fn FLAT_END() { 26 }
+fn IN() { 32 }
 fn FOOT() { [66, -3] }
 fn TOP() { [91, -28] }
 fn OVER() { 96 }
@@ -31,7 +34,7 @@ fn LIT() { ["Lit 1", "Lit 2", "Lit 3", "Lit 4", "Lit 5", "Lit 6", "Lit 7"] }
 
 // `mem.run` (running), `mem.lit` (LEDs lit), `mem.b<i>` each ball's leg
 // of the path: 0 waiting in the stamp (hidden), 1 the flat run, 2 the
-// incline, 3 over the end, 4 falling.
+// drive, 3 the incline, 4 over the end, 5 falling.
 fn start() {
   this.mem.run = false;
   this.mem.lit = 0;
@@ -113,7 +116,7 @@ fn arrived(name) {
     return;
   }
   for i in 1..=BALLS() {
-    if name == KEY(i) + "_x" || (name == KEY(i) + "_y" && this.leg(i) == 4) {
+    if name == KEY(i) + "_x" || (name == KEY(i) + "_y" && this.leg(i) == 5) {
       this.next(i);
       return;
     }
@@ -124,6 +127,10 @@ fn arrived(name) {
 fn blocked(name) {
   if name == "die_y" { this.after(PRESS(), "rise"); }
 }
+
+// A worm the die wedges dies at once (the user's playtest, 2026-11-05):
+// the press is no place to stand.
+fn crushed(worm) { this.hurt(worm, KILL()); }
 
 // A ball leaves the stamp: the first one waiting.
 fn press() {
@@ -142,24 +149,14 @@ fn press() {
 
 // Ball `i` on to its next leg.
 fn next(i) {
-  let k = KEY(i);
-  let b = BASE() * (i - 1);
   let leg = this.leg(i);
-  if leg == 1 {
-    // Through the drive, out at the incline's foot.
-    this.set(k + "_x", FOOT()[0] - b);
-    this.set(k + "_y", FOOT()[1]);
-    this.set_leg(i, 2);
-  } else if leg == 2 {
-    this.set_leg(i, 3);
-  } else if leg == 3 {
-    this.set_leg(i, 4);
-  } else if leg == 4 {
+  if leg == 5 {
     // Into the crate.
-    this.set(k + "_on", 0);
+    this.set(KEY(i) + "_on", 0);
     this.set_leg(i, 0);
     return;
   }
+  this.set_leg(i, leg + 1);
   this.roll(i);
 }
 
@@ -171,14 +168,18 @@ fn roll(i) {
   let b = BASE() * (i - 1);
   let leg = this.leg(i);
   if leg == 1 {
-    this.move_to(k + "_x", FLAT_END() - b, BELT());
+    this.move_to(k + "_x", IN() - b, BELT());
   } else if leg == 2 {
+    // Inside the casing: on to the foot, up its 3 px before it is out.
+    this.move_to(k + "_x", FOOT()[0] - b, BELT());
+    this.move_to(k + "_y", FOOT()[1], LIFT());
+  } else if leg == 3 {
     // Up the incline, 45 degrees: each axis at the belt's speed / 1.4.
     this.move_to(k + "_x", TOP()[0] - b, BELT() * 10 / 14);
     this.move_to(k + "_y", TOP()[1], BELT() * 10 / 14);
-  } else if leg == 3 {
-    this.move_to(k + "_x", OVER() - b, BELT());
   } else if leg == 4 {
+    this.move_to(k + "_x", OVER() - b, BELT());
+  } else if leg == 5 {
     this.move_to(k + "_y", RIM(), FALL());
   }
 }

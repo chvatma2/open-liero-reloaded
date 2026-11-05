@@ -7495,7 +7495,13 @@ explosions damage the destructible ones.
   0 (a live world nobody was crushed in hashes as before), cloned and
   transferred, a count list of another length refused;
   `olr_proto::PROTOCOL_VERSION` 10. The constants are the issue's
-  (`live.rs`); a change to them moves the live goldens.
+  (`live.rs`); a change to them moves the live goldens. A part built to
+  kill says so in its script (2026-11-05, the user's playtest of Liero
+  Factory Reloaded's press): `crushed(worm)` hears each chunk of the
+  copy's (`ScriptEvent::Crushed`) and `this.hurt(worm, damage)`
+  (`LiveCommand::Hurt`, 1 to `MAX_HURT` 1000) deals the rest by nobody
+  once the script phase's runs are over; the press's script deals 1000,
+  so a wedged worm dies in the tick of its first chunk.
 - **Spawning beside parts (#90).** `FindSpot` reads the query, so nothing
   spawns in a part; a worm's fixed spawn whose 6 × 6 square meets a part
   falls back to `FindSpot`. For that the copies start (values set, index

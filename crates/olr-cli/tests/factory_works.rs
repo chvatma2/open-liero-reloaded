@@ -9,7 +9,7 @@ use olr_content::Content;
 use olr_math::Vec2;
 use olr_sim::{EventKind, Keys, LiveGroup, TickEvents, World};
 
-use super::reloaded::{CLASSIC, FACTORY, live_copy, packs_dir};
+use super::reloaded::{CLASSIC, FACTORY, factory_world, live_copy, packs_dir};
 
 /// `level.rhai`'s constants (ticks).
 const QUIET: u32 = 1500;
@@ -124,7 +124,9 @@ fn wreck(w: &mut World, id: &str, damage: f32, wrecked: &str) {
 /// The line's shift: Stopped QUIET ticks, the horn, HORN ticks later it
 /// runs (Lit 1 to Lit 7, a STEP apart, the die down onto the belt and up
 /// again, balls leaving it and vanishing into the crate) for RUN ticks,
-/// then Stopped again.
+/// then Stopped again. A ball shown never jumps (the user's playtest,
+/// 2026-11-05: it rolls through the drive, not past it): at most a pixel
+/// a tick on each axis.
 #[test]
 fn the_line_runs_its_shift() {
     let mut m = idle_match(1, QUIET + HORN + RUN + 200);
@@ -133,6 +135,7 @@ fn the_line_runs_its_shift() {
     let index = line.index();
     let (mut horns, mut entries) = (Vec::new(), Vec::new());
     let (mut die_max, mut shown, mut hidden_again) = (0, false, false);
+    let mut balls: [Option<(i64, i64)>; 6] = [None; 6];
     let mut last = state(m.world(), "line").to_owned();
     assert_eq!(last, "Stopped");
     while m.step() {
@@ -154,6 +157,21 @@ fn the_line_runs_its_shift() {
         let c = live_copy(w, "line");
         die_max = die_max.max(c.value("die_y").unwrap() / olr_sim::LIVE_SUBPIXELS);
         let on = (1..=6).any(|i| c.value(&format!("b{i}_on")).unwrap() != 0);
+        for (i, last) in balls.iter_mut().enumerate() {
+            let v = |n: &str| c.value(&format!("b{}_{n}", i + 1)).unwrap();
+            let now = (v("on") != 0).then(|| (v("x"), v("y")));
+            if let (Some((x0, y0)), Some((x1, y1))) = (*last, now) {
+                let step = (x1 - x0).abs().max((y1 - y0).abs());
+                assert!(
+                    step <= olr_sim::LIVE_SUBPIXELS,
+                    "ball {} jumped at {t}: {:?} to {:?}",
+                    i + 1,
+                    (x0, y0),
+                    (x1, y1)
+                );
+            }
+            *last = now;
+        }
         shown |= on;
         hidden_again |= shown && c.value("b1_on").unwrap() == 0 && c.value("b1_x").unwrap() != 0;
     }
@@ -173,13 +191,47 @@ fn the_line_runs_its_shift() {
     assert!(shown && hidden_again, "a ball leaves the stamp and vanishes into the crate");
 }
 
+/// The press kills (the user's playtest, 2026-11-05): a worm standing on
+/// the belt under the die (`factory_works.py`'s `DIE`, x 933-965, the belt
+/// at y 351) dies the tick the die first wedges it, dealt by nobody, the
+/// die going on down onto the belt.
+#[test]
+fn the_press_kills_a_worm_it_wedges() {
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    let mut w = factory_world(&content, (949, 345));
+    run(&mut w, 100, |_, _| ());
+    let wm = &w.worms()[0];
+    assert!(wm.alive && wm.on_ground && (940.0..958.0).contains(&wm.pos.x), "under the die: {:?}", wm.pos);
+    let line = live_copy(&w, "line");
+    let (index, lit) = (line.index(), line.setup().state("Lit 1").unwrap());
+    w.set_live_state(index, lit).unwrap();
+    let (mut crushed, mut killed, mut die) = (None, None, 0);
+    let mut t = 0;
+    run(&mut w, 8 * STEP, |w, ev| {
+        t += 1;
+        die = die.max(live_copy(w, "line").value("die_y").unwrap() / olr_sim::LIVE_SUBPIXELS);
+        for e in ev.iter() {
+            match e.kind {
+                EventKind::Crushed { worm: 0, copy } if crushed.is_none() => {
+                    assert_eq!(copy, index, "the line's die");
+                    crushed = Some(t);
+                }
+                EventKind::Kill { victim: 0, killer } if killed.is_none() => killed = Some((t, killer)),
+                _ => (),
+            }
+        }
+    });
+    let crushed = crushed.expect("the die wedged the worm");
+    assert_eq!(killed, Some((crushed, -1)), "killed by nobody the tick it was crushed");
+    assert_eq!(die, 18, "the die goes on down onto the belt");
+}
+
 /// The generator wrecked cuts the power: every strip Dark, the level's
-/// lamp groups out, the emergency lamps lit, the line, the crane, the lift
+/// lamp groups out, the line, the crane, the lift
 /// and the mine cart stopped; repaired REPAIR ticks later, all come back.
 #[test]
 fn the_generator_cuts_the_power_until_it_is_repaired() {
     let mut w = world();
-    let emergency = group(&w, "emergency");
     // Blasts under the alarm's 5.
     wreck(&mut w, "generator", 4.0, "Wrecked");
     assert_eq!(state(&w, "siren"), "Normal", "small blasts sound no alarm");
@@ -190,7 +242,6 @@ fn the_generator_cuts_the_power_until_it_is_repaired() {
     for g in LAMP_GROUPS {
         assert_eq!(group(&w, g).intensity, 0, "{g}");
     }
-    assert_eq!(group(&w, "emergency").intensity, 1000);
     for (id, off) in [("line", "Stopped"), ("crane", "Off"), ("lift", "Off"), ("cart", "Off")] {
         assert_eq!(state(&w, id), off, "{id}");
     }
@@ -204,7 +255,6 @@ fn the_generator_cuts_the_power_until_it_is_repaired() {
     for g in LAMP_GROUPS {
         assert_eq!(group(&w, g), LiveGroup::OWN, "{g}");
     }
-    assert_eq!(group(&w, "emergency"), emergency, "the emergency lamps dark again");
     for (id, on) in [("crane", "Idle"), ("lift", "Idle"), ("cart", "Stopped")] {
         assert_eq!(state(&w, id), on, "{id}");
     }

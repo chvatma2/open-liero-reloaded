@@ -66,19 +66,6 @@
             surface: "glass",
         ),
         (
-            id: "drive-lamp",
-            name: "Drive lamp",
-            kind: Drawn(
-                material: Background,
-                at: (106, 76),
-                size: (2, 1),
-            ),
-            glow: (
-                strength: 100,
-                group: "running",
-            ),
-        ),
-        (
             id: "ball-1",
             name: "Ball 1",
             kind: Drawn(
@@ -154,6 +141,29 @@
             glow: (
                 strength: 60,
                 group: "balls",
+            ),
+        ),
+        (
+            id: "drive",
+            name: "Drive",
+            kind: Drawn(
+                material: Rock,
+                at: (80, 73),
+                size: (33, 15),
+            ),
+            surface: "metal",
+        ),
+        (
+            id: "drive-lamp",
+            name: "Drive lamp",
+            kind: Drawn(
+                material: Background,
+                at: (106, 76),
+                size: (2, 1),
+            ),
+            glow: (
+                strength: 100,
+                group: "running",
             ),
         ),
     ],

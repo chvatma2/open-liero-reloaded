@@ -220,19 +220,6 @@
             ),
         ),
         (
-            id: "emergency",
-            name: "Emergency",
-            locked: true,
-            kind: Drawn(
-                material: Background,
-            ),
-            glow: (
-                strength: 100,
-                group: "emergency",
-                mask: true,
-            ),
-        ),
-        (
             id: "hazards",
             name: "Hazards",
             locked: true,
@@ -243,6 +230,15 @@
                 strength: 100,
                 group: "hazard",
             ),
+        ),
+        (
+            id: "crate",
+            name: "Crate",
+            locked: true,
+            kind: Drawn(
+                material: Rock,
+            ),
+            surface: "wood",
         ),
     ],
     glow_groups: [
@@ -348,17 +344,6 @@
                 low: 0,
                 high: 100,
                 shape: Square,
-            ),
-        ),
-        (
-            id: "emergency",
-            colour: Tint("#ff2010"),
-            intensity: 0,
-            reach: Pixels(70),
-            animation: Pulse(
-                period_ms: 2000,
-                low: 50,
-                high: 100,
             ),
         ),
         (

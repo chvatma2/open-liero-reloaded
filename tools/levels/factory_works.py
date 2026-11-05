@@ -12,11 +12,12 @@
 #   size of its layer's box.
 # - `ground(run, out)` edits the ground while it is alone (issue #75):
 #   the pixels the Dirt-ball line takes but its stamp's (the belt's stripe,
-#   the dirt balls painted on the incline: the stamp is the Console's
-#   piece), the lift's shaft at the hall's far
-#   right down into the mine's big chamber, the mine cart's rails, the
-#   emergency lamps (group `emergency`, dark until a blackout), the truck's
-#   hazard lights and lit cab.
+#   the drive's casing, the dirt balls painted on the incline: the stamp
+#   is the Console's piece), the lift's shaft at the hall's far right down
+#   into the mine's big chamber, the mine cart's rails, the truck's hazard
+#   lights and lit cab, and the line's end crate made rock. (The emergency
+#   lamps, red bulbs lit in a blackout, are gone: the user's playtest,
+#   2026-11-05, their bulbs read as red dots hanging in the air.)
 # - `place(run, out)` places the copies new to the level (the lift, the
 #   mine cart, the forklift); the others take pieces' places
 #   (`factory_assets.py`'s `PIECES`).
@@ -38,7 +39,9 @@ W, H = 1200, 480
 # sign's place), its die (the cylinder and the pressing plate) and a ram
 # drawn behind the housing that shows as the die drops; the LED column as
 # the stamp's countdown; the belt's red stripe (flat run and incline) as
-# the line's status light; the drive's running lamp; six dirt balls.
+# the line's status light; six dirt balls; the drive's casing over them
+# (they roll through it, the user's playtest, 2026-11-05) and its running
+# lamp on it.
 LINE_RECT = (909, 269, 150, 88)
 HOUSING = (933, 269, 33, 57)
 DIE = (933, 326, 33, 7)
@@ -50,6 +53,7 @@ LED_LIT, LED_DARK = (255, 255, 0), (24, 24, 16)
 STRIPE_BOXES = [(909, 352, 80, 5), (1022, 326, 29, 30)]  # flat run, incline
 STRIPE_RUN, STRIPE_EDGE_RUN = (236, 236, 244), (120, 122, 132)
 STRIPE_GLOW = 170
+DRIVE = (989, 342, 33, 15)  # the drive's casing within the line's box (down to row 364)
 DRIVE_LAMP = (1015, 345, 2, 1)
 LAMP_OFF, LAMP_ON = (30, 58, 34), (90, 255, 110)
 BALL_AT = (958, 346)  # a ball's top-left leaving the stamp, on the belt
@@ -57,6 +61,10 @@ BALL = (1024, 343)  # the lowest of the incline's painted balls (4 x 4)
 INCLINE_BALLS = (1015, 315, 38, 37)  # their box (the crate's dirt from x 1053)
 BALLS = 6
 BALL_STEP = 4  # each ball's own place along the flat run, ball i at BALL_AT + 4 (i - 1)
+# The crate at the line's end, which the balls fall into: After Dark's dirt,
+# made rock (the user's playtest, 2026-11-05: a crate dug away left the
+# balls vanishing in the air), wood.
+CRATE = (1053, 330, 60, 35)
 
 # The lift: a shaft at the hall's far right, right of the ramp's mouth
 # (open to x 1184 on the hall's floor row, 366), from the floor down
@@ -113,12 +121,6 @@ BURNER_ART = (90, 140, 255)
 # window; its second, fifth and sixth are broken already).
 PANE = (719, 151, 19, 22)
 PANES = [("pane-1", (719, 151)), ("pane-3", (759, 151)), ("pane-4", (779, 151))]
-
-# The emergency lamps: a dark housing round a red bulb on the wall of each
-# area, glowing only in a blackout (the level script).
-EMERGENCY = [(712, 108), (1150, 108), (800, 292), (1160, 300), (180, 330), (470, 330)]
-EMERGENCY_GROUP = ("emergency", "ff2010", 0, 70, "Pulse(period_ms: 2000, low: 50, high: 100)")
-EM_HOUSING, EM_BULB = "2a2a2e", "ff3020"
 
 # The truck: hazard lights front and rear, its dark cab window lit dimly.
 HAZARDS = [(43, 405, 1, 2), (175, 404, 2, 2)]  # beside the headlight, above the tail light: on the truck's rock
@@ -236,6 +238,9 @@ def make_line_art(rock, dirt):
     # The ram: the die's cylinder (its top row's columns) continued upward.
     rx, ry, rw, rh = RAM
     paint("line-ram", {(x, y): rock[326][x][:3] for y in range(ry, ry + rh) for x in range(rx, rx + rw)})
+    dx, dy, dw, dh = DRIVE
+    paint("line-drive", {(x, y): rock[y][x][:3] for y in range(dy, dy + dh) for x in range(dx, dx + dw)
+                         if rock[y][x][3]})
     lx, ly, lw, lh = DRIVE_LAMP
     paint("line-lamp", {(x, ly): LAMP_OFF for x in range(lx, lx + lw)})
     picture("line-lamp-on.png", DRIVE_LAMP, {(x, ly): LAMP_ON + (255,) for x in range(lx, lx + lw)})
@@ -438,8 +443,10 @@ def ground(run, out):
     new elements' ids (locked again by the caller)."""
     el = lambda *a: run("level", "element", *a)
     rock, dirt = layer("rock"), layer("dirt")
-    # The Dirt-ball line's pixels: the stripe and the incline's balls.
+    # The Dirt-ball line's pixels: the stripe, the drive's casing and the
+    # incline's balls.
     el("erase", out, "rock", "--mask", white("line-stripe.png", stripe_pixels(rock), SCRATCH))
+    el("erase", out, "rock", "--rect", ",".join(map(str, DRIVE)))
     el("erase", out, "dirt", "--mask", white("line-balls.png", incline_balls(dirt), SCRATCH))
     # The doorway's threshold under the forklift's travel: its art on the
     # backdrop, its rock out.
@@ -479,18 +486,6 @@ def ground(run, out):
     el("draw", out, "rock", "--mask", os.path.join(SCRATCH, "rails-mask.png"),
        "--tile", os.path.join(SCRATCH, "rails-tile.png"))
     new = []
-    # The emergency lamps.
-    add_group(run, out, *EMERGENCY_GROUP)
-    em = added(el("add-layer", out, "--material", "background", "--name", "Emergency"))
-    bulbs = []
-    for x, y in EMERGENCY:
-        assert all(mat[yy][xx][:3] == (0, 0, 0) for yy in range(y - 4, y + 5) for xx in range(x - 5, x + 7)), (x, y)
-        el("draw", out, em, "--rect", f"{x - 1},{y - 1},4,3", "--colour", EM_HOUSING)
-        el("draw", out, em, "--rect", f"{x},{y},2,1", "--colour", EM_BULB)
-        bulbs += [(x, y), (x + 1, y)]
-    el("set", out, em, "--glow", "100", "--glow-group", EMERGENCY_GROUP[0])
-    el("glow", out, em, "--mask", grey(bulbs, "emergency-glow.png"), "--strength", "100")
-    new.append(em)
     # The truck's hazard lights and its cab.
     add_group(run, out, *HAZARD_GROUP)
     # Rock: the lights are the truck's (its rock stays solid).
@@ -506,16 +501,17 @@ def ground(run, out):
     cab = added(el("extract", out, "rock", "--mask", white("cab.png", window, SCRATCH), "--name", "Cab"))
     el("set", out, cab, "--glow", str(CAB_GLOW), "--glow-group", CAB_GROUP[0])
     new.append(cab)
+    # The crate at the line's end: its dirt onto a rock layer, wood.
+    kx, ky, kw, kh = CRATE
+    crate = {(x, y): dirt[y][x][:3] for y in range(ky, ky + kh) for x in range(kx, kx + kw) if dirt[y][x][3]}
+    el("erase", out, "dirt", "--mask", white("crate.png", crate, SCRATCH))
+    paint("crate", crate, SCRATCH)
+    box = added(el("add-layer", out, "--material", "rock", "--name", "Crate"))
+    el("draw", out, box, "--mask", os.path.join(SCRATCH, "crate-mask.png"),
+       "--tile", os.path.join(SCRATCH, "crate-tile.png"))
+    el("set", out, box, "--surface", "wood")
+    new.append(box)
     return new
-
-
-def grey(pixels, name):
-    rows = [[0] * W for _ in range(H)]
-    for x, y in pixels:
-        rows[y][x] = 255
-    path = os.path.join(SCRATCH, name)
-    png(path, W, H, rows, False)
-    return path
 
 
 def place(run, out, assets):

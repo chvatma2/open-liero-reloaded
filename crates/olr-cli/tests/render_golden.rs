@@ -520,8 +520,7 @@ fn factory_line() {
 }
 
 /// The plant works: the blackout, the generator Wrecked before the first
-/// tick (`--live`): the strips and the lamp groups out, the red emergency
-/// lamps lit (tick 60).
+/// tick (`--live`): the strips and the lamp groups out (tick 60).
 #[test]
 fn factory_blackout() {
     factory_golden("factory-blackout.png", "60", "900,200", &["--live", "generator=Wrecked"]);

@@ -476,8 +476,8 @@ Remade OLX content is named "<Old name> Reloaded".
     floor, its art on the backdrop, so its wheels roll back); the **generator** (the gauge's mounting: status lamps and a
     vent, health 40): wrecked, it **blacks the plant out** (the lamps'
     groups `lamps`, `cool`, `sodium` and `mine` at 0, every strip Dark,
-    the line, the crane, the lift and the cart stopped, the red
-    **emergency lamps** lit) until it is repaired 30 s later. The
+    the line, the crane, the lift and the cart stopped) until it is
+    repaired 30 s later. The
     **alarm**: a blast of 5 damage or more (Classic's heaviest: its
     bullets do 1), or three kills within 10 s,
     sounds the roof's **siren** (the two speaker rings, two turning

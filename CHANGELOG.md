@@ -264,8 +264,9 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   element's whole glow mask.
 - Liero Factory Reloaded's plant works: a horn starts the shift and the
   stamp under the 13-37 sign counts down on its LEDs, drops onto the belt
-  and presses dirt balls that ride the belt and the incline into the
-  crate; the belt is the line's status light, red while it stands and
+  (killing a worm caught under it) and presses dirt balls that ride the
+  belt, through the drive and up the incline into the crate (rock, so a
+  blast cannot leave them falling into nothing); the belt is the line's status light, red while it stands and
   white while it runs. A lift runs down a new shaft into the mine, a
   mine cart rattles along new rails with its lamps lit, and a forklift
   backs away from the warehouse's crates, beeping, and drives up again.
@@ -273,16 +274,16 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   (two rings of turning red beams) for ten seconds and tint the plant's
   lamps red.
   Shooting the generator round the gauge cuts the power: the lamps go
-  out, red emergency lamps pulse, the line, the crane, the lift and the
-  cart stop, until it is repaired 30 s later. Every strip light can be
-  shot out (maintenance mends one every 20 s) and flickers when a blast
+  out, the line, the crane, the lift and the cart stop, until it is
+  repaired 30 s later. Every strip light can be shot out (maintenance mends one every 20 s) and flickers when a blast
   goes off nearby; three office window panes shatter; the lab's flask
   bubbles over a blue burner; the truck's hazard lights blink and its
   cab is lit; a kill cuts the security screen to the camera nearest it.
   New built-in assets: Dirt-ball line, Lift, Mine cart, Forklift,
   Generator, Siren, Lab flask and Window pane (the Console and the
   Warning beacon stay in the library); the Strip light gains `Dark` and
-  `Broken` and health, the Crane an `Off` state. Scripts can set the
+  `Broken` and health, the Crane an `Off` state. Scripts can hurt a worm (`hurt`), hear a copy's part wedge
+  one (`crushed`) and set the
   level's glow groups (`group_intensity`, `group_colour`,
   `group_reset`) and read a copy's centre (`centre_x`, `centre_y`).
 
