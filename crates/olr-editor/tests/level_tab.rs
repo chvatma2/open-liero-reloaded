@@ -1163,3 +1163,31 @@ fn liero_factory_reloaded_opens_with_its_copies() {
     run(&mut s, A::ShowTab(DocTab::Level));
     assert!(!s.dirty());
 }
+
+/// The loose dirt design (final review I2): with copies placed, a loose
+/// material's new rates reach the played level and the saved `level.ron`,
+/// not only the ground's list.
+#[test]
+fn a_loose_materials_new_rates_reach_the_level_with_copies_placed() {
+    use olr_format::levels::LooseSource;
+    let Some(root) = content() else { return };
+    let (_t, _t2, mut s) = placed(&root);
+    edit_ground(&mut s);
+    run(&mut s, A::AddLoose);
+    run(&mut s, A::ShowTab(DocTab::Level));
+    assert_eq!(s.document().unwrap().playable().loose, [LooseSource::new("loose", "Loose dirt")], "added");
+    // Its rates alone: the same ids, the ground's edit applied on the way
+    // back.
+    edit_ground(&mut s);
+    let steep = LooseSource { repose: 70, gravity: 400, ..LooseSource::new("loose", "Loose dirt") };
+    run(&mut s, A::SetLoose { id: "loose".into(), material: steep.clone() });
+    run(&mut s, A::ShowTab(DocTab::Level));
+    let doc = s.document().unwrap();
+    assert_eq!(doc.playable().loose, std::slice::from_ref(&steep), "played");
+    let pack = doc.to_pack();
+    let olr_edit::pack::Source::Level(l) = &pack.source else { panic!("a level") };
+    assert_eq!(l.loose, std::slice::from_ref(&steep), "saved");
+    run(&mut s, A::Undo);
+    let doc = s.document().unwrap();
+    assert_eq!(doc.playable().loose, [LooseSource::new("loose", "Loose dirt")], "undone");
+}

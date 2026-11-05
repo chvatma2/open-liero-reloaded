@@ -165,7 +165,10 @@ and the colour image that follows it (`ColorMap`).
   to)` (cell indices, journaled) moves a grain with its kind;
   `ColorMap::move_grain(from, to)` replays a move on the colour image (the
   grain's art block to `to`, glowing none; the backdrop and its glow at
-  `from`; both marked dirty; `a_moved_grain_takes_its_colour`). `take_touched()` drains the carves' and dirt edits' rectangles (kept only
+  `from`; both marked dirty; `a_moved_grain_takes_its_colour`). `rebuild_area` takes the kinds with the material
+  (final review I1: else the colour map's terrain drifted from the
+  world's after a lost or restored area, which the game's debug drift
+  check panics on; `a_rebuild_takes_the_loose_kinds`). `take_touched()` drains the carves' and dirt edits' rectangles (kept only
   with a layer, not journaled) so loose dirt wakes there; `load_loose`
   (state transfer, after `load_cells`; all or nothing, seals the journal).
   `material_hash` (the oracle's) never reads kinds. Tests: `tests/loose.rs`.

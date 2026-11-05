@@ -566,3 +566,18 @@ fn a_moved_grain_takes_its_colour() {
     c.move_grain((9, 9), (1, 0));
     assert_eq!(rows(c.material()), ["R.R", "RDR", "RRR"], "outside the map: nothing");
 }
+
+/// The loose dirt design (final review I1): a rebuild takes the kinds with
+/// the material, so the colour map's terrain stays the world's after a
+/// grain moved inside a lost or restored area.
+#[test]
+fn a_rebuild_takes_the_loose_kinds() {
+    let t = map(&["RDR", "R.R", "RRR"]).with_loose(vec![0, 1, 0, 0, 0, 0, 0, 0, 0]).unwrap();
+    let mut c = color_map(&t, 2, theme(vec![], None));
+    assert_eq!(c.material(), &t);
+    let mut sim = t.clone();
+    sim.move_grain(1, 4);
+    c.rebuild_area(Area { x0: 0, y0: 0, x1: 3, y1: 3 }, &sim);
+    assert_eq!(c.material(), &sim);
+    assert_eq!(c.material().loose(1, 1), 1, "the grain's kind");
+}

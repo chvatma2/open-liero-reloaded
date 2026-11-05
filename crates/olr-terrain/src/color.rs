@@ -769,6 +769,9 @@ impl ColorMap {
                 let m = material.material(x, y).unwrap_or(Material::Rock);
                 let i = y as usize * self.material.width() as usize + x as usize;
                 self.material.cells[i] = m as u8;
+                if let Some(kinds) = self.material.loose.as_mut() {
+                    kinds[i] = material.loose(x, y);
+                }
                 let (x, y) = (x as u32, y as u32);
                 match m {
                     Material::Background => {
