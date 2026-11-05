@@ -239,8 +239,14 @@ on screen or offscreen.
   composites, only the rows of beams whose shadows are not as last drawn
   (a `u64` of dirty beams; `prepare` compares `same_shadows`: the
   geometry bit for bit and the layer, not the light, so a pulsing group
-  keeps its rows; `LookState::write`,
-  `upload` and a beam map's sync mark all), none without beams. Hidden
+  keeps its rows; `upload` and a beam map's sync mark all; the loose
+  dirt design: `LookState::write`'s dirty rectangle marks only the
+  beams of the last packed frame whose reach box it touches,
+  `BeamShadow::stale_rect`, `reach_box`: the box of the source span, `at
+  ± half`, and the far end, `at + dir × reach ± (half + reach × (tan +
+  0.03) + 0.5)`, grown by 2 px; `a_reach_box_holds_the_lit_wedge_and_the_source`,
+  `a_far_terrain_change_keeps_a_beams_rows`,
+  `a_change_in_reach_redraws_only_that_beam`), none without beams. Hidden
   for tests: `beam_shadow_map`, `beam_shadow_rows`, `beam_shadow_builds`,
   `beam_shadow_rows_drawn`. **Where it shows** (judged
   on Liero Factory After Dark, 2026-10-25): the surface term adds it to the light before

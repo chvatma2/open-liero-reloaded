@@ -1112,3 +1112,52 @@ fn a_far_slanted_face_is_lit_evenly() {
         assert!(w[1] > 0.5 * w[0].max(w[2]), "row {}: {w:?} drops out", 27 + i);
     }
 }
+
+/// The loose dirt design: the patch's beam narrowed to 5° (its reach box
+/// x 16 to 94, y 20 to 45) and a narrow live beam far left pointing down
+/// (x −6 to 18): a frame's rows, the level's first.
+fn two_far_beams() -> (ColorMap, olr_look::LookFrame) {
+    let mut map = level(|_, _| None, false);
+    assert!(map.set_glow_beams(Some(beams(true, 5))));
+    let mut look = beam_look(0);
+    look.live_beams.push(olr_look::glow_beams::GlowBeamSource {
+        at: [6.0, 8.0],
+        dir: [0.0, 1.0],
+        spread: 5f32.to_radians(),
+        ..live_at(0.0, 5.0)
+    });
+    (map, look)
+}
+
+/// A terrain change far outside every beam's reach keeps every beam's
+/// rows, and the frame is as a fresh renderer draws it.
+#[test]
+fn a_far_terrain_change_keeps_a_beams_rows() {
+    let Some(gpu) = offscreen() else { return };
+    let (mut map, look) = two_far_beams();
+    let mut r = renderer(&gpu, &map);
+    frame(&gpu, &mut r, &look);
+    assert_eq!(r.beam_shadow_rows_drawn(), 16, "both beams' rows");
+    map.apply(ColorEdit::Dirt { hole: 0, x: 110, y: 58 });
+    r.update_terrain(&mut map);
+    let kept = frame(&gpu, &mut r, &look);
+    assert_eq!(r.beam_shadow_rows_drawn(), 16, "no row drawn again");
+    let mut fresh = renderer(&gpu, &map);
+    assert!(kept.img == frame(&gpu, &mut fresh, &look).img, "kept rows draw as fresh ones");
+}
+
+/// A change in one beam's reach draws that beam's rows again, not the
+/// other's.
+#[test]
+fn a_change_in_reach_redraws_only_that_beam() {
+    let Some(gpu) = offscreen() else { return };
+    let (mut map, look) = two_far_beams();
+    let mut r = renderer(&gpu, &map);
+    frame(&gpu, &mut r, &look);
+    map.apply(ColorEdit::Dirt { hole: 0, x: 6, y: 40 });
+    r.update_terrain(&mut map);
+    let kept = frame(&gpu, &mut r, &look);
+    assert_eq!(r.beam_shadow_rows_drawn(), 16 + 8, "the live beam's rows only");
+    let mut fresh = renderer(&gpu, &map);
+    assert!(kept.img == frame(&gpu, &mut fresh, &look).img, "kept rows draw as fresh ones");
+}

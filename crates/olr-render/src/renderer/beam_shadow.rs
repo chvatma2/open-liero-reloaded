@@ -125,6 +125,25 @@ pub(super) fn rows(packed: &[f32], out: &mut Vec<ShadowRow>) {
     }
 }
 
+/// The world box a packed beam's shadows read the terrain in (the loose
+/// dirt design): the axis-aligned box of its source span (`at ± half`)
+/// and its far end (`at + dir × reach ± (half + reach × (tan + 0.03) +
+/// 0.5)`, the composite's wedge and penumbra), grown by 2 world pixels; a
+/// terrain change outside it changes none of its rows. `None` for a beam
+/// whose numbers are not finite (every change then touches it).
+fn reach_box(b: &[f32; super::glow_beams::BEAM_FLOATS]) -> Option<[f32; 4]> {
+    let (at, dir, half, tan, reach) =
+        ([b[0], b[1]], [b[2], b[3]], b[4].max(0.0), b[5].max(0.0), b[6].max(0.0));
+    let far = [at[0] + dir[0] * reach, at[1] + dir[1] * reach];
+    let aside = half + reach * (tan + 0.03) + 0.5;
+    let grow = 2.0;
+    let x0 = (at[0] - half).min(far[0] - aside) - grow;
+    let y0 = (at[1] - half).min(far[1] - aside) - grow;
+    let x1 = (at[0] + half).max(far[0] + aside) + grow;
+    let y1 = (at[1] + half).max(far[1] + aside) + grow;
+    [x0, y0, x1, y1].iter().all(|v| v.is_finite()).then_some([x0, y0, x1, y1])
+}
+
 /// Whether two packed beams cast the same shadows: the same source,
 /// direction, half-width, spread and reach (bit for bit) and layer (the
 /// group's sign); their light, group and region may differ (final review
@@ -276,6 +295,23 @@ impl BeamShadow {
         self.dirty = u64::MAX;
     }
 
+    /// The terrain changed within world rectangle `world` (the loose dirt
+    /// design: grains move every tick): only the beams of the last packed
+    /// frame whose [`reach_box`] it touches have their rows made again. A
+    /// beam not packed yet is new at its place, so `prepare` marks it.
+    pub(super) fn stale_rect(&mut self, world: olr_terrain::Rect) {
+        use super::glow_beams::BEAM_FLOATS;
+        let (x0, y0) = (world.x as f32, world.y as f32);
+        let (x1, y1) = (x0 + world.w as f32, y0 + world.h as f32);
+        for (i, b) in self.packed.as_chunks::<BEAM_FLOATS>().0.iter().enumerate().take(64) {
+            let touches =
+                reach_box(b).is_none_or(|[bx0, by0, bx1, by1]| x0 < bx1 && bx0 < x1 && y0 < by1 && by0 < y1);
+            if touches {
+                self.dirty |= 1 << i;
+            }
+        }
+    }
+
     /// Draws the rows of the frame's beams the map does not already show
     /// with `bind` (the level's [`BeamShadow::bind`]); whether a pass ran
     /// (none without rows, nor with every beam's kept).
@@ -373,6 +409,46 @@ mod tests {
     fn has(row: &ShadowRow, i: i64) -> bool {
         let r = i64::from(row.rays);
         (i - i64::from(row.start)).rem_euclid(r) < i64::from(row.count)
+    }
+
+    /// The loose dirt design: every lit point of a beam (the composite's
+    /// wedge and penumbra) and every source point lies in its reach box,
+    /// so a terrain change outside it leaves its rows as they are.
+    #[test]
+    fn a_reach_box_holds_the_lit_wedge_and_the_source() {
+        for angle in [0.0f32, 37.0, 90.0, 181.0, 300.0] {
+            for half in [0.5f32, 3.0, 20.0] {
+                for spread in [1.0f32, 40.0, 89.5] {
+                    let tan = spread.to_radians().tan();
+                    let reach = walk_reach(half, tan).min(512.0);
+                    let at = [300.0, 200.0];
+                    let b = packed(at, angle, half, spread, reach);
+                    let [x0, y0, x1, y1] = reach_box(&b.as_chunks::<BEAM_FLOATS>().0[0]).unwrap();
+                    let inside = |p: [f32; 2]| p[0] > x0 && p[0] < x1 && p[1] > y0 && p[1] < y1;
+                    let a = angle.to_radians();
+                    let (dir, perp) = ([a.cos(), a.sin()], [-a.sin(), a.cos()]);
+                    for k in 0..BEAM_POINTS {
+                        assert!(inside(point(at, dir, half, k)), "angle {angle} half {half} point {k}");
+                    }
+                    let mut along = 0.25;
+                    while along <= reach {
+                        let edge = half + along * tan + 0.5 + 0.03 * along;
+                        for side in [-edge, 0.0, edge] {
+                            let p = [
+                                at[0] + dir[0] * along + perp[0] * side,
+                                at[1] + dir[1] * along + perp[1] * side,
+                            ];
+                            assert!(inside(p), "angle {angle} half {half} spread {spread} p {p:?}");
+                        }
+                        along += 1.0;
+                    }
+                }
+            }
+        }
+        // Numbers not finite: no box (every change touches it).
+        let mut b = packed([1.0, 1.0], 0.0, 1.0, 10.0, 10.0);
+        b[0] = f32::NAN;
+        assert!(reach_box(&b.as_chunks::<BEAM_FLOATS>().0[0]).is_none());
     }
 
     #[test]

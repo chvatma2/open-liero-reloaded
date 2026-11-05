@@ -1121,10 +1121,14 @@ impl LookState {
     /// so light passes it); issue #67: the heat resets the pixels there
     /// that changed layer.
     pub(super) fn write(&mut self, queue: &super::uploads::Queue, map: &ColorMap, r: Rect) {
-        // Issue #100: the beams' shadows are traced over it again.
-        self.shadow.stale();
-        let Some(t) = &mut self.textures else { return };
+        let Some(t) = &mut self.textures else {
+            self.shadow.stale();
+            return;
+        };
         let wr = world_rect(r, t.art_scale);
+        // Issue #100: the beams' shadows are traced over it again; the
+        // loose dirt design: only those of the beams it lies in reach of.
+        self.shadow.stale_rect(wr);
         if let (Some(glow), Some(groups)) = (map.glow(), map.glow_groups()) {
             write_bytes(queue, &t.glow, (glow, map.width()), r);
             write_bytes(queue, &t.groups, (groups, t.level.0), wr);
