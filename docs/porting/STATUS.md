@@ -7501,7 +7501,10 @@ explosions damage the destructible ones.
   copy's (`ScriptEvent::Crushed`) and `this.hurt(worm, damage)`
   (`LiveCommand::Hurt`, 1 to `MAX_HURT` 1000) deals the rest by nobody
   once the script phase's runs are over; the press's script deals 1000,
-  so a wedged worm dies in the tick of its first chunk.
+  so a wedged worm dies in the tick of its first chunk. The production
+  line design adds `crushed_dirt(n)`: the dirt pixels one step of the
+  copy's parts crushed (`ScriptEvent::DirtCrushed`), so the press makes a
+  ball only from a stroke that crushed some.
 - **Parts push, carry and crush dirt (2026-11-06).** A moving rock part
   crushes the plain dirt it moves into (the user's playtest: Liero Factory
   Reloaded's press came down through the dirt on its belt and left it),

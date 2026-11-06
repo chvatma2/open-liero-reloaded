@@ -343,6 +343,12 @@ pub enum ScriptEvent {
         worm: i32,
         copy: u16,
     },
+    /// Copy `copy`'s moving parts crushed `cells` dirt pixels in a step
+    /// (the production line design's [`EventKind::DirtCrushed`]).
+    DirtCrushed {
+        copy: u16,
+        cells: u32,
+    },
 }
 
 impl ScriptEvent {
@@ -367,6 +373,7 @@ impl ScriptEvent {
             EventKind::LiveArrived { copy, prop } => ScriptEvent::Arrived { copy, prop },
             EventKind::LiveBlocked { copy, prop } => ScriptEvent::Blocked { copy, prop },
             EventKind::Crushed { worm, copy } => ScriptEvent::Crushed { worm, copy },
+            EventKind::DirtCrushed { copy, cells } => ScriptEvent::DirtCrushed { copy, cells },
             EventKind::Spawned { worm } => ScriptEvent::Spawned { worm },
             EventKind::Kill { victim, killer } => ScriptEvent::Killed { victim, killer },
             EventKind::Explosion { pos, damage, .. } => {

@@ -51,9 +51,10 @@ pub(crate) enum Handler {
     Hit,
     Wrecked,
     Crushed,
+    CrushedDirt,
 }
 
-pub(crate) const HANDLERS: [(Handler, &str, usize); 12] = [
+pub(crate) const HANDLERS: [(Handler, &str, usize); 13] = [
     (Handler::Start, "start", 0),
     (Handler::Tick, "tick", 0),
     (Handler::Entered, "entered", 1),
@@ -66,6 +67,7 @@ pub(crate) const HANDLERS: [(Handler, &str, usize); 12] = [
     (Handler::Hit, "hit", 1),
     (Handler::Wrecked, "wrecked", 0),
     (Handler::Crushed, "crushed", 1),
+    (Handler::CrushedDirt, "crushed_dirt", 1),
 ];
 
 /// One compiled script.
@@ -308,6 +310,13 @@ fn tick(inner: &Inner, ctx: &mut LiveCtx<'_>) {
                 // 2026-11-05: a part of this copy wedged a worm.
                 ScriptEvent::Crushed { worm, copy } if inst.copy == Some(copy) && c.has(Handler::Crushed) => {
                     ("crushed", alloc::vec![int(worm.into())])
+                }
+                // The production line design: this copy's moving parts
+                // crushed `cells` dirt pixels in a step.
+                ScriptEvent::DirtCrushed { copy, cells }
+                    if inst.copy == Some(copy) && c.has(Handler::CrushedDirt) =>
+                {
+                    ("crushed_dirt", alloc::vec![int(cells.into())])
                 }
                 ScriptEvent::Spawned { worm } if c.has(Handler::Spawned) => {
                     ("spawned", alloc::vec![int(worm.into())])

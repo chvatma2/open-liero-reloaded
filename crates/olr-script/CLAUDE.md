@@ -121,7 +121,10 @@ checks (`ScriptNames`, `check_level`), `move_to`, `stop`, `moving`,
   place reached: `EventKind::LiveBlocked`, in the same step, so the same
   tick), 2026-11-05's `crushed(worm)` (a rock part of this copy wedged
   worm `worm` and dealt it a crushing chunk: `EventKind::Crushed`, in the
-  same step, so the same tick), and issue #94's `hit(amount)` (an explosion took this copy's
+  same step, so the same tick), the production line design's
+  `crushed_dirt(n)` (this copy's moving rock parts crushed `n` dirt
+  pixels in one step: `EventKind::DirtCrushed`, once per step, the same
+  tick; test `tests/dirt.rs`' `crushed_dirt_reaches_its_copy_only`), and issue #94's `hit(amount)` (an explosion took this copy's
   health: `amount` the integer it lost, truncated toward zero, negative
   for a heal) and `wrecked()` (it reached 0), both from
   `EventKind::LiveDamaged`, emitted in the physics, so the same tick:
