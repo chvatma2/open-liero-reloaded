@@ -35,8 +35,14 @@ const SHOWN: u16 = 2;
 /// `ys` (pixels), its layer shown while `SHOWN` (starting at `shown`) is 1.
 fn block(at: (i32, i32), size: (u32, u32), xs: (i64, i64), ys: (i64, i64), shown: i64) -> LiveCopy {
     let prop = |target, (min, max): (i64, i64), default| LiveProp { name: None, target, min, max, default };
-    let part =
-        LivePart { kind: LivePartKind::Rock, layer: Some(0), at: (0, 0), picture: 0, glow_strength: 100 };
+    let part = LivePart {
+        kind: LivePartKind::Rock,
+        layer: Some(0),
+        at: (0, 0),
+        picture: 0,
+        glow_strength: 100,
+        clip: false,
+    };
     LiveCopy::new(LiveCopySetup {
         id: "block".into(),
         at,

@@ -7535,6 +7535,12 @@ explosions damage the destructible ones.
   the columns on them (leading end first, as a rising part carries
   them), and resting bonuses where their box is clear. A blocked thing
   stays; nothing is pushed or crushed by a belt.
+- **Clipped layers (2026-11-06).** The production line design: an asset's
+  plain Background layer may be `clip`ped (`olr-cli level element set
+  <id> --clip true` before `asset save`): a live copy draws it only
+  inside its rectangle, which follows `X` and `Y`, so the crane's cable
+  pays out below its trolley. Only background (a solid layer out of
+  sight would still be solid); a static copy draws it whole.
 - **Spawning beside parts (#90).** `FindSpot` reads the query, so nothing
   spawns in a part; a worm's fixed spawn whose 6 × 6 square meets a part
   falls back to `FindSpot`. For that the copies start (values set, index

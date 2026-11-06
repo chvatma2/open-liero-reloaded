@@ -15,7 +15,7 @@ fn prop(name: Option<&str>, target: LiveTarget, min: i64, max: i64, default: i64
 }
 
 fn part(kind: LivePartKind, layer: Option<u16>, at: (i32, i32), picture: u16) -> LivePart {
-    LivePart { kind, layer, at, picture, glow_strength: 100 }
+    LivePart { kind, layer, at, picture, glow_strength: 100, clip: false }
 }
 
 fn state(name: &str, values: Vec<(u16, i64)>, parts: Vec<LivePart>) -> LiveState {

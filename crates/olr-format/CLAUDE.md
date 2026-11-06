@@ -532,6 +532,10 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   "Live assets (issues #85-#94)"; the page `docs/formats/level.md`,
   `LiveFile`): `live.ron` (`LIVE_FILE`) and `live/` (`LIVE_DIR`), play
   files outside `editor/`, so `olr_pack::content_hash` covers them.
+  The production line design: `Element::clip` (a plain Background
+  image or drawn layer only, `check_elements`,
+  `clip_on_a_rock_layer_is_refused`) becomes `LivePartFile::clip` (a
+  rock part clipped refused by `check_live`).
   `LiveFile { copies, scripts, level_script, sounds }`, `LiveCopyFile {
   id, asset, at, size, props, pictures, states, start_state,
   start_values, animations, groups, scripts, sounds, health }`,

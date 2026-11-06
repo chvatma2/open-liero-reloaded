@@ -148,6 +148,7 @@ pub fn live_level() -> Arc<olr_sim::LiveLevel> {
             at: (0, 0),
             picture: 0,
             glow_strength: 0,
+            clip: false,
         }],
         enter_sound: None,
         loop_sound: None,

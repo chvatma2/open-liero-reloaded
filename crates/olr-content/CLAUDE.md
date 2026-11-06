@@ -99,6 +99,9 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   rectangle by `Facing`, a background part's `Opacity` rounded to an
   alpha as the bake does, `GlowStrength` else the part's own; no
   allocation once warm), shared by `olr-present` and the tests.
+  The production line design: a part whose `LivePart::clip` is set is
+  framed with its copy's rectangle (`LivePlaced::clip`), so the colour
+  map draws it only inside (`live_frame_clips_a_clip_layer_to_its_copy`).
   `has_look()` is also true for a level whose live copies glow (lit
   only by them). Tests: `glow_strength_is_mask_times_value` (every copy of the fixture
   drawn live shows the glow and the colours of the same copies baked

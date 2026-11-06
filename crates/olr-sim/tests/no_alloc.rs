@@ -413,6 +413,7 @@ fn moving_rock_parts_push_and_crush_without_allocating() {
                     at: (0, 0),
                     picture: 0,
                     glow_strength: 100,
+                    clip: false,
                 },
                 LivePart {
                     kind: LivePartKind::Rock,
@@ -420,6 +421,7 @@ fn moving_rock_parts_push_and_crush_without_allocating() {
                     at: (150, -40),
                     picture: 1,
                     glow_strength: 100,
+                    clip: false,
                 },
             ],
             enter_sound: None,
@@ -490,6 +492,7 @@ fn a_part_pushing_and_carrying_grains_ticks_without_allocating() {
                 at: (0, 0),
                 picture: 0,
                 glow_strength: 100,
+                clip: false,
             }],
             enter_sound: None,
             loop_sound: None,

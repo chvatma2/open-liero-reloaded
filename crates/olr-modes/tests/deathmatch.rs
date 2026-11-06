@@ -421,6 +421,7 @@ fn a_crush_death_counts_a_death_and_no_suicide() {
                 at: (0, 0),
                 picture: 0,
                 glow_strength: 100,
+                clip: false,
             }],
             enter_sound: None,
             loop_sound: None,

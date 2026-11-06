@@ -1000,6 +1000,7 @@ fn beam_element(id: &str, kind: ElementKind, beam: Option<GlowBeam>) -> Element 
         back_surface: None,
         surface_map: false,
         back_surface_map: false,
+        clip: false,
         loose: None,
     }
 }

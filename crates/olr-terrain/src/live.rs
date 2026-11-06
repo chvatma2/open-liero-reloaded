@@ -113,6 +113,10 @@ pub struct LivePlaced {
     pub glass_opacity: Option<u8>,
     /// Its glass's tint, percent 0-100 (`GlassTint`); `None` as baked.
     pub glass_tint: Option<u8>,
+    /// The world rectangle `[x, y, w, h]` it is drawn inside, its copy's
+    /// (the production line design: a layer clipped to its copy, the
+    /// crane's paying-out cable); `None` drawn whole.
+    pub clip: Option<[i32; 4]>,
 }
 
 /// The live copies' shown parts, copy by copy, bottom to top: what
@@ -301,8 +305,9 @@ impl Live {
         });
     }
 
-    /// Copy `copy`'s part `p`'s world box, clipped to the level (`None`
-    /// when it shows nothing there or its picture is missing).
+    /// Copy `copy`'s part `p`'s world box, clipped to the level and to
+    /// its clip rectangle (`None` when it shows nothing there or its
+    /// picture is missing).
     fn part_box(&self, copy: usize, p: &LivePlaced, world: (u32, u32)) -> Option<WorldBox> {
         let pic = self.art.copies.get(copy)?.get(usize::from(p.picture))?;
         let clip = |a: i32, n: u32, max: u32| {
@@ -310,8 +315,16 @@ impl Live {
             let (c0, c1) = (a0.clamp(0, i64::from(max)), a1.clamp(0, i64::from(max)));
             (c1 > c0).then_some((c0 as u32, c1 as u32))
         };
-        let (x0, x1) = clip(p.at.0, pic.size.0, world.0)?;
-        let (y0, y1) = clip(p.at.1, pic.size.1, world.1)?;
+        let (mut x0, mut x1) = clip(p.at.0, pic.size.0, world.0)?;
+        let (mut y0, mut y1) = clip(p.at.1, pic.size.1, world.1)?;
+        if let Some([cx, cy, cw, ch]) = p.clip {
+            let (rx0, rx1) = clip(cx, cw.max(0) as u32, world.0)?;
+            let (ry0, ry1) = clip(cy, ch.max(0) as u32, world.1)?;
+            (x0, x1, y0, y1) = (x0.max(rx0), x1.min(rx1), y0.max(ry0), y1.min(ry1));
+            if x1 <= x0 || y1 <= y0 {
+                return None;
+            }
+        }
         Some((x0, y0, x1, y1))
     }
 

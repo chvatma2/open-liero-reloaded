@@ -562,6 +562,7 @@ impl Document {
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            clip: false,
             loose: None,
         };
         let art = olr_format::image_io::encode_rgba(&olr_data::image::RgbaImage::new(s, s));

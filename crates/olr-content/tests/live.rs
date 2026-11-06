@@ -247,6 +247,51 @@ fn a_live_levels_world_holds_its_copies() {
     assert!(plain.live().is_none());
 }
 
+/// The production line design: a clipped part is framed with its copy's
+/// rectangle, every other part with none.
+#[test]
+fn live_frame_clips_a_clip_layer_to_its_copy() {
+    let (_tmp, content) = content(|dir| {
+        let path = dir.join("level.ron");
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, text.replace("olx-theme-dirt", "test-theme")).unwrap();
+        // The lamp's background part (its bulb's glass) clipped.
+        let path = dir.join("live.ron");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let part = "kind: Background,\n                            picture: 0,\n";
+        assert!(text.contains(part));
+        let clipped = format!("{part}                            clip: true,\n");
+        // Every state of the lamp, the level's first copy.
+        let second = text.match_indices("            id: ").nth(1).unwrap().0;
+        let (lamp, rest) = text.split_at(second);
+        std::fs::write(&path, format!("{}{rest}", lamp.replace(part, &clipped))).unwrap();
+    });
+    let setup = olr_content::SandboxSetup {
+        mod_id: "broken-mod".into(),
+        level_id: ID.into(),
+        seed: 3,
+        settings: olr_sim::SimSettings::lx56(),
+        worms: vec![olr_content::SpawnSpec::default()],
+        restrictions: olr_content::DEFAULT_PRESET.into(),
+    };
+    let world = content.new_world(&setup).unwrap();
+    let live = world.live().unwrap();
+    let lamp = live.copy_by_id("lamp").unwrap();
+    assert!(lamp.setup().states.iter().flat_map(|s| &s.parts).any(|p| p.clip), "the clip reached the sim");
+    let mut frame = olr_terrain::LiveFrame::default();
+    olr_content::live_frame(live, &mut frame);
+    let (x, y, w, h) = lamp.rect();
+    let parts: Vec<_> = (0..frame.copies()).flat_map(|c| frame.copy(c).iter().copied()).collect();
+    let clipped: Vec<_> = parts.iter().filter(|p| p.clip.is_some()).collect();
+    for p in &clipped {
+        assert_eq!(p.clip, Some([x, y, w as i32, h as i32]));
+    }
+    let state = &lamp.setup().states[usize::from(lamp.state())];
+    let shown_clipped = state.parts.iter().filter(|p| p.clip).count();
+    assert!(shown_clipped > 0, "the lamp shows its clipped part");
+    assert_eq!(clipped.len(), shown_clipped, "only the clipped part");
+}
+
 /// The fixture on the synthetic packs' theme, its world (one worm) and
 /// its level and colour map with the live copies drawn as the world
 /// starts them (issue #87).

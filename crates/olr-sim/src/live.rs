@@ -101,6 +101,9 @@ pub struct LivePart {
     pub at: (i32, i32),
     pub picture: u16,
     pub glow_strength: u8,
+    /// Drawn only inside its copy's rectangle (the production line
+    /// design); presentation only: its solidity, if any, is unchanged.
+    pub clip: bool,
 }
 
 /// A state of a live copy: its name, its complete values (prop index,

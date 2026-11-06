@@ -674,6 +674,7 @@ pub fn merge_down(
         back_surface: None,
         surface_map: false,
         back_surface_map: false,
+        clip: false,
         loose: None,
     };
     Ok((element, decoded))
@@ -720,6 +721,7 @@ pub fn split_element(
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            clip: false,
             loose: None,
         };
         out.push((element, decoded));

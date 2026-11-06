@@ -76,7 +76,7 @@ pub fn rock_copy(id: &str, x: i32, states: &[&str], scripts: Vec<u16>) -> LiveCo
 }
 
 fn copy_of(kind: LivePartKind, id: &str, x: i32, states: &[&str], scripts: Vec<u16>) -> LiveCopy {
-    let parts = vec![LivePart { kind, layer: None, at: (0, 0), picture: 0, glow_strength: 100 }];
+    let parts = vec![LivePart { kind, layer: None, at: (0, 0), picture: 0, glow_strength: 100, clip: false }];
     LiveCopy::new(LiveCopySetup {
         id: id.into(),
         at: (x, 40),

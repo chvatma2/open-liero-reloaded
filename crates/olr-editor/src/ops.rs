@@ -311,6 +311,7 @@ impl Document {
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            clip: false,
             loose: None,
         };
         self.check_with(|es| es.push(element.clone()))?;
@@ -601,6 +602,7 @@ impl Document {
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            clip: false,
             loose: None,
         };
         self.check_with(|es| es.push(element.clone()))?;
@@ -635,6 +637,7 @@ impl Document {
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            clip: false,
             loose: None,
         };
         self.check_with(|es| es.push(element.clone()))?;
@@ -686,6 +689,7 @@ impl Document {
                 back_surface: None,
                 surface_map: false,
                 back_surface_map: false,
+                clip: false,
                 loose: None,
             });
             new

@@ -240,6 +240,10 @@ pub(crate) enum ElementCommand {
         /// Its rock and dirt let light through (look system), still solid.
         #[arg(long)]
         clear: Option<bool>,
+        /// A live copy draws this plain background layer only inside the
+        /// copy's rectangle (a crane's cable paying out below its trolley).
+        #[arg(long)]
+        clip: Option<bool>,
         /// A distant (parallax) layer at this depth, 1 (near) to 99 (far)
         /// percent; 0 makes it an ordinary element again (issue #11). It
         /// moves to the top of the distant layers, below every other.
@@ -673,6 +677,7 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
             glow_beam,
             no_glow_beam,
             clear,
+            clip,
             distant,
             surface,
             back_surface,
@@ -701,6 +706,7 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
                 threshold.map(Property::Threshold),
                 glow,
                 clear.map(Property::Clear),
+                clip.map(Property::Clip),
                 distant.map(|d| Property::Distant((d > 0).then_some(d))),
                 surface.clone().map(|Surface(m)| Property::Surface(m)),
                 back_surface.clone().map(|Surface(m)| Property::BackSurface(m)),

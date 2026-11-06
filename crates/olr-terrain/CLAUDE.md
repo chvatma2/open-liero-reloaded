@@ -163,6 +163,9 @@ and the colour image that follows it (`ColorMap`).
   kind of 0 hashes as before: `kinds_of_zero_hash_as_before`). Every cell
   a carve or dirt edit changes loses its kind (`set_cell`). `move_grain(from,
   to)` (cell indices, journaled) moves a grain with its kind;
+  (the production line design) `LivePlaced::clip`, a world rectangle
+  `[x, y, w, h]` (its copy's), bounds a part's box (`Live::part_box`), so
+  it draws and dirties only inside (`a_clipped_part_draws_only_inside_its_rectangle`);
   `shove_grain(from, to)` (the production line design: a live rock part
   pushing or carrying it) is that and both cells touched, so the loose
   step wakes them, and `ColorEdit::Move { from, to }` replays it in order

@@ -632,6 +632,7 @@ mod tests {
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            clip: false,
             loose: None,
         };
         let mut file = AssetFile::new("Torch", (4, 3), vec![element]);
@@ -870,6 +871,7 @@ mod tests {
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            clip: false,
             loose: None,
         }
     }

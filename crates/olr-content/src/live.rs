@@ -310,11 +310,12 @@ fn mirror_x(rx: i32, w: u32, x: i32, pw: u32) -> i32 {
 /// place, mirrored within its copy's rectangle when the copy's `Facing` is
 /// not 0, a background part at its layer's `Opacity` (percent, as the
 /// bake rounds it to an alpha), each at its layer's `GlowStrength`, else
-/// its strength as authored. Allocates nothing once `frame` is warm.
+/// its strength as authored, a clipped part inside the copy's rectangle.
+/// Allocates nothing once `frame` is warm.
 pub fn live_frame(live: LiveView<'_>, frame: &mut LiveFrame) {
     frame.clear();
     for c in live.copies() {
-        let (rx, _, w, _) = c.rect();
+        let (rx, ry, w, h) = c.rect();
         let flip = c.target(LiveTarget::Facing).is_some_and(|v| v != 0);
         let pictures = &c.setup().pictures;
         for (p, (x, y)) in c.visible_parts() {
@@ -336,6 +337,9 @@ pub fn live_frame(live: LiveView<'_>, frame: &mut LiveFrame) {
                 beam_spread: layer(LiveTarget::BeamSpread).map(|s| s.clamp(1, 90) as u8),
                 glass_opacity: layer(LiveTarget::GlassOpacity).map(|o| o.clamp(1, 99) as u8),
                 glass_tint: layer(LiveTarget::GlassTint).map(|t| t.clamp(0, 100) as u8),
+                // The production line design: a clipped layer's part shows
+                // only inside the copy's rectangle.
+                clip: p.clip.then(|| [rx, ry, w.min(i32::MAX as u32) as i32, h.min(i32::MAX as u32) as i32]),
             });
         }
         frame.end_copy();
@@ -432,6 +436,7 @@ pub fn live_level(src: &LiveSource) -> LiveLevel {
                             at: p.at,
                             picture: p.picture,
                             glow_strength: p.glow_strength,
+                            clip: p.clip,
                         })
                         .collect(),
                     enter_sound: s.enter_sound,

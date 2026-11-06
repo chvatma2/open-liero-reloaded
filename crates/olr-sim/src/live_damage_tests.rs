@@ -29,7 +29,8 @@ const AT: (i32, i32) = (140, 160);
 /// its foot, rock but in columns 8 to 11 (a gap), under a background
 /// picture covering only its left column (`cover`).
 fn crate_copy(id: &str, at: (i32, i32)) -> LiveCopy {
-    let part = |kind, at, picture| LivePart { kind, layer: None, at, picture, glow_strength: 100 };
+    let part =
+        |kind, at, picture| LivePart { kind, layer: None, at, picture, glow_strength: 100, clip: false };
     let state = |name: &str, parts| LiveState {
         name: name.into(),
         values: Vec::new(),

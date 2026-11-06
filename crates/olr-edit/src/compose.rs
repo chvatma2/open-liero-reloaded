@@ -1573,6 +1573,7 @@ pub fn distant_elements(level: &LevelSource) -> Vec<(Element, Decoded, Option<El
                 back_surface: None,
                 surface_map: false,
                 back_surface_map: false,
+                clip: false,
                 loose: None,
             };
             (e, Decoded::Drawn { art: d.image.clone(), cells: None, back: None }, mask)
@@ -1600,6 +1601,7 @@ pub fn compose_from(level: &LevelSource) -> CompositionSource {
         back_surface: None,
         surface_map: false,
         back_surface_map: false,
+        clip: false,
         loose: None,
     };
     let [m, f, b] = raster_files(&element.id);
@@ -1683,6 +1685,7 @@ pub fn split_layers(
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            clip: false,
             loose: None,
         };
         (e, Decoded::Drawn { art, cells: None, back: None })

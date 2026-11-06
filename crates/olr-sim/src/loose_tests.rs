@@ -212,8 +212,14 @@ fn a_worm_holds_grains_up() {
 
 /// A rock block of `size` at `at`, shown while its value 0 is 1.
 fn block(at: (i32, i32), size: (u32, u32)) -> LiveCopy {
-    let part =
-        LivePart { kind: LivePartKind::Rock, layer: Some(0), at: (0, 0), picture: 0, glow_strength: 100 };
+    let part = LivePart {
+        kind: LivePartKind::Rock,
+        layer: Some(0),
+        at: (0, 0),
+        picture: 0,
+        glow_strength: 100,
+        clip: false,
+    };
     LiveCopy::new(LiveCopySetup {
         id: "shelf".into(),
         at,

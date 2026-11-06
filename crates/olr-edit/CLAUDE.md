@@ -612,6 +612,10 @@ operations.
   (STATUS.md "Live assets (issues #85-#94)"; the format is
   `olr_format::levels`' `LiveFile`): `bake_live(src, assets, level) ->
   Result<Option<LiveSource>, PlacedError>` (`None` without a Live copy).
+  The production line design: a clipped element (`Element::clip`,
+  `element::Property::Clip`) is a slot of its own, never in a run, its
+  part `clip` (`a_clipped_layer_is_a_clipped_part_of_its_own`); a
+  static copy draws it unclipped.
   `plan(asset)` (crate) makes the copy-independent plan: the values
   (exposed, then every state-set `property_key` unnamed, then an implicit
   `Health`, then an implicit `LayerVisible` for a targeted layer hidden

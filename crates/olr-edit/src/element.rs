@@ -70,6 +70,9 @@ pub enum Property {
     Glow(Option<ElementGlow>),
     /// Its rock and dirt let light through (look system §Clear solids).
     Clear(bool),
+    /// A live copy draws it only inside the copy's rectangle (the
+    /// production line design; a plain background layer only).
+    Clip(bool),
     /// Its covered background pixels are glass (the background glass
     /// design); `None` opaque.
     Glass(Option<ElementGlass>),
@@ -395,6 +398,7 @@ pub fn add_image_with(
                 back_surface: None,
                 surface_map: false,
                 back_surface_map: false,
+                clip: false,
                 loose: None,
             },
         )?;
@@ -430,6 +434,7 @@ pub fn add_layer(pack: &mut Pack, material: ElementMaterial, name: &str) -> Resu
                 back_surface: None,
                 surface_map: false,
                 back_surface_map: false,
+                clip: false,
                 loose: None,
             },
         )?;
@@ -452,6 +457,7 @@ fn field(p: &Property) -> &'static str {
         Property::Threshold(_) => "alpha_threshold",
         Property::Glow(_) => "glow",
         Property::Clear(_) => "clear",
+        Property::Clip(_) => "clip",
         Property::Glass(_) => "glass",
         Property::Distant(_) => "distant",
         Property::Surface(_) => "surface",
@@ -586,6 +592,7 @@ fn apply(
                 return Err(wrong("an image or drawn element (clear)"));
             }
             Property::Clear(c) => e.clear = c,
+            Property::Clip(c) => e.clip = c,
             Property::Glass(_) if matches!(e.kind, ElementKind::Raster) => {
                 return Err(wrong("a background image or drawn element (glass)"));
             }
@@ -1350,6 +1357,7 @@ pub fn split(pack: &mut Pack, id: &str) -> Result<Vec<String>, ElementError> {
                 back_surface: None,
                 surface_map: false,
                 back_surface_map: false,
+                clip: false,
                 loose: None,
             });
             new

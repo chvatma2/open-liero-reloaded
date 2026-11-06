@@ -81,6 +81,7 @@ fn element(id: &str, kind: ElementKind, surface: Option<&str>, back_surface: Opt
         back_surface: back_surface.map(str::to_string),
         surface_map: false,
         back_surface_map: false,
+        clip: false,
         loose: None,
     }
 }

@@ -361,6 +361,11 @@ pub struct LivePartFile {
     /// strength). Default 0.
     #[serde(default, skip_serializing_if = "d::is_default")]
     pub glow_strength: u8,
+    /// Drawn only inside the copy's rectangle, which follows its `X` and
+    /// `Y` (the asset layer's `clip`). Background parts only. Default
+    /// false.
+    #[serde(default, skip_serializing_if = "d::is_false")]
+    pub clip: bool,
 }
 
 /// What a part is.
@@ -804,6 +809,9 @@ fn check_copy(
                 }
                 _ => {}
             }
+            if part.clip && part.kind == PartKind::Rock {
+                return Err(bad(&at, "a rock part cannot be clipped: it would be solid out of sight".into()));
+            }
             let fits = part.at.0 >= 0
                 && part.at.1 >= 0
                 && i64::from(part.at.0) + i64::from(pic.size.0) <= i64::from(w)
@@ -1113,6 +1121,7 @@ mod tests {
             picture,
             at,
             glow_strength,
+            clip: false,
         };
         let copy = LiveCopyFile {
             id: "lamp".into(),
@@ -1263,6 +1272,11 @@ mod tests {
         has(with(&|s| s.pictures[0][1].glow = Some(vec![1; 3])), &["live/0/1-glow.png", "3 values"]);
         has(with(&|s| s.pictures[0][1].groups = Some(vec![2; 12])), &["live/0/1-groups.png", "group 2"]);
         has(with(&|s| s.file.copies[0].states[0].parts[1].at = (1, 0)), &["reaches outside the copy"]);
+        // The production line design: only a background part is clipped.
+        has(with(&|s| s.file.copies[0].states[0].parts[0].clip = true), &["a rock part cannot be clipped"]);
+        let mut ok = sample(2);
+        ok.file.copies[0].states[0].parts[1].clip = true;
+        check_live(&ok, LEVEL, 2, 0).unwrap();
         // A rock part without its mask, a background part with one.
         has(
             with(&|s| {

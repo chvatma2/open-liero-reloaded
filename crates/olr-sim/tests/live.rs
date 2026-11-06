@@ -15,6 +15,7 @@ fn state(name: &str, values: Vec<(u16, i64)>) -> LiveState {
             at: (0, 0),
             picture: 0,
             glow_strength: 0,
+            clip: false,
         }],
         enter_sound: None,
         loop_sound: None,
@@ -272,6 +273,7 @@ fn mirrored() -> olr_sim::LiveCopy {
         at,
         picture,
         glow_strength: 0,
+        clip: false,
     };
     let prop = |target, min, max| LiveProp { name: None, target, min, max, default: 0 };
     LiveCopy::new(LiveCopySetup {

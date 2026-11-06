@@ -168,6 +168,7 @@ fn heap(material: LooseSource) -> Asset {
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            clip: false,
             loose: Some(material.id.clone()),
         },
         decoded: Decoded::Drawn { art, cells: None, back: None },

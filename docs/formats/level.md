@@ -635,6 +635,7 @@ One part of a live copy in a state.
 | `picture` | integer | required | An index into the copy's `pictures`: a rock part's picture has a rock mask, a background part's none. |
 | `at` | (integer, integer) | `(0, 0)` | Its picture's top-left in the copy, world pixels; the picture lies inside the copy. Default `(0, 0)`. |
 | `glow_strength` | integer | `0` | Percent 0 to 100: its glow strength as authored (shown: mask × strength). Default 0. |
+| `clip` | boolean | `false` | Drawn only inside the copy's rectangle, which follows its `X` and `Y` (the asset layer's `clip`). Background parts only. Default false. |
 
 <a id="pulseshape"></a>
 

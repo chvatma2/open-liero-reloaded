@@ -572,6 +572,30 @@ fn cli_sets_clear() {
     assert!(!pack.join("look/clear.png").exists());
 }
 
+/// The production line design: `set --clip true` clips a background
+/// layer to its copy's rectangle; a rock layer is refused.
+#[test]
+fn cli_sets_clip() {
+    let Some((tmp, pack, content)) = dirt_level() else { return };
+    compose(tmp.path(), &pack, &content);
+    let run = |args: &[&str]| {
+        let mut all = vec!["level", "element"];
+        all.extend_from_slice(args);
+        all.extend_from_slice(&["--content", "{content}"]);
+        cli(&all, &pack, &content)
+    };
+    ok(&run(&["split", "{pack}", "base"]));
+    ok(&run(&["set", "{pack}", "background", "--clip", "true"]));
+    let composition = std::fs::read_to_string(pack.join("editor/asset.ron")).unwrap();
+    assert!(composition.contains("clip: true"), "{composition}");
+    let refused = run(&["set", "{pack}", "rock", "--clip", "true"]);
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("clip"), "{refused:?}");
+    ok(&run(&["set", "{pack}", "background", "--clip", "false"]));
+    let composition = std::fs::read_to_string(pack.join("editor/asset.ron")).unwrap();
+    assert!(!composition.contains("clip"), "{composition}");
+}
+
 /// Issue #11: `set --distant N` makes a background layer distant (moved
 /// below every other element, listed so, its art in `distant/`, the back
 /// see-through where nothing covers it); `--distant 0` makes it ordinary.

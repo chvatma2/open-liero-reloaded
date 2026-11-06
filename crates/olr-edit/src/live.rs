@@ -56,6 +56,8 @@ struct Slot {
     layers: Vec<usize>,
     /// An open run untargeted layers of its kind may join.
     run: bool,
+    /// Its layer is drawn only inside the copy (`Element::clip`).
+    clip: bool,
 }
 
 /// One value of a live copy as planned: its exposed name, the property it
@@ -212,7 +214,7 @@ pub(crate) fn plan(asset: &Asset) -> Result<Plan, LiveRefusal> {
     let mut slots: Vec<Slot> = Vec::new();
     for (i, p) in asset.pieces.iter().enumerate() {
         let kind = layer_kind(&p.element.kind);
-        let one = |kind, layer, run| Slot { layer, kind, layers: vec![i], run };
+        let one = |kind, layer, run| Slot { layer, kind, layers: vec![i], run, clip: p.element.clip };
         if targeted.contains(&i) {
             let l = Some(i as u16);
             match kind {
@@ -224,6 +226,8 @@ pub(crate) fn plan(asset: &Asset) -> Result<Plan, LiveRefusal> {
             }
         } else if shown(i) {
             match kind {
+                // A clipped layer is a slot of its own, never in a run.
+                LayerKind::One(k) if p.element.clip => slots.push(one(k, None, false)),
                 LayerKind::One(k) => match slots.last_mut() {
                     Some(s) if s.run && s.kind == k => s.layers.push(i),
                     _ => slots.push(one(k, None, true)),
@@ -545,6 +549,7 @@ fn plan_copy(
                         picture: k as u16,
                         at: (b.0, b.1),
                         glow_strength,
+                        clip: slot.clip,
                     }
                 })
                 .collect(),

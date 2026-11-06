@@ -84,6 +84,7 @@ One element of a composition.
 | `surface_map` | boolean | `false` | A painted map of its pixels' surface materials (`editor/surface/<id>.png`, 8-bit grey at world resolution: its box, a raster's the level's size): `v` is the look's `materials[v - 1]`, 0 its `surface`. Not on a distant layer. Default false. |
 | `back_surface_map` | boolean | `false` | A painted map of its back art's surface materials (`editor/surface/<id>.back.png`, as `surface_map`'s; 0 its `back_surface`). Only with back art. Default false. |
 | `loose` | string (optional) | none | Its dirt pixels are loose dirt (the loose dirt design): the id of one of the asset's `loose` materials. Only on a Dirt image or drawn layer, or a mixed drawn layer (its dirt pixels); never distant. Default none. |
+| `clip` | boolean | `false` | A live copy draws it only inside the copy's rectangle (the production line design: the crane's cable paying out below its trolley); its pictures elsewhere are hidden. Only on a plain Background image or drawn layer: a solid layer clipped out of sight would still be solid. Default false. |
 
 <a id="folder"></a>
 

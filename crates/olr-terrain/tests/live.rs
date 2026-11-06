@@ -443,3 +443,32 @@ fn live_glass_takes_the_frames_opacity_and_tint() {
     m.set_live(&frame(&[&[]]));
     assert_eq!(texel(&m, 12, 12), [255, 255, 255, 0], "gone with the part");
 }
+
+/// The production line design: a clipped part (the crane's paying-out
+/// cable) draws only inside its copy's rectangle, and dirties only there.
+#[test]
+fn a_clipped_part_draws_only_inside_its_rectangle() {
+    let t = level();
+    let mut m = map_of(&t);
+    m.set_live_art(Some(Arc::new(LiveArt { copies: vec![vec![picture((4, 20), GREEN, 255, false, None)]] })));
+    drain(&mut m);
+    // The picture spans rows 1..21 (the last row past the level); the
+    // copy's rectangle is rows 17..19.
+    let cable = LivePlaced { clip: Some([0, 17, 32, 2]), ..part(0, false, (4, 1)) };
+    m.set_live(&frame(&[&[cable]]));
+    for y in 1..20 {
+        let inside = (17..19).contains(&y);
+        assert_eq!(at(&m, 5, y), if inside { GREEN } else { BACK }, "row {y}");
+    }
+    // Only the tiles the rectangle meets are dirty (the picture alone
+    // would dirty those from row 1).
+    let dirty = drain(&mut m);
+    assert!(!dirty.is_empty());
+    for r in &dirty {
+        assert!(r.y + r.h > 17 * S && r.y < 19 * S, "dirty outside the rectangle: {r:?}");
+    }
+    // Moving the rectangle shows another part of it.
+    m.set_live(&frame(&[&[LivePlaced { clip: Some([0, 2, 32, 4]), ..cable }]]));
+    assert_eq!(at(&m, 5, 3), GREEN);
+    assert_eq!(at(&m, 5, 12), BACK);
+}

@@ -102,6 +102,7 @@ fn piece(
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            clip: false,
             loose: None,
         },
         decoded: Decoded::Drawn { art: img, cells: None, back: None },
@@ -305,6 +306,31 @@ fn untargeted_layers_flatten_in_runs_keeping_the_stack() {
     // The hidden layer is in no run.
     let r3 = &p.pictures[0][usize::from(c.states[0].parts[2].picture)];
     assert_eq!(r3.art.width(), 1);
+}
+
+/// The production line design: a clipped background layer is a part of
+/// its own, marked clipped, never in a run with its neighbours.
+#[test]
+fn a_clipped_layer_is_a_clipped_part_of_its_own() {
+    let b1 = piece("b1", ElementMaterial::Background, (0, 0), (1, 1), 1, |_, _| BLUE);
+    let mut cable = piece("cable", ElementMaterial::Background, (1, 0), (1, 1), 1, |_, _| RED);
+    cable.element.clip = true;
+    let b2 = piece("b2", ElementMaterial::Background, (0, 0), (2, 1), 1, |_, _| GREEN);
+    let r = piece("r", ElementMaterial::Rock, (0, 0), (1, 1), 1, |_, _| GREEN);
+    let mut a = Asset::new("Crane", 1, (2, 1), vec![b1, cable, b2, r], vec![], vec![]);
+    a.exposed = vec![exposed("r_on", PropertySource::LayerVisible("r".into()), None)];
+    let l = baked(&blank((2, 1), 1), &placement(vec![("a", &a)], vec![live("s", "a", (0, 0))]));
+    let p = played(&l);
+    let parts: Vec<_> = p.file.copies[0].states[0].parts.iter().map(|p| (p.kind, p.clip)).collect();
+    assert_eq!(
+        parts,
+        vec![
+            (PartKind::Background, false),
+            (PartKind::Background, true),
+            (PartKind::Background, false),
+            (PartKind::Rock, false),
+        ]
+    );
 }
 
 #[test]

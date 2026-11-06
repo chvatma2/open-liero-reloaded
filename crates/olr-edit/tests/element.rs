@@ -494,6 +494,7 @@ fn new_ids_reserve_masks_and_layer_files() {
         back_surface: None,
         surface_map: false,
         back_surface_map: false,
+        clip: false,
         loose: None,
     };
     assert_ne!(new_element_id(&[wall], &[], &Default::default(), "wall.material", "layer"), "wall.material");

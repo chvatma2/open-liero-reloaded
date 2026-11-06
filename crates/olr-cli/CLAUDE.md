@@ -80,6 +80,9 @@ The headless command-line tool. Its commands:
   G` (a group of the level's look; a new glow needs both, either alone
   keeps the other and the painted mask: `glow_property`) `--clear
   true|false` (its rock and dirt let light through, still solid); issue
+  the production line design: `set --clip true|false` (a plain
+  background layer drawn only inside a live copy's rectangle;
+  `cli_sets_clip`); issue
   #11: `set --distant N` (1-99 percent, near to far; 0 makes it ordinary
   again) makes an image or plain drawn background layer distant, moved to
   the top of the distant layers (`list` adds ` distant N%`); issue #62:

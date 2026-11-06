@@ -1170,6 +1170,7 @@ mod tests {
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            clip: false,
             loose: None,
         }
     }

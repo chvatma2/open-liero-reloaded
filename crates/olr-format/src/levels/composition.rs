@@ -204,6 +204,13 @@ pub struct Element {
     /// Default none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loose: Option<String>,
+    /// A live copy draws it only inside the copy's rectangle (the
+    /// production line design: the crane's cable paying out below its
+    /// trolley); its pictures elsewhere are hidden. Only on a plain
+    /// Background image or drawn layer: a solid layer clipped out of sight
+    /// would still be solid. Default false.
+    #[serde(default, skip_serializing_if = "d::is_false")]
+    pub clip: bool,
 }
 
 impl Element {
@@ -963,6 +970,15 @@ pub fn check_stacked_elements(
                 return Err(bad("loose", format!("{id:?} is not a loose material id")));
             }
         }
+        if e.clip
+            && !matches!(
+                e.kind,
+                ElementKind::Image { material: ElementMaterial::Background, .. }
+                    | ElementKind::Drawn { material: ElementMaterial::Background, mixed: false, .. }
+            )
+        {
+            return Err(bad("clip", "only a plain background image or drawn layer can be clipped".into()));
+        }
         if let Some(g) = &e.glass {
             let background = matches!(
                 e.kind,
@@ -1358,6 +1374,7 @@ mod tests {
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            clip: false,
             loose: None,
         };
         CompositionSource {
@@ -1573,6 +1590,27 @@ mod tests {
     /// layer, below every element that is not distant, of depth 1 to 99,
     /// never clear; it may glow (issue #62).
     #[test]
+    fn clip_on_a_rock_layer_is_refused() {
+        // The production line design: a background layer may be drawn only
+        // inside its copy's rectangle; a solid one you cannot see is not.
+        let mut s = sample();
+        s.composition.elements[1].clip = true;
+        check_composition(&s, (4, 3), 2).unwrap();
+        let mut fs = MemFs::new();
+        write_composition_files(&mut fs, &s).unwrap();
+        let text = String::from_utf8(fs.read(&VPath::new(COMPOSITION_FILE).unwrap()).unwrap()).unwrap();
+        assert!(text.contains("clip: true"), "{text}");
+        assert_eq!(read_composition_files(&fs).unwrap().unwrap().composition, s.composition);
+        s.composition.elements[1].clip = false;
+        for i in [0, 2] {
+            s.composition.elements[i].clip = true;
+            let e = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
+            assert!(e.contains(&format!("elements[{i}].clip")) && e.contains("background"), "{e}");
+            s.composition.elements[i].clip = false;
+        }
+    }
+
+    #[test]
     fn glass_elements_follow_their_rules() {
         // The background glass design: a plain or mixed background image or
         // drawn layer, not distant, opacity 1-99, tint 0-100, frost 0-40.
@@ -1767,6 +1805,7 @@ mod tests {
             back_surface: None,
             surface_map: false,
             back_surface_map: false,
+            clip: false,
             loose: None,
         };
         // A mask's pixels count too: at the limit, a 10 × 10 mask is over.
