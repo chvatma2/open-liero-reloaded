@@ -581,3 +581,30 @@ fn a_rebuild_takes_the_loose_kinds() {
     assert_eq!(c.material(), &sim);
     assert_eq!(c.material().loose(1, 1), 1, "the grain's kind");
 }
+
+/// A live rock part moved into dirt: a crushed run shows the backdrop where
+/// it was dirt, loose or not, keeps rock and a stain on background, and
+/// marks what it changed dirty.
+#[test]
+fn a_crushed_run_shows_the_backdrop_where_it_was_dirt() {
+    let t = map(&["DD.RD", "DDDDD"]).with_loose(vec![0, 1, 0, 0, 0, 0, 0, 0, 0, 0]).unwrap();
+    let mut c = color_map(&t, 2, theme(vec![], None));
+    c.stain(2, 0, Rgba::rgb(200, 0, 0));
+    c.take_dirty().for_each(drop);
+    c.apply(ColorEdit::Crush { x: 1, y: 0, n: 9 });
+    let mut cls = classes(&c);
+    cls[0].replace_range(2..3, "s");
+    assert_eq!(cls, ["FBsFB", "FFFFF"]);
+    let mut sim = t.clone();
+    assert_eq!(sim.crush_row(1, 0, 9), 2);
+    assert_eq!(c.material(), &sim, "in step with the world's");
+    assert_eq!(c.material().loose(1, 0), 0, "the grain is gone");
+    let dirty: Vec<Rect> = c.take_dirty().collect();
+    let covers =
+        |x: u32, y: u32| dirty.iter().any(|r| (r.x..r.x + r.w).contains(&x) && (r.y..r.y + r.h).contains(&y));
+    assert!(covers(2, 0) && covers(9, 1), "both crushed cells are dirty: {dirty:?}");
+    let before = c.pixels().to_vec();
+    c.apply(ColorEdit::Crush { x: -40, y: 9, n: 3 });
+    c.apply(ColorEdit::Crush { x: 1, y: 0, n: 9 });
+    assert_eq!(c.pixels(), &before[..], "outside the map or crushed already: nothing");
+}

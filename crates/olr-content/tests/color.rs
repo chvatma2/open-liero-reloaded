@@ -20,6 +20,8 @@ fn color_edit_converts_every_terrain_op() {
     assert_eq!(edit(TerrainOp::GreenDirt, StampId::GreenBall), Some(ColorEdit::GreenDirt { x: -3, y: 7 }));
     assert_eq!(edit(TerrainOp::Carve, StampId::GreenBall), None);
     assert_eq!(edit(TerrainOp::GreenDirt, StampId::Hole(1)), None);
+    assert_eq!(edit(TerrainOp::Crush, StampId::Row(12)), Some(ColorEdit::Crush { x: -3, y: 7, n: 12 }));
+    assert_eq!(edit(TerrainOp::Crush, StampId::Hole(1)), None);
     assert_eq!(color_edit(&EventKind::Spawned { worm: 0 }), None);
     assert_eq!(
         olr_content::lost_area(olr_sim::LostArea { x0: -1, y0: 2, x1: 3, y1: 4 }),

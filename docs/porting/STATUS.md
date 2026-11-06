@@ -7502,6 +7502,15 @@ explosions damage the destructible ones.
   (`LiveCommand::Hurt`, 1 to `MAX_HURT` 1000) deals the rest by nobody
   once the script phase's runs are over; the press's script deals 1000,
   so a wedged worm dies in the tick of its first chunk.
+- **Parts crush dirt (2026-11-06).** A moving rock part crushes the dirt
+  it moves into, loose or not (the user's playtest: Liero Factory
+  Reloaded's press came down through the dirt on its belt and left it):
+  each taken step makes the dirt its new footprint covers and its old one
+  did not background, a `TerrainOp::Crush` edit a row run for the colour
+  map. Dirt never stops a part, as before; a part shown over dirt crushes
+  nothing until it moves. On the factory only the press meets any (the
+  dirt under its die, rows 346-350, on its first stroke); the lift, the
+  mine cart and the forklift run through none.
 - **Spawning beside parts (#90).** `FindSpot` reads the query, so nothing
   spawns in a part; a worm's fixed spawn whose 6 × 6 square meets a part
   falls back to `FindSpot`. For that the copies start (values set, index

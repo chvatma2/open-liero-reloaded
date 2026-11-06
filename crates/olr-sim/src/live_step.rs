@@ -2,7 +2,9 @@
 //! copies' motions step their rock parts a whole pixel at a time, pushing,
 //! carrying and wedging worms and taking the ropes hooked to them; then a
 //! part that appeared over a worm pushes it out or wedges it; then the
-//! wedged worms are crushed. No OLX counterpart.
+//! wedged worms are crushed. A part moving into dirt crushes it: the dirt
+//! its new footprint covers and its old one did not is background, a
+//! [`crate::TerrainOp::Crush`] edit a row run. No OLX counterpart.
 //!
 //! A worm's body here is the pixels `move_and_check_collision` reads, but
 //! its lowest (`y + 5`), which rests inside the ground while it stands:
@@ -15,7 +17,7 @@ use olr_math::Vec2;
 use olr_terrain::{PX_EMPTY, Terrain};
 
 use crate::damage::injure_worm;
-use crate::events::EventKind;
+use crate::events::{EventKind, TickEvents};
 use crate::live::{CRUSH_CHUNK, CRUSH_EVERY, LiveLevel, PUSH_OUT_PX, PartMover, PartStep};
 use crate::solid::{MAX_LIVE_SOLID_PARTS, SolidIndex, SolidPart, covers};
 use crate::world::{MAX_WORMS, World};
@@ -101,9 +103,39 @@ fn blocked(
     false
 }
 
+/// Crushes the dirt part `p` (at its new place) covers and covered not at
+/// `old`, a [`crate::TerrainOp::Crush`] edit for each row run that held some.
+fn crush_dirt(t: &mut Terrain, level: &LiveLevel, p: &SolidPart, old: (i32, i32), events: &mut TickEvents) {
+    let new = p.at;
+    let w = i64::from(p.size.0);
+    for ly in 0..i64::from(p.size.1) {
+        let y = i64::from(new.1) + ly;
+        let mut run = None;
+        for lx in 0..=w {
+            let x = i64::from(new.0) + lx;
+            let fresh = lx < w && covers(level, p, new, x, y) && !covers(level, p, old, x, y);
+            match (fresh, run) {
+                (true, None) => run = Some(x),
+                (false, Some(x0)) => {
+                    run = None;
+                    let mut x0 = x0;
+                    while x0 < x {
+                        let n = (x - x0).min(i64::from(u16::MAX));
+                        if t.crush_row(x0 as i32, y as i32, n as u32) > 0 {
+                            events.crush(x0 as i32, y as i32, n as u16);
+                        }
+                        x0 += n;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 /// The world's side of a motion's step ([`PartMover`]).
 struct Mover<'a> {
-    terrain: &'a Terrain,
+    terrain: &'a mut Terrain,
     worms: &'a mut [Worm],
     wedged: Wedged,
 }
@@ -114,15 +146,16 @@ impl PartMover for Mover<'_> {
     /// go is wedged and holds it; it carries the worms standing on it (one
     /// of `check_on_ground`'s pixels is the part's) and not pushed, where
     /// free; a rope hooked to the ground in its old footprint moves with
-    /// it. Velocities stay.
+    /// it; last, it crushes the dirt it moved into. Velocities stay.
     fn step(
         &mut self,
         solids: &mut SolidIndex,
         level: &LiveLevel,
         copy: u16,
         moves: &[(usize, (i32, i32))],
+        events: &mut TickEvents,
     ) -> PartStep {
-        let t = self.terrain;
+        let t = &*self.terrain;
         let group = moves.iter().fold(0u64, |m, &(i, _)| m | 1 << i);
         // Each moving part's old place and its move, by its index.
         let mut old = [(0i32, 0i32); MAX_LIVE_SOLID_PARTS];
@@ -202,6 +235,9 @@ impl PartMover for Mover<'_> {
                 r.pos = moved(r.pos, delta[i]);
             }
         }
+        for &(i, _) in moves {
+            crush_dirt(self.terrain, level, &solids.parts()[i], old[i], events);
+        }
         PartStep::Taken
     }
 }
@@ -236,7 +272,7 @@ impl World {
     pub(crate) fn live_step(&mut self) {
         let Some(live) = &mut self.live else { return };
         let mut mover = Mover {
-            terrain: &self.terrain,
+            terrain: &mut self.terrain,
             worms: &mut self.worms,
             wedged: Wedged { mask: 0, copy: [0; MAX_WORMS] },
         };

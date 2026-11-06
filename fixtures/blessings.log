@@ -355,3 +355,8 @@
 2026-11-05 bless-regression: loose dirt falls faster by default: gravity 300 px/s², top speed 80 px/s (were 200 and 50), after the first playtest
   fixtures/matches-live/classic-factory-live-4dm.ron
   fixtures/matches-live/classic-loose-test-4chaos.ron
+2026-11-06 bless-regression: a moving live rock part crushes the dirt it moves into (the factory's press flattens the dirt under its die)
+  fixtures/matches-live/classic-factory-live-4dm.ron
+  fixtures/matches-live/classic-live-test-4chaos.ron
+2026-11-06 bless-render: a moving live rock part crushes the dirt it moves into (the factory's press flattens the dirt under its die)
+  fixtures/render/factory-line.png

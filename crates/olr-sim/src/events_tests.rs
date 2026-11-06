@@ -290,6 +290,7 @@ fn replay(t: &mut Terrain, holes: &[Stamp], events: &[Event]) -> usize {
                 TerrainOp::Carve | TerrainOp::Beam => t.carve_hole(hole, x, y),
                 TerrainOp::Dirt => t.place_dirt(hole, x, y),
                 TerrainOp::GreenDirt => unreachable!("no green-dirt mask here"),
+                TerrainOp::Crush => unreachable!("a crush is a row, not a hole"),
             };
             n += 1;
         }

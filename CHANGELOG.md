@@ -293,6 +293,8 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   list|add|set|remove`, `level element set --loose`, and the level
   editor's ground and asset panels). Liero Factory Reloaded's press heap
   and the mine's floor seam are loose spoil.
+- A moving live rock part crushes the dirt it moves into: Liero Factory
+  Reloaded's press flattens the dirt under its die.
 
 ### Changed
 

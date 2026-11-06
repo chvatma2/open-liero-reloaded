@@ -227,6 +227,32 @@ impl Terrain {
         carved
     }
 
+    /// Crushes the dirt of the `n` cells from `(x, y)` rightwards (a live
+    /// rock part moved there; no OLX counterpart): each dirt cell, loose or
+    /// not, becomes background. The run is clipped to the map. Returns how
+    /// many cells it crushed.
+    pub fn crush_row(&mut self, x: i32, y: i32, n: u32) -> u32 {
+        let (mut x, mut w) = (x, i32::try_from(n).unwrap_or(i32::MAX));
+        let (mut y, mut h) = (y, 1);
+        if !clip(&mut x, &mut w, self.width as i32) || !clip(&mut y, &mut h, self.height as i32) {
+            return 0;
+        }
+        let row = y as usize * self.width as usize;
+        let span = row + x as usize..row + (x + w) as usize;
+        if !self.cells[span.clone()].contains(&(Material::Dirt as u8)) {
+            return 0;
+        }
+        self.record(x as u32, y as u32, (x + w) as u32, y as u32 + 1);
+        let mut crushed = 0;
+        for i in span {
+            if self.cells[i] == Material::Dirt as u8 {
+                self.set_value(i, Material::Background as u8);
+                crushed += 1;
+            }
+        }
+        crushed
+    }
+
     /// The material indices (`Material as u8`), row-major: what a world's
     /// state transfer carries (networking spec §3.5).
     pub fn cells(&self) -> &[u8] {

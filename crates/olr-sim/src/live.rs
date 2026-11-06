@@ -626,6 +626,7 @@ pub(crate) trait PartMover {
         level: &LiveLevel,
         copy: u16,
         moves: &[(usize, (i32, i32))],
+        events: &mut TickEvents,
     ) -> PartStep;
 }
 
@@ -1182,7 +1183,7 @@ impl LiveWorld {
                 };
                 let next = c.clamped(p, next);
                 let prop = k as u16;
-                let (reached, blocked) = self.walk(c, copy, prop, at, next, mover);
+                let (reached, blocked) = self.walk(c, (copy, prop), at, next, mover, events);
                 if blocked {
                     self.motions[at] = LiveMotion::default();
                     events.push(EventKind::LiveBlocked { copy, prop });
@@ -1200,11 +1201,11 @@ impl LiveWorld {
     fn walk(
         &mut self,
         c: &LiveCopy,
-        copy: u16,
-        prop: u16,
+        (copy, prop): (u16, u16),
         at: usize,
         to: i64,
         mover: &mut impl PartMover,
+        events: &mut TickEvents,
     ) -> (i64, bool) {
         let Some(axis) = Axis::of(c, prop) else {
             self.values[at] = to;
@@ -1271,7 +1272,7 @@ impl LiveWorld {
                 v = cross;
                 continue;
             }
-            match mover.step(&mut self.solids, &self.level, copy, &moves[..k]) {
+            match mover.step(&mut self.solids, &self.level, copy, &moves[..k], events) {
                 PartStep::Taken => v = cross,
                 PartStep::Blocked => {
                     self.values[at] = cross - dir;

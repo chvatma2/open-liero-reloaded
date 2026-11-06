@@ -197,7 +197,8 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   plays its own gravity, jump and rope, not Classic's.
 - **Colour terrain** (`color.rs`, plan 5 ruling R1): `LoadedTheme::art()`,
   `LoadedLevel::color_map(&theme)` (before any edit; spawn holes come with
-  the first tick), `color_edit(&EventKind)` converts a `TerrainEdit`, and
+  the first tick), `color_edit(&EventKind)` converts a `TerrainEdit` (a
+  live part's `Crush` run to `ColorEdit::Crush`), and
   `apply_edits(map, events, world)` replays a tick's edits, moves its loose
   dirt grains (`move_grains(map, world.loose_moves())`: cell indices to
   `ColorMap::move_grain`) and rebuilds a `lost_area` from the world's

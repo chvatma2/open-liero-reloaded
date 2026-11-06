@@ -63,6 +63,10 @@ pub enum TerrainOp {
     /// `CMap::CarveHole` at the point a beam stopped (`ProcessShot_Beam`,
     /// `DrawBeam`).
     Beam,
+    /// A live rock part moved into dirt and crushed it (no OLX
+    /// counterpart): the dirt of the [`StampId::Row`] from `(x, y)` is
+    /// background now (`Terrain::crush_row`).
+    Crush,
 }
 
 /// The stamp a [`EventKind::TerrainEdit`] applied.
@@ -72,6 +76,9 @@ pub enum StampId {
     Hole(u8),
     /// The green-dirt mask (`data/gfx/greenball.png`).
     GreenBall,
+    /// No stamp: the `n` cells of a row from the edit's `(x, y)` rightwards
+    /// ([`TerrainOp::Crush`]).
+    Row(u16),
 }
 
 /// A cosmetic entity (`SpawnEntity`'s `ENT_*` type, plus the beam that
@@ -446,6 +453,15 @@ impl TickEvents {
             let (w, h) = (w.min(i32::MAX as u32) as i32, h.min(i32::MAX as u32) as i32);
             let (x0, y0) = (x.saturating_sub(w / 2), y.saturating_sub(h / 2));
             self.add_lost(LostArea { x0, y0, x1: x0.saturating_add(w), y1: y0.saturating_add(h) });
+        }
+    }
+
+    /// A crushed run of `n` cells from `(x, y)` ([`TerrainOp::Crush`]). A
+    /// dropped one's cells join [`lost_area`](Self::lost_area).
+    pub(crate) fn crush(&mut self, x: i32, y: i32, n: u16) {
+        if !self.push(EventKind::TerrainEdit { op: TerrainOp::Crush, stamp: StampId::Row(n), x, y }) {
+            let x1 = x.saturating_add(i32::from(n));
+            self.add_lost(LostArea { x0: x, y0: y, x1, y1: y.saturating_add(1) });
         }
     }
 

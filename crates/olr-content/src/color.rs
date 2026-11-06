@@ -40,6 +40,7 @@ pub fn color_edit(kind: &EventKind) -> Option<ColorEdit> {
         (TerrainOp::Carve | TerrainOp::Beam, StampId::Hole(hole)) => Some(ColorEdit::Carve { hole, x, y }),
         (TerrainOp::Dirt, StampId::Hole(hole)) => Some(ColorEdit::Dirt { hole, x, y }),
         (TerrainOp::GreenDirt, StampId::GreenBall) => Some(ColorEdit::GreenDirt { x, y }),
+        (TerrainOp::Crush, StampId::Row(n)) => Some(ColorEdit::Crush { x, y, n }),
         _ => None,
     }
 }

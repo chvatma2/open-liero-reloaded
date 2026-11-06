@@ -13,7 +13,7 @@ use olr_math::TimeDiff;
 use olr_terrain::{PX_ROCK, Stamp};
 
 use crate::effects::{Blast, explosion};
-use crate::events::{CosmeticKind, TickEvents};
+use crate::events::{CosmeticKind, StampId, TerrainOp, TickEvents};
 use crate::input::Keys;
 use crate::live::{
     LIVE_SUBPIXELS, LiveCopy, LiveCopySetup, LiveMotion, LivePart, LivePartKind, LiveProp, LiveSolid,
@@ -523,4 +523,49 @@ fn more_rock_parts_than_the_index_holds_are_refused() {
     assert!(World::new(setup(blocks(crate::MAX_LIVE_SOLID_PARTS), None, None), Box::new(OracleMode)).is_ok());
     let e = World::new(setup(blocks(crate::MAX_LIVE_SOLID_PARTS + 1), None, None), Box::new(OracleMode));
     assert_eq!(e.err(), Some(crate::SetupError::Live));
+}
+
+/// The crushed runs a tick reported: `(x, y, n)`.
+fn crushed(e: &TickEvents) -> Vec<(i32, i32, u16)> {
+    e.iter()
+        .filter_map(|e| match e.kind {
+            EventKind::TerrainEdit { op: TerrainOp::Crush, stamp: StampId::Row(n), x, y } => Some((x, y, n)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_moving_part_crushes_the_dirt_it_moves_into() {
+    // A 20 × 10 block over dirt (rows 110..130, x 80..120) comes down 5 px.
+    let mut w = World::build(
+        setup(vec![block("press", (90, 100), (20, 10), 1)], None, Some((80, 110, 120, 130))),
+        Box::new(OracleMode),
+    );
+    w.enable_rollback();
+    let snap = w.save();
+    move_to(&mut w, 0, Y, 5, 1);
+    let mut runs = Vec::new();
+    for _ in 0..8 {
+        runs.extend(crushed(&w.tick_new(&[])));
+    }
+    assert_eq!(rect(&w, 0).1, 105, "dirt never stops it");
+    assert_eq!(runs, (110..115).map(|y| (90, y, 20)).collect::<Vec<_>>(), "a run a row, as it went");
+    for y in 110..115 {
+        for x in 90..110 {
+            assert_eq!(w.terrain().material(x, y), Some(Material::Background), "({x}, {y}) crushed");
+        }
+    }
+    for (x, y) in [(89, 112), (110, 112), (100, 115)] {
+        assert_eq!(w.terrain().material(x, y), Some(Material::Dirt), "({x}, {y}) outside it stays");
+    }
+    // Back up and down again over what it cleared: nothing more to crush.
+    move_to(&mut w, 0, Y, 0, 1);
+    ticks(&mut w, 8);
+    move_to(&mut w, 0, Y, 5, 1);
+    for _ in 0..8 {
+        assert_eq!(crushed(&w.tick_new(&[])), [], "no dirt left there");
+    }
+    w.restore(&snap).unwrap();
+    assert_eq!(w.terrain().material(100, 112), Some(Material::Dirt), "a restore puts it back");
 }

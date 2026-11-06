@@ -54,6 +54,9 @@ pub enum ColorEdit {
     Dirt { hole: u8, x: i32, y: i32 },
     /// `CMap::PlaceGreenDirt`.
     GreenDirt { x: i32, y: i32 },
+    /// A live rock part crushed the dirt of the `n` cells from `(x, y)`
+    /// rightwards (`TerrainOp::Crush`, [`Terrain::crush_row`]).
+    Crush { x: i32, y: i32, n: u16 },
 }
 
 /// A rectangle of the colour image, in art pixels.
@@ -680,9 +683,31 @@ impl ColorMap {
         self.mark(x0, y0, x1, y1);
     }
 
+    /// [`ColorEdit::Crush`]: each dirt cell of the run shows the backdrop,
+    /// as a grain's old place does ([`ColorMap::move_grain`]).
+    fn crush(&mut self, x: i32, y: i32, n: u16) {
+        let (mw, mh) = (i64::from(self.material.width()), i64::from(self.material.height()));
+        let (x0, x1) = (i64::from(x).max(0), (i64::from(x) + i64::from(n)).min(mw));
+        let y = i64::from(y);
+        if !(0..mh).contains(&y) || x0 >= x1 {
+            return;
+        }
+        let g = (self.width, self.scale, self.material.width());
+        for cx in x0..x1 {
+            if self.material.material(cx, y) == Some(Material::Dirt) {
+                copy(&mut self.pixels, &self.back, self.width, self.scale, cx as u32, y as u32);
+                glow_from(&mut self.glow, g, cx as u32, y as u32, false);
+            }
+        }
+        if self.material.crush_row(x0 as i32, y as i32, (x1 - x0) as u32) > 0 {
+            self.mark(x0, y, x1, y + 1);
+        }
+    }
+
     /// Replays one terrain edit (after the simulation made it, in the same order).
     pub fn apply(&mut self, edit: ColorEdit) {
         match edit {
+            ColorEdit::Crush { x, y, n } => self.crush(x, y, n),
             ColorEdit::Carve { hole, x, y } => self.carve(hole as usize, x, y),
             ColorEdit::Dirt { hole, x, y } => self.place_dirt(hole as usize, x, y),
             ColorEdit::GreenDirt { x, y } => self.place_green_dirt(x, y),

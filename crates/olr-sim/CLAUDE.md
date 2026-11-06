@@ -279,7 +279,14 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   `Blocked` (ground rock, another part or the edge: the motion ends,
   `LiveBlocked { copy, prop }`), `Wait` (a pushed worm wedged: the part
   stays, the motion goes on) or `Taken` (worms pushed, standing worms
-  carried, ropes hooked to the ground in the part moved). Then
+  carried, ropes hooked to the ground in the part moved, and last the
+  dirt its new footprint covers and its old one did not crushed,
+  loose or not: `Terrain::crush_row` a row run, each run that held some
+  an `EventKind::TerrainEdit { op: TerrainOp::Crush, stamp:
+  StampId::Row(n), x, y }` (`TickEvents::crush`; dropped, its cells join
+  the lost area), which the colour map replays (`ColorEdit::Crush`);
+  2026-11-06, the user's playtest: the factory's press left the dirt
+  under its die; `a_moving_part_crushes_the_dirt_it_moves_into`). Then
   `push_out` (a part over a worm: up, left, right, down within
   `PUSH_OUT_PX` 8, else wedged), then `crush`: `LiveWorld::crush` counts
   per worm slot (`World::crush_count`), a chunk of `CRUSH_CHUNK` on the
