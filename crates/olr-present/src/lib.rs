@@ -118,6 +118,13 @@ pub struct Presentation {
     /// order, for `Renderer::move_grains` (at most
     /// `olr_render::MAX_GRAIN_MOVES`; the rest land cold).
     grain_moves: Vec<(u32, u32)>,
+    /// Online play (final review, Important 1): the moves each presented
+    /// tick handed on (`grain_journal`, from each tick's start in
+    /// `grain_ticks`), kept for `olr_netcode::MAX_PREDICTION` ticks, so a
+    /// rollback hands the renderer their inverses before the ticks run
+    /// again ([`Presentation::rewind_grains`]).
+    grain_journal: Vec<(u32, u32)>,
+    grain_ticks: std::collections::VecDeque<(u32, usize)>,
     /// The world states shown so far: one more for each tick presented
     /// ([`Presentation::step_fx`]), loaded state and restart; the look's
     /// [`LookFrame::step`] (the glow light once a tick).
@@ -210,6 +217,8 @@ impl Presentation {
             heat_clock: world.time().0,
             heat_reset: false,
             grain_moves: Vec::new(),
+            grain_journal: Vec::new(),
+            grain_ticks: std::collections::VecDeque::new(),
             step: 0,
             live: LiveFrame::default(),
             live_light: live_light(s.level),
@@ -468,6 +477,12 @@ impl Presentation {
         self.fx.clear();
         self.dynamic.clear();
         self.reset_heat(world);
+        // The grains moved before the state go, and the next upload sends
+        // the terrain whole with the level's surface materials (final
+        // review, Important 1), as the colour map is repainted whole.
+        self.grain_moves.clear();
+        self.forget_grains();
+        self.terrain_new = true;
         self.step = self.step.wrapping_add(1);
     }
 
@@ -612,6 +627,7 @@ impl Presentation {
         }
         if core::mem::take(&mut self.terrain_new) {
             self.color.take_dirty().for_each(drop);
+            self.forget_grains();
             // The heat (issue #39) is made afresh with the terrain.
             let materials = self.level_look.as_ref().map_or(&[][..], |l| &l.materials[..]);
             renderer.set_surface(materials, self.surface.as_ref());
@@ -646,6 +662,41 @@ impl Presentation {
             self.grain_moves.reserve(olr_render::MAX_GRAIN_MOVES);
         }
         self.grain_moves.extend(moved.chain(tick.loose_moves.iter().copied()).take(room));
+    }
+
+    /// Online play: before tick `tick` is presented, the grains every
+    /// presented tick from `tick` on moved go back, newest first (their
+    /// inverse moves queued for the renderer), as a rollback undid them;
+    /// nothing when no such tick was presented.
+    pub(crate) fn rewind_grains(&mut self, tick: u32) {
+        let Some(k) = self.grain_ticks.iter().position(|&(t, _)| t >= tick) else { return };
+        let start = self.grain_ticks[k].1;
+        self.grain_ticks.truncate(k);
+        let room = olr_render::MAX_GRAIN_MOVES.saturating_sub(self.grain_moves.len());
+        let back = self.grain_journal[start..].iter().rev().map(|&(from, to)| (to, from));
+        self.grain_moves.extend(back.take(room));
+        self.grain_journal.truncate(start);
+    }
+
+    /// Online play: tick `tick` was just presented, its moves those noted
+    /// from `from` on; ticks past the rollback window are forgotten.
+    pub(crate) fn journal_grains(&mut self, tick: u32, from: usize) {
+        let window = olr_netcode::MAX_PREDICTION;
+        while let Some(&(t, _)) = self.grain_ticks.front()
+            && t.saturating_add(window) < tick
+        {
+            self.grain_ticks.pop_front();
+            let end = self.grain_ticks.front().map_or(self.grain_journal.len(), |&(_, s)| s);
+            self.grain_journal.drain(..end);
+            self.grain_ticks.iter_mut().for_each(|(_, s)| *s -= end);
+        }
+        self.grain_ticks.push_back((tick, self.grain_journal.len()));
+        self.grain_journal.extend_from_slice(self.grain_moves.get(from..).unwrap_or(&[]));
+    }
+
+    fn forget_grains(&mut self) {
+        self.grain_journal.clear();
+        self.grain_ticks.clear();
     }
 
     /// The grains moved since the last upload (the production line

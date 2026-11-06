@@ -180,7 +180,15 @@ wired in the frame loop's order **once**, so each mode that draws a world
     hands them to `Renderer::move_grains` right before `update_terrain`
     (a whole upload drops them), so a grain's heat and surface material
     go with it. `grain_moves()` (tests,
-    `grain_moves_reach_the_renderer_in_order`).
+    `grain_moves_reach_the_renderer_in_order`). Online (final review,
+    Important 1) `NetPresenter::apply` journals each presented tick's
+    moves (`journal_grains`, kept `olr_netcode::MAX_PREDICTION` ticks)
+    and, before a tick it presented already, `rewind_grains` queues the
+    inverses of the moves of that tick and every later one, newest first,
+    so the renderer's grains end where the corrected timeline puts them;
+    `state_loaded` drops the waiting moves and the journal and uploads the
+    terrain whole (`a_rollback_undoes_the_grains_its_ticks_moved`,
+    `a_loaded_state_drops_the_grain_moves_before_it`).
   - `restart(&world, &level, &theme)` for the same worms on a new world;
     `state_loaded(&world)` for a loaded state in online play (scene
     restarts, entities go; the colour map is repainted by the load's

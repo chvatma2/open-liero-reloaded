@@ -7619,7 +7619,7 @@ explosions damage the destructible ones.
   `MAX_GRAIN_MOVES` 16384 composed moves and 64 batches wait; past them a
   batch is dropped and its grains land cold, as before. Without heat the
   material soak's own front map stays the level's (it follows only through
-  the heat's surface texture). A rollback does not move a front byte back.
+  the heat's surface texture). Online, the presentation keeps each presented tick's moves for the rollback window and, before a rollback's ticks run again, queues their inverses, newest first (`Presentation::rewind_grains`), so the grains' front bytes and heat end where the corrected timeline puts them; a loaded state drops the waiting moves and uploads the terrain whole (the level's surface again, as the colour map is repainted whole). A grain moved in its blast's own frame is heated where it lies: deposits run after the frame's terrain upload.
 - **Spawning beside parts (#90).** `FindSpot` reads the query, so nothing
   spawns in a part; a worm's fixed spawn whose 6 × 6 square meets a part
   falls back to `FindSpot`. For that the copies start (values set, index

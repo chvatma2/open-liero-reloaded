@@ -704,8 +704,8 @@ on screen or offscreen.
   solid map there, so the layer reset after it keeps the heat; timed in
   `HeatLayer` (`a_moved_grain_keeps_its_heat_and_material`, unit
   `grain_moves_compose_into_one_gather`). `heat_surface_texture()`
-  (hidden, tests). After a rollback a moved front byte stays where it
-  went. The CPU
+  (hidden, tests). After a rollback `olr-present` queues the undone ticks'
+  inverse moves (`Presentation::rewind_grains`). The CPU
   (`HeatSim`) keeps at most 8 boxes: a deposit's square, grown a pixel a
   step to `HEAT_SPREAD` (48) past it, overlapping ones joined; a box is
   zeroed and dropped once an upper bound of its temperature

@@ -788,3 +788,76 @@ fn a_loaded_state_restores_the_glow() {
     assert_eq!(present.color().glow(), fresh.glow());
     assert_eq!(present.color().glow_groups(), fresh.glow_groups());
 }
+
+/// Where each grain the moves carried lands (`destination → source`), as
+/// the renderer composes them (`HeatSim::move_grains`): the places left
+/// keep nothing.
+fn landed(moves: &[(u32, u32)]) -> BTreeMap<u32, u32> {
+    let mut origin: BTreeMap<u32, Option<u32>> = BTreeMap::new();
+    for &(from, to) in moves {
+        if from != to {
+            let source = origin.get(&from).copied().unwrap_or(Some(from));
+            origin.insert(to, source);
+            origin.insert(from, None);
+        }
+    }
+    origin.into_iter().filter_map(|(cell, s)| s.filter(|&s| s != cell).map(|s| (cell, s))).collect()
+}
+
+/// The production line design (final review, Important 1): a rollback
+/// undoes the grain moves of the ticks it simulates again before their
+/// new moves, so the renderer's grains (their surface material and heat)
+/// end where the corrected timeline puts them, not moved twice.
+#[test]
+fn a_rollback_undoes_the_grains_its_ticks_moved() {
+    let Some(c) = content() else { return };
+    let p = packs(&c);
+    let w = world(&c);
+    let mut present = presentation(&c, &p, &w);
+    let mut net = NetPresenter::new();
+    let tick = |tick, resim, loose_moves| TickedTick {
+        tick,
+        resim,
+        substeps: 2,
+        lost: None,
+        events: Vec::new(),
+        loose_moves,
+    };
+    let (a, b, cc, d) = (1000, 1001, 1002, 2000);
+    let mut sounds = Vec::new();
+    net.apply(
+        &mut present,
+        &w,
+        &[],
+        &[tick(1, false, vec![(a, b)]), tick(2, false, vec![(b, cc)])],
+        &mut sounds,
+    );
+    // A correction: tick 1 moved the grain elsewhere, tick 2 nothing.
+    net.apply(&mut present, &w, &[], &[tick(1, true, vec![(a, d)]), tick(2, true, Vec::new())], &mut sounds);
+    assert_eq!(landed(present.grain_moves()), landed(&[(a, d)]));
+}
+
+/// The production line design (final review, Important 1): a loaded
+/// state drops the grain moves made before it; the next upload sends the
+/// terrain whole, with the level's surface materials.
+#[test]
+fn a_loaded_state_drops_the_grain_moves_before_it() {
+    let Some(c) = content() else { return };
+    let p = packs(&c);
+    let w = world(&c);
+    let mut present = presentation(&c, &p, &w);
+    let mut net = NetPresenter::new();
+    let t = TickedTick {
+        tick: 1,
+        resim: false,
+        substeps: 2,
+        lost: None,
+        events: Vec::new(),
+        loose_moves: vec![(1000, 1001)],
+    };
+    net.apply(&mut present, &w, &[], &[t], &mut Vec::new());
+    assert_eq!(present.grain_moves(), [(1000, 1001)]);
+    present.state_loaded(&w);
+    net.reset(1);
+    assert_eq!(present.grain_moves(), []);
+}

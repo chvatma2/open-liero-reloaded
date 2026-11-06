@@ -269,6 +269,10 @@ impl NetPresenter {
                 loose_moves: &t.loose_moves,
             };
             self.kept.clear();
+            // A rollback's first tick takes back the grains its ticks moved
+            // as first presented; each tick's moves are kept for the next.
+            present.rewind_grains(t.tick);
+            let moved = present.grain_moves().len();
             if t.tick >= self.next {
                 for ((e, k), part) in t.events.iter().zip(&keys).zip(&self.parts) {
                     // Every event, but a death shown before (moved here by a
@@ -289,6 +293,7 @@ impl NetPresenter {
                     }
                 }
                 present.step_fx(&fx(&self.kept, t.substeps));
+                present.journal_grains(t.tick, moved);
                 self.next = t.tick.saturating_add(1);
                 continue;
             }
@@ -321,6 +326,7 @@ impl NetPresenter {
                 }
             }
             present.step_fx(&fx(&self.kept, 0));
+            present.journal_grains(t.tick, moved);
             present.scene.shake_for(&self.shakes, world.time());
         }
         // Issue #87: the live copies as the newest world shows them, after
