@@ -5,13 +5,18 @@
 // through the drive and up the incline, falling into the crate at the
 // top, where it vanishes. Stopped (the level script's shift, or a power
 // cut) lifts the die and holds the balls where they are.
+// The production line design (2026-11-06): the belts (`feed`, from the
+// reservoir to under the die, and `run`, right of it) run through the
+// countdown and stand from the seventh LED until the die is up again, so
+// the feed brings fresh dirt under the die between strokes; a stroke
+// makes a ball only when the die crushed dirt (`mem.dirt`).
 // Its constants (ticks are 10 ms):
 fn STEP() { 40 }    // ticks each LED (7 of them: the countdown)
 fn HOLD() { 20 }    // ticks all seven are lit before the drop
 fn DROP() { 400 }   // the die's speed down, px a second (4 a tick)
 fn PRESS() { 15 }   // ticks it stays down
 fn RISE() { 60 }    // its speed up, px a second
-fn BELT() { 12 }    // the belt's speed, px a second
+fn BELT() { 12 }    // the belts' and the balls' speed, px a second
 fn LIFT() { 2 }     // a ball's speed up in the drive, onto the incline's foot
 fn FALL() { 60 }    // a ball's speed falling into the crate
 fn KILL() { 1000 }  // the damage the die deals a worm it wedges
@@ -32,13 +37,15 @@ fn RIM() { -20 }
 fn KEY(i) { ["b1", "b2", "b3", "b4", "b5", "b6"][i - 1] }
 fn LIT() { ["Lit 1", "Lit 2", "Lit 3", "Lit 4", "Lit 5", "Lit 6", "Lit 7"] }
 
-// `mem.run` (running), `mem.lit` (LEDs lit), `mem.b<i>` each ball's leg
+// `mem.run` (running), `mem.lit` (LEDs lit), `mem.dirt` (the dirt cells
+// the die crushed since its drop began), `mem.b<i>` each ball's leg
 // of the path: 0 waiting in the stamp (hidden), 1 the flat run, 2 the
 // drive, 3 the incline, 4 over the end, 5 falling.
 fn start() {
   this.mem.run = false;
   this.mem.lit = 0;
   this.mem.cut = -1;
+  this.mem.dirt = 0;
   for i in 1..=BALLS() { this.set_leg(i, 0); }
   if this.state() != "Stopped" { this.begin(); }
 }
@@ -62,7 +69,13 @@ fn begin() {
   this.mem.run = true;
   if this.mem.lit == 0 { this.mem.lit = 1; }
   for i in 1..=BALLS() { this.roll(i); }
-  if this.get("die_y") > 0 { this.rise(); } else { this.after(STEP(), "count"); }
+  if this.get("die_y") > 0 { this.rise(); } else { this.belts(BELT()); this.after(STEP(), "count"); }
+}
+
+// Both belts at `speed` (0 stands them).
+fn belts(speed) {
+  this.set("feed_speed", speed);
+  this.set("run_speed", speed);
 }
 
 // Stops: the die back up, the balls held, the countdown dark.
@@ -72,6 +85,7 @@ fn halt() {
   this.cancel("count");
   this.cancel("drop");
   this.cancel("rise");
+  this.belts(0);
   this.move_to("die_y", 0, RISE());
   this.move_to("ram_y", 0, RISE());
   for i in 1..=BALLS() {
@@ -87,11 +101,17 @@ fn count() {
   if n > 7 { return; }
   this.mem.lit = n;
   this.set_state(LIT()[n - 1]);
-  if n == 7 { this.after(HOLD(), "drop"); } else { this.after(STEP(), "count"); }
+  if n == 7 {
+    this.belts(0);
+    this.after(HOLD(), "drop");
+  } else {
+    this.after(STEP(), "count");
+  }
 }
 
 fn drop() {
   if !this.mem.run { return; }
+  this.mem.dirt = 0;
   this.move_to("die_y", this.max("die_y"), DROP());
   this.move_to("ram_y", this.max("ram_y"), DROP());
 }
@@ -104,13 +124,14 @@ fn rise() {
 fn arrived(name) {
   if name == "die_y" {
     if this.get("die_y") > 0 {
-      // Down: a ball pressed, then up again.
+      // Down: a ball pressed of the dirt it crushed, then up again.
       this.play("thump.wav");
-      this.press();
+      if this.mem.dirt > 0 { this.press(); }
       this.after(PRESS(), "rise");
     } else if this.mem.run {
       this.mem.lit = 1;
       this.set_state("Lit 1");
+      this.belts(BELT());
       this.after(STEP(), "count");
     }
     return;
@@ -127,6 +148,10 @@ fn arrived(name) {
 fn blocked(name) {
   if name == "die_y" { this.after(PRESS(), "rise"); }
 }
+
+// Dirt the die crushed (any of this copy's parts; only the die moves
+// through dirt), counted for the stroke's ball.
+fn crushed_dirt(n) { this.mem.dirt += n; }
 
 // A worm the die wedges dies at once (the user's playtest, 2026-11-05):
 // the press is no place to stand.

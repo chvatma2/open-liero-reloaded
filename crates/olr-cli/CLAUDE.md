@@ -1312,10 +1312,17 @@ the groups and strips red, calm after 1000 ticks, not again for 2000),
 `the_lift_cart_and_forklift_work` (their states and travels),
 `a_blast_near_a_strip_flickers_it`, and the loose dirt design's
 `the_factory_has_spoil` (`loose.png` all `spoil` and only inside the
-press heap's and the mine's boxes, over 1000 pixels each;
+press heap's and the mine's boxes, over 1000 pixels each, and the
+production line design's belt box, over 100;
 `the_new_factory_bakes_as_after_dark` checks the list, `level loose
 list`) and `the_spoil_stays_put_in_an_empty_match` (no worms, 300 ticks:
-under 2 % of the grains moved).
+under 2 % of the grains moved); the production line design's
+`the_belt_runs_only_between_strokes` (`feed_speed` and `run_speed` 12
+from each `Lit 1` until `Lit 7`, 0 from then until the die is up, and
+while stopped), `a_worm_rides_the_belt` (a worm on `run` carried at
+least 5 px in a countdown) and `no_dirt_no_ball` (the pack copied with
+its loose dirt and the reservoir's and belt's dirt taken out of its
+level files: a whole shift's strokes and no ball shown).
 `bots_play_the_live_factory` (both
 mods, 3000 ticks, invariants every tick) and
 `the_live_factory_stays_in_sync` (`netsim`: 3 clients, the `bad`

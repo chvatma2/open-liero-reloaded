@@ -7566,6 +7566,20 @@ explosions damage the destructible ones.
   checks that). The loose step's `holds` bits now cover the tick's
   touched areas: grains a part carried into chunks that held none were
   never scanned again and stayed in the open jaws.
+- **The line's rhythm (2026-11-06).** The production line design: the
+  Dirt-ball line's belt top (row 351) is two conveyor layers of the
+  line's copy, `feed` (x 909-962, from the reservoir to under the die)
+  and `run` (x 966-988, on to the drive), with values `feed_speed` and
+  `run_speed`; `line.rhai` runs both at 12 px/s from each `Lit 1` and
+  stands them from `Lit 7` until the die is up again. The belt's dirt
+  from the heap to the die's right edge is spoil; right of it, gone.
+  The die's stroke makes a ball only when the line crushed dirt since
+  its drop began (`crushed_dirt`, `mem.dirt`). Deviation from the plan:
+  the plan's `run` began at 963; the three pixels under the die's right
+  edge (963-965) stay the ground's still rock, so the feed's dirt stops
+  under the die (on a moving `run` from 963 it rode on past the die to
+  the drive's casing); the worm-riding test stands its worm on `run`,
+  since the feed starts under the belt's loose dirt.
 - **Moved grains keep their heat (2026-11-06).** The production line
   design (the user: falling dirt should keep its heat): the presentation
   hands the renderer each grain the colour map moved since the last frame

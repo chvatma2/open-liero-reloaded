@@ -101,7 +101,10 @@ byte for byte, and running one again changes nothing.
   extracted from `dirt` onto a layer of its own set `--loose spoil`;
   the production line design: first the dip in the mine's floor under
   the crane's shaft filled with dirt level with the pile, `MINE_FILL`,
-  its art the pile's 46 px to its left);
+  its art the pile's 46 px to its left; the belt's dirt right of the
+  die gone, `BELT_CLEAN`, and the belt's dirt left of it spoil too,
+  `BELT_DIRT`, whole and unprobed (`dirt_in`); after the probes the belt's top row, `BELT_FEED` and
+  `BELT_RUN`, out of the ground's rock: the line's conveyors);
   `place(run, out, assets)` places the Lift, the Mine cart and the
   Forklift. `factory_assets.py` makes the Dirt-ball line, Lift, Mine cart,
   Forklift, Generator, Siren, Lab flask and Window pane by their blocks

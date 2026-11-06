@@ -359,26 +359,37 @@ is gone.
   front dirt does by its floor), the drive's casing over them (`drive`,
   rock, metal, drawn from After Dark's `rock`: the balls roll through it,
   the user's playtest, 2026-11-05) and its running lamp (`drive-lamp`,
-  group `running`). States `Stopped` (start: the LEDs
+  group `running`), and (the production line design) the belt's top row
+  as two conveyors, `feed` (x 909-962: from the reservoir to under the
+  die) and `run` (x 966-988: right of the die, toward the drive), Rock
+  layers cut from After Dark's `rock`; the three pixels between, under
+  the die's right edge, stay the ground's, so dirt the feed brings stops
+  under the die. States `Stopped` (start: the LEDs
   dark, the stripe red, the lamp out) and `Lit 1` … `Lit 7` (running:
   that many LEDs lit from the bottom, the stripe white, `#f4f0ff`, the
   lamp lit; each ticks, `tick.wav`, and loops `rumble.wav`). Exposed
-  `die_y` and `ram_y` (0-18: the plate onto the belt), and each ball's
+  `die_y` and `ram_y` (0-18: the plate onto the belt), `feed_speed` and
+  `run_speed` (the conveyors' speeds, world px a second, -100 to 100,
+  default 0), and each ball's
   `b<i>_x` (from each ball's own place, 4 (i − 1) px along the flat
   run: −4 (i − 1) to 96 − 4 (i − 1)), `b<i>_y` (−29-0) and `b<i>_on`. Its pictures and
   masks are from `tools/levels/factory_works.py`; `thump.wav`,
   `tick.wav`, `rumble.wav` and `horn.wav` are synthesised for OLR by
   `tools/sounds/factory_sounds.py`, CC0. Its default script
-  `tools/levels/factory/line.rhai` counts down, drops the die (killing a
-  worm it wedges, `crushed` and `hurt`), sends a ball along the belt,
-  through the drive and up the incline into the crate, and again, while
-  not Stopped; Liero Factory Reloaded's level
+  `tools/levels/factory/line.rhai` counts down with the belts running
+  (the production line design: they stand from the seventh LED until the
+  die is up again), drops the die (killing a worm it wedges, `crushed`
+  and `hurt`), sends a ball along the belt when it crushed dirt
+  (`crushed_dirt`), through the drive and up the incline into the crate,
+  and again, while not Stopped; Liero Factory Reloaded's level
   script starts and stops it (the shift).
 
       olr-cli level element erase content/reloaded/olr-level-liero-factory-after-dark rock --rect 934,299,31,21
       olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 933,269,33,57 --name Housing
       olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 933,326,33,7 --name Die
       olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --mask tools/levels/factory/art/line-stripe-mask.png --name Stripe
+      olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 909,351,54,1 --name Feed
+      olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 966,351,23,1 --name Run
       olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark rock-disp --locked false
       olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock-disp --rect 942,279,1,19 --name Leds
       olr-cli level element glow content/reloaded/olr-level-liero-factory-after-dark leds --rect 942,279,1,19 --strength 100
@@ -413,7 +424,7 @@ is gone.
       olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name "Drive lamp"
       olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark drive-lamp --mask tools/levels/factory/art/line-lamp-mask.png --tile tools/levels/factory/art/line-lamp-tile.png
       olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark drive-lamp --glow 100 --glow-group running
-      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 909,269,150,88 --layers ram,housing,die,leds,stripe,ball-1,ball-2,ball-3,ball-4,ball-5,ball-6,drive,drive-lamp --name "Dirt-ball line" --out content/assets/ball-line
+      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 909,269,150,88 --layers ram,housing,die,leds,stripe,feed,run,ball-1,ball-2,ball-3,ball-4,ball-5,ball-6,drive,drive-lamp --name "Dirt-ball line" --out content/assets/ball-line
       olr-cli asset state add content/assets/ball-line Plain
       olr-cli asset state picture content/assets/ball-line Plain leds --art tools/levels/factory/art/line-leds-0.png --glow tools/levels/factory/art/line-leds-0-glow.png
       olr-cli asset state set content/assets/ball-line Plain --start
@@ -445,6 +456,8 @@ is gone.
       olr-cli asset state picture content/assets/ball-line "Lit 7" leds --art tools/levels/factory/art/line-leds-7.png --glow tools/levels/factory/art/line-leds-7-glow.png
       olr-cli asset expose content/assets/ball-line die_y die.y --default 0 --min 0 --max 18
       olr-cli asset expose content/assets/ball-line ram_y ram.y --default 0 --min 0 --max 18
+      olr-cli asset expose content/assets/ball-line feed_speed feed.conveyor --default 0 --min -100 --max 100
+      olr-cli asset expose content/assets/ball-line run_speed run.conveyor --default 0 --min -100 --max 100
       olr-cli asset expose content/assets/ball-line b1_x ball-1.x --default 0 --min 0 --max 96
       olr-cli asset expose content/assets/ball-line b1_y ball-1.y --default 0 --min -29 --max 0
       olr-cli asset expose content/assets/ball-line b1_on ball-1.visible --default false

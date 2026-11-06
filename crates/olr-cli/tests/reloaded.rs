@@ -29,7 +29,7 @@ pub(crate) fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-fn reloaded_dir() -> PathBuf {
+pub(crate) fn reloaded_dir() -> PathBuf {
     repo().join("content/reloaded")
 }
 

@@ -372,23 +372,26 @@ fn a_blast_near_a_strip_flickers_it() {
     assert_eq!(live_copy(&w, "strip-6").value("hp"), Some(20), "unhurt");
 }
 
-/// The spoil's boxes (`factory_works.py`): the press heap's and the mine's.
+/// The spoil's boxes (`factory_works.py`): the press heap's and the mine's
+/// (the production line design: and the belt's, up to the die's right
+/// edge).
 const HEAP: (u32, u32, u32, u32) = (820, 320, 90, 50);
 const MINE: (u32, u32, u32, u32) = (590, 370, 380, 110);
+const BELT_DIRT: (u32, u32, u32, u32) = (910, 330, 56, 21);
 
 fn within((bx, by, bw, bh): (u32, u32, u32, u32), x: u32, y: u32) -> bool {
     x >= bx && x < bx + bw && y >= by && y < by + bh
 }
 
-/// The press heap and the mine's floor seam are loose spoil, and no dirt
-/// outside their boxes is.
+/// The press heap, the mine's floor seam and (the production line design)
+/// the belt's dirt are loose spoil, and no dirt outside their boxes is.
 #[test]
 fn the_factory_has_spoil() {
     let content = Content::open_bundled(&packs_dir()).unwrap();
     let level = content.load_level(FACTORY).unwrap();
     let loose = level.loose.as_ref().expect("the factory has loose dirt");
     let w = level.material.width();
-    let (mut heap, mut mine) = (0, 0);
+    let (mut heap, mut mine, mut belt) = (0, 0, 0);
     for (i, &k) in loose.kinds.iter().enumerate() {
         let (x, y) = (i as u32 % w, i as u32 / w);
         if k == 0 {
@@ -399,11 +402,13 @@ fn the_factory_has_spoil() {
             heap += 1;
         } else if within(MINE, x, y) {
             mine += 1;
+        } else if within(BELT_DIRT, x, y) {
+            belt += 1;
         } else {
-            panic!("({x}, {y}) is loose, outside the heap and the mine");
+            panic!("({x}, {y}) is loose, outside the heap, the mine and the belt");
         }
     }
-    assert!(heap > 1000 && mine > 1000, "heap {heap}, mine {mine} loose pixels");
+    assert!(heap > 1000 && mine > 1000 && belt > 100, "heap {heap}, mine {mine}, belt {belt} loose pixels");
 }
 
 /// The spoil rests where the level lays it: in a match of no worms, fewer
@@ -517,4 +522,135 @@ fn the_claw_crushes_a_worm_slowly_against_the_dirt() {
     let wm = &w.worms()[0];
     assert_eq!(chunks, 2, "pinned and crushed: at {:?}, health {}", wm.pos, wm.health);
     assert!(wm.alive && wm.health == 90.0, "two chunks, no more: {}", wm.health);
+}
+
+/// The line's belt speed, world px a second (`line.rhai`'s `BELT`).
+const BELT: i64 = 12;
+
+/// The production line design: while the line runs both belts (`feed`
+/// under the reservoir and the die, `run` right of the die) run at `BELT`
+/// from each `Lit 1` until `Lit 7` lights, and stand from then until the
+/// die is up again (its drop, press and rise all in `Lit 7`); stopped,
+/// they stand.
+#[test]
+fn the_belt_runs_only_between_strokes() {
+    let mut m = idle_match(1, QUIET + HORN + RUN + 200);
+    let (mut since, mut last) = (0u32, String::new());
+    let (mut running, mut standing) = (0, 0);
+    while m.step() {
+        let w = m.world();
+        let now = state(w, "line").to_owned();
+        if now != last {
+            (since, last) = (m.ticks(), now.clone());
+        }
+        // A state's first 2 ticks may still hold the last one's speed.
+        if m.ticks() < since + 2 {
+            continue;
+        }
+        let c = live_copy(w, "line");
+        let (feed, run) = (c.value("feed_speed").unwrap(), c.value("run_speed").unwrap());
+        assert_eq!(feed, run, "the belts run together at {}", m.ticks());
+        let between = now.starts_with("Lit ") && now != "Lit 7" && c.value("die_y").unwrap() == 0;
+        if between {
+            assert_eq!(feed, BELT, "running in {now} at {}", m.ticks());
+            running += 1;
+        } else {
+            assert_eq!(
+                feed,
+                0,
+                "standing in {now} at {}, the die at {}",
+                m.ticks(),
+                c.value("die_y").unwrap()
+            );
+            standing += 1;
+        }
+    }
+    assert!(running > 1000 && standing > 1000, "{running} ticks running, {standing} standing");
+}
+
+/// The production line design: a worm standing on the running belt right
+/// of the die rides it toward the drive.
+#[test]
+fn a_worm_rides_the_belt() {
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    let mut w = factory_world(&content, (972, 340));
+    run(&mut w, 100, |_, _| ());
+    let x0 = w.worms()[0].pos.x;
+    assert!(w.worms()[0].on_ground && (966.0..980.0).contains(&x0), "on the belt: {:?}", w.worms()[0].pos);
+    let line = live_copy(&w, "line");
+    let (index, lit) = (line.index(), line.setup().state("Lit 1").unwrap());
+    w.set_live_state(index, lit).unwrap();
+    run(&mut w, 6 * STEP, |_, _| ());
+    let x1 = w.worms()[0].pos.x;
+    assert!(x1 >= x0 + 5.0, "rode from {x0} to {x1}");
+}
+
+/// The production line design: the press makes a ball only of dirt it
+/// crushed. The factory with its loose dirt (the mine's, the reservoir's,
+/// the belt's) and all dirt of the reservoir's box and the belt taken out
+/// of its level files: through the whole shift no ball is ever shown.
+#[test]
+fn no_dirt_no_ball() {
+    use olr_data::level::Material;
+    let tmp = tempfile::tempdir().unwrap();
+    let pack = tmp.path().join(FACTORY);
+    let from = super::reloaded::reloaded_dir().join(FACTORY);
+    copy_dir(&from, &pack);
+    let mut l = olr_format::levels::read_level_files(&olr_vfs::DirFs::new(&pack)).unwrap();
+    let (width, s) = (l.size.0, l.art_scale);
+    let belt = (909, 330, 80, 21);
+    for i in 0..l.material.len() {
+        let (x, y) = (i as u32 % width, i as u32 / width);
+        let loose = l.loose_map.as_ref().is_some_and(|m| m[i] != 0);
+        let boxed = within(RESERVOIR, x, y) || within(belt, x, y);
+        if l.material[i] == Material::Dirt && (loose || boxed) {
+            l.material[i] = Material::Background;
+            for (ax, ay) in (0..s * s).map(|k| (x * s + k % s, y * s + k / s)) {
+                let back = l.back.get(ax, ay);
+                l.front.set(ax, ay, back);
+            }
+            if let Some(m) = l.surface.as_mut() {
+                m.front[i] = 0;
+            }
+        }
+    }
+    l.loose_map = None;
+    olr_format::levels::write_level_files(&mut olr_vfs::DirFs::new(&pack), &l).unwrap();
+    let packs = packs_dir();
+    let bundled = olr_content::bundled_roots(&packs);
+    let roots: Vec<&std::path::Path> =
+        std::iter::once(tmp.path()).chain(bundled.iter().map(|p| p.as_path())).collect();
+    let content = Content::open_layers(&roots).unwrap();
+    let spec = MatchSpec {
+        personality: Personality::Idle,
+        kill_limit: 0,
+        time_limit: 0.0,
+        ..MatchSpec::new(CLASSIC, FACTORY, 2, 1, QUIET + HORN + RUN)
+    };
+    let mut m = Match::new(&content, &spec, &Options::default()).unwrap();
+    let mut strokes = 0;
+    let mut down = false;
+    while m.step() {
+        let c = live_copy(m.world(), "line");
+        let shown: Vec<_> = (1..=6).filter(|i| c.value(&format!("b{i}_on")).unwrap() != 0).collect();
+        assert!(shown.is_empty(), "balls {shown:?} shown at {}", m.ticks());
+        let now = c.value("die_y").unwrap() / olr_sim::LIVE_SUBPIXELS == 18;
+        strokes += usize::from(now && !down);
+        down = now;
+    }
+    assert!(strokes >= 5, "the press pressed {strokes} times");
+}
+
+/// Copies directory `from` into `to`, recursively.
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for e in std::fs::read_dir(from).unwrap() {
+        let e = e.unwrap();
+        let p = to.join(e.file_name());
+        if e.file_type().unwrap().is_dir() {
+            copy_dir(&e.path(), &p)
+        } else {
+            std::fs::copy(e.path(), &p).map(|_| ()).unwrap()
+        }
+    }
 }

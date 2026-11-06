@@ -131,12 +131,26 @@ CAB_BOX = (50, 378, 23, 16)
 CAB_GROUP = ("cab", "ffd8a0", 140, 22, None)
 CAB_GLOW = 60
 
+# The production line design: the belt's top row, the Dirt-ball line's two
+# conveyor layers now (`content/assets/README.md`): `feed` from the heap to
+# under the die, `run` right of the die; the 3 px between, under the die's
+# right edge, stay the ground's, so carried dirt stops under the die. The
+# belt's dirt left of that is spoil (`SPOIL`), right of it it goes.
+BELT_FEED = (909, 351, 54, 1)
+BELT_RUN = (966, 351, 23, 1)
+BELT_DIRT = (910, 330, 56, 21)
+BELT_CLEAN = (966, 330, 23, 21)
+
 # The loose dirt design: the press heap's box and the mine's (its floor
 # seam rests on rock, the seams above the tunnel would fall into it); a
 # region of either is spoil when the probe moves under SPOIL_MOVED % of it
-# in SPOIL_TICKS ticks.
-SPOIL = [("Press heap", "spoil-heap.png", (820, 320, 90, 50)),
-         ("Mine spoil", "spoil-mine.png", (590, 370, 380, 110))]
+# in SPOIL_TICKS ticks (a box not probed: all its dirt).
+SPOIL = [("Press heap", "spoil-heap.png", (820, 320, 90, 50), True),
+         ("Mine spoil", "spoil-mine.png", (590, 370, 380, 110), True),
+         # The production line design: the belt's dirt from the heap to
+         # the die's right edge, which the feed belt brings under the die:
+         # all of it, unprobed (its mounds settle a little at first).
+         ("Belt dirt", "spoil-belt.png", BELT_DIRT, False)]
 SPOIL_REPOSE, SPOIL_TICKS, SPOIL_MOVED = 35, 300, 2.0
 # The production line design: the mine's floor under the shaft filled
 # level with the pile beside it (its top row), x from MINE_FILL[0] for
@@ -585,15 +599,32 @@ def ground(run, out):
     paint("mine-fill", fill, SCRATCH)
     el("draw", out, "dirt", "--mask", os.path.join(SCRATCH, "mine-fill-mask.png"),
        "--tile", os.path.join(SCRATCH, "mine-fill-tile.png"))
+    # The production line design: no dirt on the belt right of the die.
+    el("erase", out, "dirt", "--rect", ",".join(map(str, BELT_CLEAN)))
     # The loose dirt design: the press heap and the mine's floor seam are
-    # spoil, each on a dirt layer of its own.
+    # spoil, each on a dirt layer of its own (the production line design:
+    # and the belt's dirt).
     run("level", "loose", "add", out, "--id", "spoil", "--name", "Mine spoil", "--repose", str(SPOIL_REPOSE))
-    for name, mask, box in SPOIL:
-        pixels = resting(run, out, box)
+    for name, mask, box, probed in SPOIL:
+        pixels = resting(run, out, box) if probed else dirt_in(out, box)
         sp = added(el("extract", out, "dirt", "--mask", white(mask, pixels, SCRATCH), "--name", name))
         el("set", out, sp, "--loose", "spoil")
         new.append(sp)
+    # The belt's top row is the line's conveyors now (after the probes,
+    # whose dirt rests on it).
+    for r in (BELT_FEED, BELT_RUN):
+        el("erase", out, "rock", "--rect", ",".join(map(str, r)))
     return new
+
+
+def dirt_in(out, box):
+    """The dirt pixels of `box` (all on the ground's `dirt`)."""
+    bx, by, bw, bh = box
+    _, _, mat = decode(os.path.join(out, "material.png"))
+    dirt = layer_of(out, "dirt")
+    out = {(x, y) for y in range(by, by + bh) for x in range(bx, bx + bw) if mat[y][x][:3] == DIRT}
+    assert out and all(dirt[y][x][3] for x, y in out), box
+    return out
 
 
 def resting(run, out, box):

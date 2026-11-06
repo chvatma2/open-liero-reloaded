@@ -21,6 +21,17 @@
             surface_map: true,
         ),
         (
+            id: "belt-dirt",
+            name: "Belt dirt",
+            locked: true,
+            kind: Drawn(
+                material: Dirt,
+            ),
+            surface: "dirt",
+            surface_map: true,
+            loose: "spoil",
+        ),
+        (
             id: "mine-spoil",
             name: "Mine spoil",
             locked: true,

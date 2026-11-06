@@ -254,6 +254,9 @@ fn the_plant_works_assets_check() {
             (150, 88),
             &[
                 "ram",
+                // The production line design: the belt's two conveyors.
+                "run",
+                "feed",
                 "stripe",
                 "die",
                 "housing",

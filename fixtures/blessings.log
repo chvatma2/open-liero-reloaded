@@ -366,3 +366,9 @@
   fixtures/render/factory-beacon-side.png
   fixtures/render/factory-crane.png
   fixtures/render/factory-line.png
+2026-11-06 bless-regression: the belt feeds the press, a ball only from crushed dirt
+  fixtures/matches-live/classic-factory-live-4dm.ron
+2026-11-06 bless-render: the belt feeds the press: its dirt loose left of the die, none right of it
+  fixtures/render/factory-beacon-side.png
+  fixtures/render/factory-crane.png
+  fixtures/render/factory-line.png

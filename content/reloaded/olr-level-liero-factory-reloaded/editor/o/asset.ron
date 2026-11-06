@@ -13,6 +13,26 @@
             surface: "concrete",
         ),
         (
+            id: "run",
+            name: "Run",
+            kind: Drawn(
+                material: Rock,
+                at: (57, 82),
+                size: (23, 1),
+            ),
+            surface: "stone",
+        ),
+        (
+            id: "feed",
+            name: "Feed",
+            kind: Drawn(
+                material: Rock,
+                at: (0, 82),
+                size: (54, 1),
+            ),
+            surface: "stone",
+        ),
+        (
             id: "stripe",
             name: "Stripe",
             kind: Drawn(
@@ -424,6 +444,20 @@
             default: Int(0),
             min: 0,
             max: 18,
+        ),
+        (
+            name: "feed_speed",
+            property: Conveyor("feed"),
+            default: Int(0),
+            min: -100,
+            max: 100,
+        ),
+        (
+            name: "run_speed",
+            property: Conveyor("run"),
+            default: Int(0),
+            min: -100,
+            max: 100,
         ),
         (
             name: "b1_x",
