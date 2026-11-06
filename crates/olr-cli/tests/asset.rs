@@ -251,7 +251,7 @@ fn the_plant_works_assets_check() {
     let want: [(&str, (u32, u32), &[&str]); 8] = [
         (
             "ball-line",
-            (150, 88),
+            (204, 88),
             &[
                 "ram",
                 // The production line design: the belt's two conveyors.

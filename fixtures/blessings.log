@@ -372,3 +372,9 @@
   fixtures/render/factory-beacon-side.png
   fixtures/render/factory-crane.png
   fixtures/render/factory-line.png
+2026-11-06 bless-regression: the mine pile, the reservoir and a clean belt
+  fixtures/matches-live/classic-factory-live-4dm.ron
+2026-11-06 bless-render: the mine pile, the reservoir and a clean belt
+  fixtures/render/factory-beacon-side.png
+  fixtures/render/factory-crane.png
+  fixtures/render/factory-line.png

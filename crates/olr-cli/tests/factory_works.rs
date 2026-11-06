@@ -372,10 +372,10 @@ fn a_blast_near_a_strip_flickers_it() {
     assert_eq!(live_copy(&w, "strip-6").value("hp"), Some(20), "unhurt");
 }
 
-/// The spoil's boxes (`factory_works.py`): the press heap's and the mine's
-/// (the production line design: and the belt's, up to the die's right
-/// edge).
-const HEAP: (u32, u32, u32, u32) = (820, 320, 90, 50);
+/// The spoil's boxes (`factory_works.py`): the reservoir's (the
+/// production line design: the press heap's tank made a hopper), the
+/// mine's and the belt's, up to the die's right edge.
+const HEAP: (u32, u32, u32, u32) = RESERVOIR;
 const MINE: (u32, u32, u32, u32) = (590, 370, 380, 110);
 const BELT_DIRT: (u32, u32, u32, u32) = (910, 330, 56, 21);
 
@@ -383,7 +383,7 @@ fn within((bx, by, bw, bh): (u32, u32, u32, u32), x: u32, y: u32) -> bool {
     x >= bx && x < bx + bw && y >= by && y < by + bh
 }
 
-/// The press heap, the mine's floor seam and (the production line design)
+/// The reservoir, the mine's floor seam and (the production line design)
 /// the belt's dirt are loose spoil, and no dirt outside their boxes is.
 #[test]
 fn the_factory_has_spoil() {
@@ -412,7 +412,9 @@ fn the_factory_has_spoil() {
 }
 
 /// The spoil rests where the level lays it: in a match of no worms, fewer
-/// than 2 % of its grains move in 300 ticks.
+/// than 2 % of its grains away from the machines move in 300 ticks (the
+/// production line design: the reservoir pours onto the belt, the belt
+/// carries and the claw bites; `MACHINES`).
 #[test]
 fn the_spoil_stays_put_in_an_empty_match() {
     let content = Content::open_bundled(&packs_dir()).unwrap();
@@ -437,15 +439,23 @@ fn the_spoil_stays_put_in_an_empty_match() {
             moved[g as usize] = true;
         }
     });
-    let loose = kinds.iter().filter(|&&k| k != 0).count();
-    let gone = moved.iter().filter(|&&m| m).count();
+    let width = level.material.width();
+    let away = |c: usize| {
+        let (x, y) = (c as u32 % width, c as u32 / width);
+        !MACHINES.iter().any(|&b| within(b, x, y))
+    };
+    let loose = kinds.iter().enumerate().filter(|&(c, &k)| k != 0 && away(c)).count();
+    let gone = moved.iter().enumerate().filter(|&(c, &m)| m && away(c)).count();
     assert!(gone * 50 < loose, "{gone} of {loose} grains moved");
 }
 
 /// The production line design's mine and reservoir boxes: the grains the
 /// crane may bite (the mine spoil under the hall) and where it drops them
-/// (the press heap's box).
-const RESERVOIR: (u32, u32, u32, u32) = (820, 320, 90, 50);
+/// (the reservoir's box, `factory_works.py`'s `RESERVOIR_BOX`).
+const RESERVOIR: (u32, u32, u32, u32) = (826, 300, 84, 66);
+/// Where the machines move the spoil: the reservoir, the belt's dirt and
+/// the pile under the crane's shaft (the crane's columns, rows 380-479).
+const MACHINES: [(u32, u32, u32, u32); 3] = [RESERVOIR, BELT_DIRT, (762, 380, 114, 100)];
 
 /// An empty match of the factory (no worms), its scripts running.
 fn empty_world(content: &Content) -> World {
@@ -463,8 +473,9 @@ fn empty_world(content: &Content) -> World {
 /// The production line design: the crane's rounds carry real loose dirt
 /// from the mine to the reservoir. Each grain is followed from its start
 /// through the tick's `GrainMoved` events (the parts' pushes and carries)
-/// and then its loose moves; after two rounds, at least 100 grains that
-/// started in the mine lie in the reservoir's box.
+/// and then its loose moves; in two rounds at least 100 grains that
+/// started in the mine reach the reservoir's box (the feed takes them on
+/// from there).
 #[test]
 fn the_crane_carries_the_mines_dirt_to_the_reservoir() {
     let content = Content::open_bundled(&packs_dir()).unwrap();
@@ -473,43 +484,32 @@ fn the_crane_carries_the_mines_dirt_to_the_reservoir() {
     let cells = w.terrain().loose_cells().expect("the factory has loose dirt").len();
     // `grain[cell]`: the starting cell of the grain there now.
     let mut grain: Vec<u32> = (0..cells as u32).collect();
+    let mut arrived = std::collections::BTreeSet::new();
+    let (rx, ry, rw, rh) = RESERVOIR;
     run(&mut w, 4000, |w, ev| {
-        for e in ev.iter() {
-            if let EventKind::GrainMoved { from, to } = e.kind {
-                let (f, t) = (
-                    i64::from(from.1) * width + i64::from(from.0),
-                    i64::from(to.1) * width + i64::from(to.0),
-                );
-                grain[t as usize] = grain[f as usize];
+        follow_grains(&mut grain, width, ev, w);
+        let t = w.terrain();
+        for (x, y) in (ry..ry + rh).flat_map(|y| (rx..rx + rw).map(move |x| (x, y))) {
+            let g = grain[(i64::from(y) * width + i64::from(x)) as usize];
+            let from = (g % width as u32, g / width as u32);
+            if t.loose(x.into(), y.into()) != 0 && within(MINE, from.0, from.1) {
+                arrived.insert(g);
             }
         }
-        for &(from, to) in w.loose_moves() {
-            grain[to as usize] = grain[from as usize];
-        }
     });
-    let t = w.terrain();
-    let carried = (0..cells as i64)
-        .filter(|&c| {
-            let (x, y) = (c % width, c / width);
-            let g = grain[c as usize] as i64;
-            let at = |v: i64| v as u32;
-            t.loose(x, y) != 0
-                && within(RESERVOIR, at(x), at(y))
-                && within(MINE, at(g % width), at(g / width))
-        })
-        .count();
-    assert!(carried >= 100, "{carried} of the mine's grains in the reservoir");
+    let carried = arrived.len();
+    assert!(carried >= 100, "{carried} of the mine's grains reached the reservoir");
 }
 
 /// The production line design: the claw keeps the engine's rules for
-/// worms. A worm standing on the pile under the shaft is pinned by the
+/// worms. A worm standing on the mound under the shaft is pinned by the
 /// claw coming down and slowly crushed (`CRUSH_CHUNK` 5 every
 /// `CRUSH_EVERY` 10 ticks): its first two chunks leave it alive at 90,
 /// and the crane deals no `hurt` of its own.
 #[test]
 fn the_claw_crushes_a_worm_slowly_against_the_dirt() {
     let content = Content::open_bundled(&packs_dir()).unwrap();
-    let mut w = super::reloaded::factory_world(&content, (795, 440));
+    let mut w = super::reloaded::factory_world(&content, (795, 396));
     let mut ev = TickEvents::new();
     let mut chunks = 0;
     for _ in 0..1500 {
@@ -653,4 +653,184 @@ fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
             std::fs::copy(e.path(), &p).map(|_| ()).unwrap()
         }
     }
+}
+
+/// Each loose grain's starting cell, following the tick's `GrainMoved`
+/// events (the parts' pushes and carries) and then its loose moves:
+/// `grain[cell]` is the starting cell of the grain there now.
+fn follow_grains(grain: &mut [u32], width: i64, events: &TickEvents, w: &World) {
+    for e in events.iter() {
+        if let EventKind::GrainMoved { from, to } = e.kind {
+            let cell = |p: (i32, i32)| (i64::from(p.1) * width + i64::from(p.0)) as usize;
+            grain[cell(to)] = grain[cell(from)];
+        }
+    }
+    for &(from, to) in w.loose_moves() {
+        grain[to as usize] = grain[from as usize];
+    }
+}
+
+/// The production line design, the whole loop: through a shift of an
+/// idle match the crane brings the mine's grains into the reservoir, the
+/// belt brings dirt under the die, and the press makes balls (at least
+/// two), each in a stroke that crushed dirt. The belt right of the die
+/// starts clean.
+#[test]
+fn the_line_makes_balls_from_the_mines_dirt() {
+    let mut m = idle_match(1, QUIET + HORN + RUN);
+    let t = m.world().terrain();
+    for y in 330..351 {
+        for x in 966..989 {
+            assert!(t.flags(x, y) & olr_terrain::PX_DIRT == 0, "dirt on the belt at ({x}, {y})");
+        }
+    }
+    let line = live_copy(m.world(), "line").index();
+    let width = i64::from(t.width());
+    let mut grain: Vec<u32> = (0..t.loose_cells().unwrap().len() as u32).collect();
+    let (mut stroke_dirt, mut was_down, mut shown) = (0u32, false, [false; 6]);
+    let (mut balls, mut delivered) = (0, 0);
+    while m.step() {
+        let w = m.world();
+        let c = live_copy(w, "line");
+        let down = c.value("die_y").unwrap() > 0;
+        if down && !was_down {
+            stroke_dirt = 0;
+        }
+        was_down = down;
+        for e in m.events().iter() {
+            if let EventKind::DirtCrushed { copy, cells } = e.kind
+                && copy == line
+            {
+                stroke_dirt += cells;
+            }
+        }
+        follow_grains(&mut grain, width, m.events(), w);
+        for (i, was) in shown.iter_mut().enumerate() {
+            let on = c.value(&format!("b{}_on", i + 1)).unwrap() != 0;
+            if on && !*was {
+                assert!(
+                    stroke_dirt > 0,
+                    "ball {} at {} from a stroke that crushed no dirt",
+                    i + 1,
+                    m.ticks()
+                );
+                balls += 1;
+            }
+            *was = on;
+        }
+        if m.ticks().is_multiple_of(100) {
+            let t = w.terrain();
+            let (rx, ry, rw, rh) = RESERVOIR;
+            let from_mine = (ry..ry + rh)
+                .flat_map(|y| (rx..rx + rw).map(move |x| (x, y)))
+                .filter(|&(x, y)| {
+                    let g = i64::from(grain[(i64::from(y) * width + i64::from(x)) as usize]);
+                    t.loose(x.into(), y.into()) != 0 && within(MINE, (g % width) as u32, (g / width) as u32)
+                })
+                .count();
+            delivered = delivered.max(from_mine);
+        }
+    }
+    assert!(balls >= 2, "{balls} balls");
+    assert!(delivered >= 50, "{delivered} of the mine's grains in the reservoir at most");
+}
+
+/// The production line design: the loop keeps its dirt. Through a shift,
+/// the loose grains at the end and the dirt the parts crushed are the
+/// loose grains at the start, and no plain dirt lies in a moving part's
+/// way (its count never changes: nothing else digs in an idle match).
+#[test]
+fn every_loose_grain_is_kept_or_crushed() {
+    let count = |w: &World| {
+        let t = w.terrain();
+        let (mut loose, mut plain) = (0u64, 0u64);
+        for y in 0..i64::from(t.height()) {
+            for x in 0..i64::from(t.width()) {
+                if t.flags(x, y) & olr_terrain::PX_DIRT != 0 {
+                    if t.loose(x, y) != 0 { loose += 1 } else { plain += 1 }
+                }
+            }
+        }
+        (loose, plain)
+    };
+    let mut m = idle_match(1, QUIET + HORN + RUN);
+    let (loose0, plain0) = count(m.world());
+    let mut crushed = 0u64;
+    while m.step() {
+        for e in m.events().iter() {
+            if let EventKind::DirtCrushed { cells, .. } = e.kind {
+                crushed += u64::from(cells);
+            }
+        }
+    }
+    let (loose1, plain1) = count(m.world());
+    assert_eq!(plain1, plain0, "plain dirt crushed");
+    assert!(crushed > 0, "the press crushed dirt");
+    assert_eq!(loose1 + crushed, loose0, "{loose1} grains kept and {crushed} crushed of {loose0}");
+}
+
+/// The production line design: the colour map, fed each tick's edits and
+/// grain moves as play feeds it (`olr_content::apply_edits`), keeps the
+/// world's terrain through a shift.
+#[test]
+fn the_line_draws_in_step_with_the_world() {
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    let level = content.load_level(FACTORY).unwrap();
+    let theme = content.load_theme(&level.theme).unwrap();
+    let mut map = level.color_map(&theme);
+    // The map is the level before any edit: the worms' spawn holes come
+    // with the first tick's events.
+    let mut m = idle_match(1, QUIET + HORN + RUN);
+    while m.step() {
+        olr_content::apply_edits(&mut map, m.events(), m.world());
+        if m.ticks().is_multiple_of(100) {
+            assert!(map.material() == m.world().terrain(), "the map left the world at {}", m.ticks());
+        }
+    }
+}
+
+/// The production line design: a blackout while the claw rises with its
+/// bite stops the belts and the claw where they are, and the bite stays in
+/// the jaws until the power is back: no grain moves or is lost.
+#[test]
+fn a_blackout_holds_the_belt_and_the_claws_grains() {
+    let mut w = world();
+    let px = |w: &World, n: &str| live_copy(w, "crane").value(n).unwrap().div_euclid(olr_sim::LIVE_SUBPIXELS);
+    // Into the shift, then until the claw rises closed.
+    run(&mut w, QUIET + HORN + 100, |_, _| ());
+    until(&mut w, 3000, |w| {
+        let x = px(w, "claw_x");
+        px(w, "jaw_r_x") == x && px(w, "jaw_l_x") == x && (20..80).contains(&px(w, "hub_y"))
+    });
+    // The bucket: the jaws' columns, 776-797 at `claw_x` 0, rows 305-323
+    // at `jaw_r_y` 0 (the floors fall 45 degrees from row 310).
+    let bite = |w: &World| {
+        let (x, y) = (px(w, "claw_x"), px(w, "jaw_r_y"));
+        let t = w.terrain();
+        (y + 305..=y + 323)
+            .flat_map(|yy| (x + 776..=x + 797).map(move |xx| (xx, yy)))
+            .filter(|&(xx, yy)| t.loose(xx, yy) != 0)
+            .count()
+    };
+    let total = |w: &World| w.terrain().loose_cells().unwrap().iter().filter(|&&k| k != 0).count();
+    wreck(&mut w, "generator", 4.0, "Wrecked");
+    run(&mut w, 3, |_, _| ());
+    assert_eq!(state(&w, "crane"), "Off");
+    let (held, all, claw) = (bite(&w), total(&w), px(&w, "claw_x"));
+    assert!(held > 20, "the claw holds {held} grains");
+    let mut ticks = 0;
+    let mut ev = TickEvents::new();
+    while state(&w, "generator") != "Running" {
+        w.tick(&[Keys(0), Keys(0)], &mut ev);
+        ticks += 1;
+        let line = live_copy(&w, "line");
+        assert_eq!((line.value("feed_speed"), line.value("run_speed")), (Some(0), Some(0)), "at {ticks}");
+        assert!(ticks <= REPAIR + 10, "never repaired");
+    }
+    assert!(ticks + 3 >= REPAIR, "repaired after {ticks}");
+    assert_eq!(
+        (bite(&w), total(&w), px(&w, "claw_x")),
+        (held, all, claw),
+        "the bite, every grain and the claw held"
+    );
 }

@@ -1322,7 +1322,21 @@ from each `Lit 1` until `Lit 7`, 0 from then until the die is up, and
 while stopped), `a_worm_rides_the_belt` (a worm on `run` carried at
 least 5 px in a countdown) and `no_dirt_no_ball` (the pack copied with
 its loose dirt and the reservoir's and belt's dirt taken out of its
-level files: a whole shift's strokes and no ball shown).
+level files: a whole shift's strokes and no ball shown),
+`the_crane_carries_the_mines_dirt_to_the_reservoir` (grains followed
+through `GrainMoved` and the loose moves: 100 of the mine's in the
+reservoir after 4000 ticks), `the_claw_crushes_a_worm_slowly_against_the_dirt`
+(a worm on the mine's mound: two chunks, alive at 90),
+`the_line_makes_balls_from_the_mines_dirt` (a shift: the belt right of
+the die clean at the start, at least two balls, each from a stroke that
+crushed dirt, 50 of the mine's grains in the reservoir),
+`every_loose_grain_is_kept_or_crushed` (the grains at the end and the
+crushed cells are the grains at the start; no plain dirt crushed),
+`the_line_draws_in_step_with_the_world` (the colour map fed by
+`apply_edits` equals the terrain every 100 ticks) and
+`a_blackout_holds_the_belt_and_the_claws_grains` (the generator wrecked
+while the claw rises with its bite: belts at 0, bite, grains and claw
+unchanged until it is repaired).
 `bots_play_the_live_factory` (both
 mods, 3000 ticks, invariants every tick) and
 `the_live_factory_stays_in_sync` (`netsim`: 3 clients, the `bad`

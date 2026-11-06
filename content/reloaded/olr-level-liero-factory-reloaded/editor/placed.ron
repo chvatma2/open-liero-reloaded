@@ -233,7 +233,7 @@
         (
             id: "line",
             asset: "o",
-            at: (909, 269),
+            at: (855, 269),
             live: true,
         ),
         (

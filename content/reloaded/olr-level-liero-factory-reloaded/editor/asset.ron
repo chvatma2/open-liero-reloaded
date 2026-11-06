@@ -43,8 +43,8 @@
             loose: "spoil",
         ),
         (
-            id: "press-heap",
-            name: "Press heap",
+            id: "reservoir",
+            name: "Reservoir",
             locked: true,
             kind: Drawn(
                 material: Dirt,

@@ -203,7 +203,7 @@ is gone.
   the beacon's housing and dome on it, its glow and `halo_glow`,
   `halo_light` now `trolley`'s): `cable` (Background, drawn on the
   backdrop and extracted from it, so it lies under the rock: two grey strands
-  at x 785 and 787 drawn paid out from row 285 to 428 and `clip`ped to
+  at x 785 and 787 drawn paid out from row 285 to 444 and `clip`ped to
   the copy's rectangle, so only what lies below the rail shows), `hub`
   (dark red, a crossbar whose top, row 301, x 776-797, is the shoulders
   a worm rides) and, a row below it, `jaw-l` and `jaw-r` (red, metal:
@@ -212,11 +212,12 @@ is gone.
   than its inside, so its open floors pass through nothing it closes
   on), all drawn by `factory_works.make_art`'s `crane-*` masks. The box grows to 114 × 200 (rows 269-468), down to
   the claw's lowest place. Exposed in step order: `claw_x`
-  (`trolley.x`), `cable_x`, `cable_y` (−130 to 0, −130 drawn up),
-  `hub_x`, `hub_y` (0 to 130), `jaw_r_x` (to 84), `jaw_r_y`, `jaw_l_x`
+  (`trolley.x`), `cable_x`, `cable_y` (−146 to 0, −146 drawn up),
+  `hub_x`, `hub_y` (0 to 146), `jaw_r_x` (to 84), `jaw_r_y`, `jaw_l_x`
   (from −19), `jaw_l_y`; the script (`crane.rhai`) moves them together,
-  the round: over the hole, jaws open, down, closed, up, over the
-  reservoir, open, a wait, back.
+  the round: over the hole, jaws open, down (16 px deeper each round,
+  from 100, as the pile goes down), closed, up, over the reservoir,
+  open, a wait, back.
 
       olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark backdrop --mask tools/levels/factory/art/crane-cable-mask.png --tile tools/levels/factory/art/crane-cable-tile.png
       olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark backdrop --mask tools/levels/factory/art/crane-cable-mask.png --name Cable
@@ -255,13 +256,13 @@ is gone.
       olr-cli asset state add content/assets/crane Moving
       olr-cli asset expose content/assets/crane claw_x trolley.x --default 0 --min -10 --max 75
       olr-cli asset expose content/assets/crane cable_x cable.x --default 0 --min -10 --max 75
-      olr-cli asset expose content/assets/crane cable_y cable.y --default -130 --min -130 --max 0
+      olr-cli asset expose content/assets/crane cable_y cable.y --default -146 --min -146 --max 0
       olr-cli asset expose content/assets/crane hub_x hub.x --default 0 --min -10 --max 75
-      olr-cli asset expose content/assets/crane hub_y hub.y --default 0 --min 0 --max 130
+      olr-cli asset expose content/assets/crane hub_y hub.y --default 0 --min 0 --max 146
       olr-cli asset expose content/assets/crane jaw_r_x jaw-r.x --default 0 --min -10 --max 84
-      olr-cli asset expose content/assets/crane jaw_r_y jaw-r.y --default 0 --min 0 --max 130
+      olr-cli asset expose content/assets/crane jaw_r_y jaw-r.y --default 0 --min 0 --max 146
       olr-cli asset expose content/assets/crane jaw_l_x jaw-l.x --default 0 --min -19 --max 75
-      olr-cli asset expose content/assets/crane jaw_l_y jaw-l.y --default 0 --min 0 --max 130
+      olr-cli asset expose content/assets/crane jaw_l_y jaw-l.y --default 0 --min 0 --max 146
       olr-cli asset expose content/assets/crane lens_x lens.x --default 0 --min -10 --max 75
       olr-cli asset expose content/assets/crane lens_b_x lens-b.x --default 0 --min -10 --max 75
       olr-cli asset expose content/assets/crane beam_spread lens.beam-spread --default 10 --min 1 --max 90
@@ -360,9 +361,12 @@ is gone.
   rock, metal, drawn from After Dark's `rock`: the balls roll through it,
   the user's playtest, 2026-11-05) and its running lamp (`drive-lamp`,
   group `running`), and (the production line design) the belt's top row
-  as two conveyors, `feed` (x 909-962: from the reservoir to under the
-  die) and `run` (x 966-988: right of the die, toward the drive), Rock
-  layers cut from After Dark's `rock`; the three pixels between, under
+  as two conveyors, `feed` (x 855-962: along the reservoir's bottom,
+  out through its mouth to under the die; x 855-903, where After Dark
+  has no belt, drawn by `factory_works.make_art`'s `line-feed`, the
+  belt's pattern continued) and `run` (x 966-988: right of the die,
+  toward the drive), Rock layers cut from After Dark's `rock`; the box
+  starts at the feed's left end (855 × 269, 204 × 88); the three pixels between, under
   the die's right edge, stay the ground's, so dirt the feed brings stops
   under the die. States `Stopped` (start: the LEDs
   dark, the stripe red, the lamp out) and `Lit 1` … `Lit 7` (running:
@@ -388,7 +392,8 @@ is gone.
       olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 933,269,33,57 --name Housing
       olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 933,326,33,7 --name Die
       olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --mask tools/levels/factory/art/line-stripe-mask.png --name Stripe
-      olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 909,351,54,1 --name Feed
+      olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 855,351,108,1 --name Feed
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark feed --mask tools/levels/factory/art/line-feed-mask.png --tile tools/levels/factory/art/line-feed-tile.png
       olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 966,351,23,1 --name Run
       olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark rock-disp --locked false
       olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock-disp --rect 942,279,1,19 --name Leds
@@ -424,7 +429,7 @@ is gone.
       olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name "Drive lamp"
       olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark drive-lamp --mask tools/levels/factory/art/line-lamp-mask.png --tile tools/levels/factory/art/line-lamp-tile.png
       olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark drive-lamp --glow 100 --glow-group running
-      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 909,269,150,88 --layers ram,housing,die,leds,stripe,feed,run,ball-1,ball-2,ball-3,ball-4,ball-5,ball-6,drive,drive-lamp --name "Dirt-ball line" --out content/assets/ball-line
+      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 855,269,204,88 --layers ram,housing,die,leds,stripe,feed,run,ball-1,ball-2,ball-3,ball-4,ball-5,ball-6,drive,drive-lamp --name "Dirt-ball line" --out content/assets/ball-line
       olr-cli asset state add content/assets/ball-line Plain
       olr-cli asset state picture content/assets/ball-line Plain leds --art tools/levels/factory/art/line-leds-0.png --glow tools/levels/factory/art/line-leds-0-glow.png
       olr-cli asset state set content/assets/ball-line Plain --start

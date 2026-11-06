@@ -128,7 +128,7 @@ PIECES = [
     ("w", "siren", ["backdrop", "beacons"], (62, 28), [("siren", (951, 45))]),
     ("e", "terminal", ["rock", "rock-bcn"], (15, 14), [("terminal", (723, 351))]),
     ("k", "crane", ["rock"], (114, 50), [("crane", (762, 269))]),
-    ("o", "ball-line", ["rock", "rock-disp"], (33, 64), [("line", (933, 269), (909, 269))]),
+    ("o", "ball-line", ["rock", "rock-disp"], (33, 64), [("line", (933, 269), (855, 269))]),
     ("t", "lit-sign", ["rock", "rock-disp"], (31, 21), [("sign", (934, 299))]),
     ("r", "generator", ["rock"], (72, 25), [("generator", (1046, 146))]),
     ("g", "gauge", ["rock", "rock-scr", "rock-disp"], (48, 27), [("gauge", (1059, 144))]),

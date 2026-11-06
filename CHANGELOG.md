@@ -295,6 +295,14 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   and the mine's floor seam are loose spoil.
 - A moving live rock part crushes the dirt it moves into: Liero Factory
   Reloaded's press flattens the dirt under its die.
+- Liero Factory Reloaded's production line: the crane grabs loose dirt
+  from a mound in the mine, deeper each round, and drops it into the
+  reservoir; the belt runs along the reservoir's bottom and brings its
+  dirt under the press between strokes, and the press makes a dirt ball
+  only when it crushed some. Worms ride the belt; the claw pushes a
+  worm aside or slowly crushes it against the dirt. Moving parts push
+  and carry loose dirt, a live layer can be a conveyor, and falling
+  dirt keeps its heat.
 
 ### Changed
 

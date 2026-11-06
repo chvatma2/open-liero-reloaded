@@ -7552,7 +7552,7 @@ explosions damage the destructible ones.
   the hole, jaws open (9 px a side, wider than the bucket's inside, so the
   open floors pass through nothing it then closes on: a bucket lowered
   closed, or open less, crushes its own bite on the way down), down 130
-  px (the hub stops just above the pile), closed, up, right to the
+  px (the hub stops just above the pile; deeper each round since, below), closed, up, right to the
   reservoir (a closed claw only travels right: the values step right jaw
   first), open, 1 s, back over the hole with its jaws open. Where
   something stops the descent the whole claw settles there, so its parts
@@ -7568,8 +7568,9 @@ explosions damage the destructible ones.
   never scanned again and stayed in the open jaws.
 - **The line's rhythm (2026-11-06).** The production line design: the
   Dirt-ball line's belt top (row 351) is two conveyor layers of the
-  line's copy, `feed` (x 909-962, from the reservoir to under the die)
-  and `run` (x 966-988, on to the drive), with values `feed_speed` and
+  line's copy, `feed` (x 909-962, from the reservoir to under the die;
+  x 855-962 since the reservoir below) and `run` (x 966-988, on to the
+  drive), with values `feed_speed` and
   `run_speed`; `line.rhai` runs both at 12 px/s from each `Lit 1` and
   stands them from `Lit 7` until the die is up again. The belt's dirt
   from the heap to the die's right edge is spoil; right of it, gone.
@@ -7580,6 +7581,29 @@ explosions damage the destructible ones.
   under the die (on a moving `run` from 963 it rode on past the die to
   the drive's casing); the worm-riding test stands its worm on `run`,
   since the feed starts under the belt's loose dirt.
+- **The mine pile, the reservoir and a clean belt (2026-11-06).** The
+  production line design: the mine holds a mound under the shaft
+  (`MINE_MOUND`, sides 2 rows in 3, peak row 403, on `MINE_FILL`) and
+  the claw bites deeper each round (`crane.rhai`: from 100 px, `BITE`
+  16 more each round, at most `DEEPEST` 146, the cable's art paid out as
+  far), about four full bites before it comes up nearly empty. The
+  reservoir is a hopper on the feed: the Dirt-ball line's `feed` runs
+  from x 855 along its bottom and out through its mouth (its right wall
+  and the roller's guard open on rows 346-350), the line's box growing to
+  855 × 269, 204 × 88 (x 855-903 drawn, `line-feed`, where After Dark
+  has no belt); left of the belt a rock floor falls 45° from the left
+  wall's top; filled loose from row 332, walls to 326, below the claw's
+  travel. Deviation from the spec (a floor sloping to the mouth): dirt
+  cannot slide the 47 px from the claw's dump (x 851-872, the rail's
+  end) to the belt, 26 rows down, at the spoil's repose of 35°; a floor
+  flatter than 45° also keeps grains on its steps (the slide's reach,
+  dithered by position, is 1 px on some), so the first try (3 rows in
+  4 and a 12-px flat mouth) piled the dump up into the claw's travel.
+  The belt right of the die starts clean (`BELT_CLEAN`). Tests:
+  `the_line_makes_balls_from_the_mines_dirt`,
+  `every_loose_grain_is_kept_or_crushed`,
+  `the_line_draws_in_step_with_the_world`,
+  `a_blackout_holds_the_belt_and_the_claws_grains`.
 - **Moved grains keep their heat (2026-11-06).** The production line
   design (the user: falling dirt should keep its heat): the presentation
   hands the renderer each grain the colour map moved since the last frame

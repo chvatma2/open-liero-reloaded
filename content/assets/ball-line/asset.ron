@@ -1,13 +1,13 @@
 (
     name: "Dirt-ball line",
-    size: (150, 88),
+    size: (204, 88),
     elements: [
         (
             id: "ram",
             name: "Ram",
             kind: Drawn(
                 material: Background,
-                at: (32, 39),
+                at: (86, 39),
                 size: (17, 18),
             ),
             surface: "concrete",
@@ -17,7 +17,7 @@
             name: "Run",
             kind: Drawn(
                 material: Rock,
-                at: (57, 82),
+                at: (111, 82),
                 size: (23, 1),
             ),
             surface: "stone",
@@ -28,7 +28,7 @@
             kind: Drawn(
                 material: Rock,
                 at: (0, 82),
-                size: (54, 1),
+                size: (108, 1),
             ),
             surface: "stone",
         ),
@@ -37,7 +37,7 @@
             name: "Stripe",
             kind: Drawn(
                 material: Rock,
-                at: (0, 57),
+                at: (54, 57),
                 size: (142, 31),
             ),
             glow: (
@@ -53,7 +53,7 @@
             name: "Die",
             kind: Drawn(
                 material: Rock,
-                at: (26, 57),
+                at: (80, 57),
                 size: (29, 7),
             ),
             surface: "stone",
@@ -64,7 +64,7 @@
             name: "Housing",
             kind: Drawn(
                 material: Rock,
-                at: (24, 0),
+                at: (78, 0),
                 size: (33, 57),
             ),
             surface: "stone",
@@ -75,7 +75,7 @@
             name: "Leds",
             kind: Drawn(
                 material: Rock,
-                at: (33, 10),
+                at: (87, 10),
                 size: (1, 19),
             ),
             glow: (
@@ -90,7 +90,7 @@
             name: "Ball 1",
             kind: Drawn(
                 material: Background,
-                at: (49, 77),
+                at: (103, 77),
                 size: (4, 4),
             ),
             glow: (
@@ -103,7 +103,7 @@
             name: "Ball 2",
             kind: Drawn(
                 material: Background,
-                at: (53, 77),
+                at: (107, 77),
                 size: (4, 4),
             ),
             glow: (
@@ -116,7 +116,7 @@
             name: "Ball 3",
             kind: Drawn(
                 material: Background,
-                at: (57, 77),
+                at: (111, 77),
                 size: (4, 4),
             ),
             glow: (
@@ -129,7 +129,7 @@
             name: "Ball 4",
             kind: Drawn(
                 material: Background,
-                at: (61, 77),
+                at: (115, 77),
                 size: (4, 4),
             ),
             glow: (
@@ -142,7 +142,7 @@
             name: "Ball 5",
             kind: Drawn(
                 material: Background,
-                at: (65, 77),
+                at: (119, 77),
                 size: (4, 4),
             ),
             glow: (
@@ -155,7 +155,7 @@
             name: "Ball 6",
             kind: Drawn(
                 material: Background,
-                at: (69, 77),
+                at: (123, 77),
                 size: (4, 4),
             ),
             glow: (
@@ -168,7 +168,7 @@
             name: "Drive",
             kind: Drawn(
                 material: Rock,
-                at: (80, 73),
+                at: (134, 73),
                 size: (33, 15),
             ),
             surface: "metal",
@@ -178,7 +178,7 @@
             name: "Drive lamp",
             kind: Drawn(
                 material: Background,
-                at: (106, 76),
+                at: (160, 76),
                 size: (2, 1),
             ),
             glow: (

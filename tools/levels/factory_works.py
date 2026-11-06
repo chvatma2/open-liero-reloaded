@@ -43,7 +43,7 @@ W, H = 1200, 480
 # the line's status light; six dirt balls; the drive's casing over them
 # (they roll through it, the user's playtest, 2026-11-05) and its running
 # lamp on it.
-LINE_RECT = (909, 269, 150, 88)
+LINE_RECT = (855, 269, 204, 88)  # from the feed's left end in the reservoir
 HOUSING = (933, 269, 33, 57)
 DIE = (933, 326, 33, 7)
 DROP = 18  # the die's travel: the plate's bottom row (332) onto the belt (351)
@@ -132,20 +132,40 @@ CAB_GROUP = ("cab", "ffd8a0", 140, 22, None)
 CAB_GLOW = 60
 
 # The production line design: the belt's top row, the Dirt-ball line's two
-# conveyor layers now (`content/assets/README.md`): `feed` from the heap to
-# under the die, `run` right of the die; the 3 px between, under the die's
+# conveyor layers now (`content/assets/README.md`): `feed` from inside the
+# reservoir (x 855, under the claw's dump: dirt cannot slide the 47 px
+# from there to the old belt's end, 26 rows down, at the spoil's repose),
+# through its mouth to under the die, `run` right of the die; the 3 px between, under the die's
 # right edge, stay the ground's, so carried dirt stops under the die. The
 # belt's dirt left of that is spoil (`SPOIL`), right of it it goes.
-BELT_FEED = (909, 351, 54, 1)
+BELT_FEED = (855, 351, 108, 1)
+FEED_DRAWN = (855, 904)  # the feed's columns After Dark has no belt in: drawn (`line-feed`)
+BELT_ART = ((0x4d, 0x4d, 0x4d), (0x37, 0x37, 0x37))  # the belt's top row, even and odd x
 BELT_RUN = (966, 351, 23, 1)
 BELT_DIRT = (910, 330, 56, 21)
 BELT_CLEAN = (966, 330, 23, 21)
+# The reservoir (After Dark's tank of dirt left of the belt, x 830-896
+# between its walls, x 826-829 and 897-900, over its floor at row 365),
+# a hopper on the feed, which runs along its bottom (row 351, x 855 on)
+# and out through its right wall and the belt roller's guard, open above
+# the belt (`RESERVOIR_MOUTH`): rock under the belt, a rock floor left of
+# it falling 45 degrees onto it from the left wall's top (flatter, the
+# spoil's dithered slide leaves grains on the steps), its walls raised to
+# `RESERVOIR_TOP` (below the claw's travel, rows 299-322) and filled loose
+# from `RESERVOIR_FILL`. All of it is spoil (`RESERVOIR_BOX`).
+RESERVOIR_BOX = (826, 300, 84, 66)
+RESERVOIR_IN = (830, 896)
+RESERVOIR_MOUTH = (897, 346, 12, 5)
+RESERVOIR_TOP = 326
+RESERVOIR_FILL = 332
+RESERVOIR_FLOOR = 365
+RESERVOIR_WALLS = [(826, 4, 365), (897, 4, 346)]  # x, width, down to (excluded)
 
 # The loose dirt design: the press heap's box and the mine's (its floor
 # seam rests on rock, the seams above the tunnel would fall into it); a
 # region of either is spoil when the probe moves under SPOIL_MOVED % of it
 # in SPOIL_TICKS ticks (a box not probed: all its dirt).
-SPOIL = [("Press heap", "spoil-heap.png", (820, 320, 90, 50), True),
+SPOIL = [("Reservoir", "spoil-reservoir.png", RESERVOIR_BOX, False),
          ("Mine spoil", "spoil-mine.png", (590, 370, 380, 110), True),
          # The production line design: the belt's dirt from the heap to
          # the die's right edge, which the feed belt brings under the die:
@@ -158,6 +178,11 @@ SPOIL_REPOSE, SPOIL_TICKS, SPOIL_MOVED = 35, 300, 2.0
 # art the pile's MINE_FILL_FROM columns to its left.
 MINE_FILL = (773, 436, 46)
 MINE_FILL_FROM = 46
+# Then a mound on it under the shaft (centre x, base row, half-width): its
+# sides rising 2 rows in 3 (34 degrees, under the spoil's repose) to a
+# peak at row 403, over whatever is open, its art the pile's below it;
+# the claw bites down through it, deeper each round.
+MINE_MOUND = (795, 436, 50)
 DIRT = (139, 90, 43)  # `material.png`'s dirt
 
 # The production line design: the Crane's claw as parts (closed, `claw_x`
@@ -177,7 +202,7 @@ CLAW_FLOOR = (777, 310, 10, 3)  # from (x, y) down-right: 10 columns, 3 thick
 CLAW_SEAM = 786  # the left jaw's last column; the right jaw mirrors it
 CLAW_STRANDS = (785, 787)
 CLAW_CABLE_TOP = 285
-CLAW_DROP = 130
+CLAW_DROP = 146
 CLAW_RED, CLAW_DARK, CLAW_CABLE = (255, 17, 17), (128, 0, 0), (115, 115, 115)
 
 # The Strip light's broken tube: its unlit grey, the middle shattered.
@@ -295,6 +320,10 @@ def make_line_art(rock, dirt):
     dx, dy, dw, dh = DRIVE
     paint("line-drive", {(x, y): rock[y][x][:3] for y in range(dy, dy + dh) for x in range(dx, dx + dw)
                          if rock[y][x][3]})
+    # The feed's columns After Dark has no belt in (the reservoir's, its
+    # wall's, the gap behind the guard), its pattern continued.
+    belt = BELT_FEED[1]
+    paint("line-feed", {(x, belt): BELT_ART[x % 2] for x in range(*FEED_DRAWN)})
     lx, ly, lw, lh = DRIVE_LAMP
     paint("line-lamp", {(x, ly): LAMP_OFF for x in range(lx, lx + lw)})
     picture("line-lamp-on.png", DRIVE_LAMP, {(x, ly): LAMP_ON + (255,) for x in range(lx, lx + lw)})
@@ -599,6 +628,20 @@ def ground(run, out):
     paint("mine-fill", fill, SCRATCH)
     el("draw", out, "dirt", "--mask", os.path.join(SCRATCH, "mine-fill-mask.png"),
        "--tile", os.path.join(SCRATCH, "mine-fill-tile.png"))
+    _, _, mat = decode(os.path.join(out, "material.png"))
+    cx, base, half = MINE_MOUND
+    mound = {}
+    for x in range(cx - half + 1, cx + half):
+        top = base - (half - abs(x - cx)) * 2 // 3
+        for y in range(top, base):
+            if mat[y][x][:3] == (0, 0, 0):
+                src = dirt[base + (y - top) % 16][x]
+                mound[(x, y)] = src[:3] if src[3] else DIRT
+    paint("mine-mound", mound, SCRATCH)
+    el("draw", out, "dirt", "--mask", os.path.join(SCRATCH, "mine-mound-mask.png"),
+       "--tile", os.path.join(SCRATCH, "mine-mound-tile.png"))
+    # The production line design: the reservoir a hopper onto the feed.
+    reservoir(el, out, rock, dirt)
     # The production line design: no dirt on the belt right of the die.
     el("erase", out, "dirt", "--rect", ",".join(map(str, BELT_CLEAN)))
     # The loose dirt design: the press heap and the mine's floor seam are
@@ -615,6 +658,38 @@ def ground(run, out):
     for r in (BELT_FEED, BELT_RUN):
         el("erase", out, "rock", "--rect", ",".join(map(str, r)))
     return new
+
+
+def reservoir(el, pack, rock, dirt):
+    """The reservoir's hopper (`RESERVOIR_*`): rock where it needs it
+    (the wall's colours, column by column), the mouth's rock out, dirt
+    out under the new rock and drawn loose up to its top."""
+    mx, my, mw, mh = RESERVOIR_MOUTH
+    mouth = [(x, y) for y in range(my, my + mh) for x in range(mx, mx + mw) if rock[y][x][3]]
+    el("erase", pack, "rock", "--mask", white("mouth.png", mouth, SCRATCH))
+    lo, hi = RESERVOIR_IN
+    top = RESERVOIR_TOP
+    wall = lambda x: rock[350][826 + x % 4][:3]
+    stone, fill = {}, {}
+    for x in range(lo, hi + 1):
+        surface = min(top + x - lo, 350)  # its lowest open row: the floor, then the belt's
+        for y in range(surface + 1, RESERVOIR_FLOOR):
+            stone[(x, y)] = wall(x)
+        for y in range(RESERVOIR_FILL, surface + 1):
+            src = dirt[y][x] if dirt[y][x][3] else dirt[min(y + 24, RESERVOIR_FLOOR - 1)][x]
+            fill[(x, y)] = src[:3] if src[3] else DIRT
+    for wx, ww, down in RESERVOIR_WALLS:
+        for x in range(wx, wx + ww):
+            for y in range(top, down):
+                if not rock[y][x][3]:
+                    stone[(x, y)] = wall(x)
+    el("erase", pack, "dirt", "--mask", white("reservoir-out.png", list(stone), SCRATCH))
+    paint("reservoir-rock", stone, SCRATCH)
+    el("draw", pack, "rock", "--mask", os.path.join(SCRATCH, "reservoir-rock-mask.png"),
+       "--tile", os.path.join(SCRATCH, "reservoir-rock-tile.png"))
+    paint("reservoir-fill", fill, SCRATCH)
+    el("draw", pack, "dirt", "--mask", os.path.join(SCRATCH, "reservoir-fill-mask.png"),
+       "--tile", os.path.join(SCRATCH, "reservoir-fill-tile.png"))
 
 
 def dirt_in(out, box):

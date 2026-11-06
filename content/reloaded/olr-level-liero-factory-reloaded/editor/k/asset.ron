@@ -8,7 +8,7 @@
             kind: Drawn(
                 material: Background,
                 at: (23, 16),
-                size: (3, 144),
+                size: (3, 160),
             ),
             surface: "metal",
             clip: true,
@@ -214,8 +214,8 @@
         (
             name: "cable_y",
             property: OffsetY("cable"),
-            default: Int(-130),
-            min: -130,
+            default: Int(-146),
+            min: -146,
             max: 0,
         ),
         (
@@ -230,7 +230,7 @@
             property: OffsetY("hub"),
             default: Int(0),
             min: 0,
-            max: 130,
+            max: 146,
         ),
         (
             name: "jaw_r_x",
@@ -244,7 +244,7 @@
             property: OffsetY("jaw-r"),
             default: Int(0),
             min: 0,
-            max: 130,
+            max: 146,
         ),
         (
             name: "jaw_l_x",
@@ -258,7 +258,7 @@
             property: OffsetY("jaw-l"),
             default: Int(0),
             min: 0,
-            max: 130,
+            max: 146,
         ),
         (
             name: "lens_x",

@@ -488,7 +488,7 @@ const LIVE_BOXES: [(u32, u32, u32, u32); 25] = [
     (951, 45, 62, 28),
     (723, 351, 15, 14),
     (762, 269, 114, 50),
-    (909, 269, 150, 88),
+    (855, 269, 204, 88),
     (934, 299, 31, 21),
     (1046, 146, 72, 25),
     (1059, 144, 48, 27),
@@ -607,13 +607,15 @@ const WORKS_ART: [Box4; 4] = [(43, 405, 1, 2), (175, 404, 2, 2), (1186, 456, 12,
 const WORKS_ROCK: [Box4; 3] = [(1186, 456, 12, 3), (10, 473, 181, 1), (1053, 330, 60, 35)];
 /// The production line design (2026-11-06): the dip in the mine's floor
 /// under the crane's shaft filled with dirt level with the pile
-/// (`factory_works.py`'s `MINE_FILL`), its art and material new.
-const MINE_FILL: Box4 = (773, 436, 46, 30);
+/// (`factory_works.py`'s `MINE_FILL`), the mound on it (`MINE_MOUND`) and
+/// the reservoir made a hopper (`RESERVOIR_BOX`), their art and material
+/// new.
+const LINE_GROUND: [Box4; 3] = [(773, 436, 46, 30), (745, 400, 101, 36), (826, 300, 84, 66)];
 /// The truck's cab window, glowing dimly in `cab`.
 const CAB_BOX: Box4 = (50, 378, 23, 16);
 
 fn works_art(x: u32, y: u32) -> bool {
-    WORKS_ART.iter().any(|&b| in_box(b, x, y)) || in_box(MINE_FILL, x, y)
+    WORKS_ART.iter().chain(&LINE_GROUND).any(|&b| in_box(b, x, y))
 }
 
 /// The red duct's elbow, whose red rock glows in the night shift's `flue`.
@@ -674,7 +676,7 @@ fn the_new_factory_bakes_as_after_dark() {
                 } else if file != "material.png" && (night_art(x, y) || works_art(x, y)) {
                     night += usize::from(!alike(x, y));
                 } else if file == "material.png"
-                    && (WORKS_ROCK.iter().any(|&r| in_box(r, x, y)) || in_box(MINE_FILL, x, y))
+                    && WORKS_ROCK.iter().chain(&LINE_GROUND).any(|&r| in_box(r, x, y))
                 {
                     continue;
                 } else {
@@ -922,7 +924,7 @@ fn the_new_factory_is_made_of_assets() {
         ("siren", "w", "siren", (951, 45), (62, 28)),
         ("terminal", "e", "terminal", (723, 351), (15, 14)),
         ("crane", "k", "crane", (762, 269), (114, 200)),
-        ("line", "o", "ball-line", (909, 269), (150, 88)),
+        ("line", "o", "ball-line", (855, 269), (204, 88)),
         ("sign", "t", "lit-sign", (934, 299), (31, 21)),
         ("generator", "r", "generator", (1046, 146), (72, 25)),
         ("gauge", "g", "gauge", (1059, 144), (48, 27)),
@@ -1503,8 +1505,9 @@ fn explosions_leave_the_factorys_live_copies_alone() {
         let jr = live_copy(m.world(), "crane").value("jaw_r_x").unwrap().div_euclid(olr_sim::LIVE_SUBPIXELS);
         (t, 795.5 + jr as f32)
     };
-    // Its right jaw's wall; the dirt pile beside it; the terminal's foot.
-    let hits = [Vec2::new(jaw, 309.5), Vec2::new(876.5, 328.5), Vec2::new(730.5, 363.5)];
+    // Its right jaw's wall; the dirt behind the belt's roller (below the
+    // line's box, which covers the reservoir); the terminal's foot.
+    let hits = [Vec2::new(jaw, 309.5), Vec2::new(911.5, 358.5), Vec2::new(730.5, 363.5)];
     let blast = |level: &str| {
         let mut m = start(level);
         for _ in 0..ticks {

@@ -10,7 +10,7 @@
 //
 // The claw is parts of their own, each moved by its own values in the
 // same ticks at the same speed: the trolley (`claw_x`), the cable
-// (`cable_x`, `cable_y`, drawn paid out and pulled up by DROP), the hub
+// (`cable_x`, `cable_y`, drawn paid out and pulled up by DEEPEST), the hub
 // (`hub_x`, `hub_y`) and the jaws (`jaw_r_x`, `jaw_r_y`, `jaw_l_x`,
 // `jaw_l_y`; a jaw's x is the claw's, OPEN outward when open). The values
 // step in that order, so a closed claw only travels right (the right jaw
@@ -18,7 +18,9 @@
 // Its constants (ticks are 10 ms):
 fn HOLE_X() { 9 }   // the claw's x over the shaft's middle
 fn DUMP_X() { 75 }  // over the reservoir
-fn DROP() { 130 }   // how far the claw lowers: the hub just above the pile
+fn DROP() { 100 }   // how far the claw first lowers: its bucket into the mound's peak
+fn BITE() { 16 }    // how much deeper each round goes: the bucket's height
+fn DEEPEST() { 146 } // the deepest it goes (the cable's art paid out)
 fn OPEN() { 9 }     // each jaw's travel, outward: wider than its inside
 fn SPEED() { 25 }   // world px a second along the rail
 fn LOWER() { 30 }   // world px a second down and up
@@ -28,11 +30,14 @@ fn WAIT() { 50 }    // ticks stopped by rock before trying again
 
 // The round's steps, in order (`mem.step`); a step is over when every
 // value it moved arrived (`mem.left`), or was blocked where that counts.
+// Each round lowers BITE deeper than the last (`mem.depth`), to DEEPEST,
+// as the bites take the pile down; rock stops it sooner.
 fn STEPS() { ["hole", "open", "down", "close", "up", "dump", "release", "wait"] }
 
 fn start() {
   this.mem.step = 0;
   this.mem.left = 0;
+  this.mem.depth = DROP();
   this.mem.open = false;
   this.mem.off = false;
   this.mem.cut = -1;
@@ -51,16 +56,26 @@ fn begin() {
     return;
   }
   if this.state() != "Moving" { this.set_state("Moving"); }
+  this.move(step);
+  if this.mem.left == 0 { this.next(); }
+}
+
+// Step `step`'s motions (each `if` its own: a chain of `else if`s
+// nests past the engine's expression depth).
+fn move(step) {
   if step == "hole" { this.travel(HOLE_X()); }
-  else if step == "dump" { this.travel(DUMP_X()); }
-  else if step == "open" { this.mem.open = true; this.jaws(); }
-  else if step == "close" || step == "release" {
+  if step == "dump" { this.travel(DUMP_X()); }
+  if step == "open" { this.mem.open = true; this.jaws(); }
+  if step == "close" || step == "release" {
     this.mem.open = step == "release";
     this.jaws();
   }
-  else if step == "down" { this.lower(DROP()); }
-  else if step == "up" { this.lower(0); }
-  if this.mem.left == 0 { this.next(); }
+  if step == "down" { this.lower(this.mem.depth); }
+  if step == "up" {
+    let d = this.mem.depth + BITE();
+    this.mem.depth = if d > DEEPEST() { DEEPEST() } else { d };
+    this.lower(0);
+  }
 }
 
 // The next step (the round goes on from the first).
@@ -100,7 +115,7 @@ fn jaws() {
 }
 
 fn lower(y) {
-  this.drive("cable_y", y - DROP(), LOWER());
+  this.drive("cable_y", y - DEEPEST(), LOWER());
   this.drive("hub_y", y, LOWER());
   this.drive("jaw_r_y", y, LOWER());
   this.drive("jaw_l_y", y, LOWER());

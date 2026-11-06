@@ -101,8 +101,12 @@ byte for byte, and running one again changes nothing.
   extracted from `dirt` onto a layer of its own set `--loose spoil`;
   the production line design: first the dip in the mine's floor under
   the crane's shaft filled with dirt level with the pile, `MINE_FILL`,
-  its art the pile's 46 px to its left; the belt's dirt right of the
-  die gone, `BELT_CLEAN`, and the belt's dirt left of it spoil too,
+  its art the pile's 46 px to its left, and a mound on it, `MINE_MOUND`;
+  the reservoir made a hopper on the feed (`reservoir`, `RESERVOIR_*`:
+  its mouth opened, a 45° rock floor onto the belt, rock under it in the
+  wall's colours, its walls raised, filled loose; the line's `feed` runs
+  from x 855, `make_line_art`'s `line-feed` its new columns); the belt's
+  dirt right of the die gone, `BELT_CLEAN`, and the belt's dirt left of it spoil too,
   `BELT_DIRT`, whole and unprobed (`dirt_in`); after the probes the belt's top row, `BELT_FEED` and
   `BELT_RUN`, out of the ground's rock: the line's conveyors);
   `place(run, out, assets)` places the Lift, the Mine cart and the
