@@ -297,7 +297,20 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   step that crushed any emits `EventKind::DirtCrushed { copy, cells }`
   (gameplay class; the production line design). Then
   `push_out` (a part over a worm: up, left, right, down within
-  `PUSH_OUT_PX` 8, else wedged), then `crush`: `LiveWorld::crush` counts
+  `PUSH_OUT_PX` 8, else wedged), then `convey` (the production line
+  design: a shown rock part whose layer has a `LiveTarget::Conveyor`
+  value, px/s, not a position, carries `conveyed_px(server_frame,
+  speed)` whole pixels this tick, `floor((t+1)v/100) − floor(tv/100)`,
+  no new state, a pixel at a time, at most `MAX_PART_STEP`; the part
+  never moves; each step the worms standing on it (`stands_on`, the
+  carry's test) where `free`, the loose grains on its top with their
+  columns by `carry_grains`' rule, leading end first, and the client's
+  resting bonuses whose fall row is the part's and whose next column is
+  clear of dirt, rock and parts; each worm and bonus one belt a step;
+  tests `a_running_belt_carries_a_standing_worm_and_grains`,
+  `a_conveyed_worm_stops_at_a_wall`, `a_bonus_rides_the_belt`,
+  `a_level_wide_conveyor_stays_bounded`,
+  `conveyed_px_spreads_a_speed_over_the_ticks`), then `crush`: `LiveWorld::crush` counts
   per worm slot (`World::crush_count`), a chunk of `CRUSH_CHUNK` on the
   first wedged tick and every `CRUSH_EVERY`, each after `Crushed { worm,
   copy }`, through `injure_worm` with owner -1. The worm's body there is

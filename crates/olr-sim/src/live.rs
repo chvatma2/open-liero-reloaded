@@ -64,6 +64,10 @@ pub enum LiveTarget {
     BeamSpread(u16),
     GlassOpacity(u16),
     GlassTint(u16),
+    /// A rock layer's belt speed, px/s, positive rightwards (the
+    /// production line design): its parts never move, but what rests on
+    /// them rides ([`crate::live_step`]'s conveying).
+    Conveyor(u16),
 }
 
 /// One value of a live copy: its exposed name (none: only states set
@@ -768,7 +772,7 @@ impl LiveCopy {
 
     /// The value `target` holds among `values` (the first prop driving
     /// it), if one does.
-    fn value_of(&self, values: &[i64], target: LiveTarget) -> Option<i64> {
+    pub(crate) fn value_of(&self, values: &[i64], target: LiveTarget) -> Option<i64> {
         let i = self.props.iter().position(|p| p.target == target)?;
         values.get(i).copied()
     }

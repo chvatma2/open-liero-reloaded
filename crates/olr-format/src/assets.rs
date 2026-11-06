@@ -1115,6 +1115,24 @@ mod tests {
     }
 
     #[test]
+    fn a_conveyor_out_of_range_or_off_rock_is_refused() {
+        use PropertySource as P;
+        use ValueSource as V;
+        let with = |x: ExposedSource| {
+            let mut s = desk();
+            s.file.exposed.push(x);
+            s
+        };
+        let e = refused(&with(expose("feed", P::Conveyor("body".into()), Some(V::Int(101)))));
+        assert!(e.contains("exposed[1].default"), "{e}");
+        let e = refused(&with(expose("feed", P::Conveyor("screen".into()), Some(V::Int(0)))));
+        assert!(e.contains("exposed[1].property") && e.contains("not a rock layer"), "{e}");
+        check_asset(&with(expose("feed", P::Conveyor("body".into()), Some(V::Int(-100))))).unwrap();
+        check_asset(&with(expose("feed", P::Conveyor("body".into()), None))).unwrap();
+        assert_eq!(own_value(&desk().file, &P::Conveyor("body".into())), Some(V::Int(0)), "a still belt");
+    }
+
+    #[test]
     fn exposed_rules_are_refused_naming_the_entry() {
         use PropertySource as P;
         use ValueSource as V;

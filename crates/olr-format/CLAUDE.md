@@ -440,7 +440,10 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   new field is left out at its default, so a stateless asset writes byte
   for byte as before (`a_stateless_asset_writes_as_before`, every
   built-in asset). `PropertySource` (`X`, `Y`, `Visible`, `Facing`,
-  `Health` and the layer properties by element id), `ValueSource` (`Int`,
+  `Health` and the layer properties by element id; the production line
+  design's `Conveyor(layer)`, an `Int` -100 to 100 px/s on a plain Rock
+  image or drawn layer only, its own value 0, `Target::Conveyor` in the
+  played form, `a_conveyor_out_of_range_or_off_rock_is_refused`), `ValueSource` (`Int`,
   `Bool`, `Colour`, `Animation`); `property_type(file, p)` is the
   design's table (type, range, the layers each is valid on; an error
   saying why not), `own_value` a property's own setting, `property_key`

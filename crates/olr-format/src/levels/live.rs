@@ -234,6 +234,9 @@ pub enum Target {
     GlassOpacity(u16),
     /// Percent 0 to 100: a glass layer's tint.
     GlassTint(u16),
+    /// World pixels a second, -100 to 100, positive rightwards: a rock
+    /// layer's belt speed (what rests on its top rides).
+    Conveyor(u16),
 }
 
 impl Target {
@@ -254,7 +257,8 @@ impl Target {
             | T::BeamDirection(l)
             | T::BeamSpread(l)
             | T::GlassOpacity(l)
-            | T::GlassTint(l) => Some(l),
+            | T::GlassTint(l)
+            | T::Conveyor(l) => Some(l),
         }
     }
 
@@ -273,6 +277,7 @@ impl Target {
             T::BeamDirection(_) => (0, 359),
             T::BeamSpread(_) => (1, 90),
             T::GlassOpacity(_) => (1, 99),
+            T::Conveyor(_) => (-100, 100),
             T::X | T::Y | T::OffsetX(_) | T::OffsetY(_) => (-MAX_LIVE_VALUE, MAX_LIVE_VALUE),
         }
     }

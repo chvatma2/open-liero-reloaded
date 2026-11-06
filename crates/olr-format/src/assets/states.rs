@@ -180,6 +180,11 @@ pub enum PropertySource {
     GlassOpacity(String),
     /// `Int`, percent 0 to 100: a glass layer's tint.
     GlassTint(String),
+    /// `Int`, world pixels a second -100 to 100, positive rightwards: a
+    /// Rock layer's belt speed. The layer stays where it is; worms, loose
+    /// grains and bonuses resting on its top ride along. 0 (its own
+    /// value) is a still belt.
+    Conveyor(String),
 }
 
 impl PropertySource {
@@ -200,7 +205,8 @@ impl PropertySource {
             | P::BeamDirection(id)
             | P::BeamSpread(id)
             | P::GlassOpacity(id)
-            | P::GlassTint(id) => Some(id),
+            | P::GlassTint(id)
+            | P::Conveyor(id) => Some(id),
         }
     }
 
@@ -236,6 +242,7 @@ impl PropertySource {
             P::BeamSpread(_) => P::BeamSpread(id),
             P::GlassOpacity(_) => P::GlassOpacity(id),
             P::GlassTint(_) => P::GlassTint(id),
+            P::Conveyor(_) => P::Conveyor(id),
         }
     }
 }
@@ -370,6 +377,14 @@ pub fn property_type(file: &AssetFile, p: &PropertySource) -> Result<PropertyTyp
         P::GlassOpacity(_) | P::GlassTint(_) if e.glass.is_none() => Err(format!("{id:?} is not glass")),
         P::GlassOpacity(_) => int(1, 99),
         P::GlassTint(_) => int(0, 100),
+        P::Conveyor(_) => {
+            let rock = matches!(
+                e.kind,
+                ElementKind::Image { material: ElementMaterial::Rock, .. }
+                    | ElementKind::Drawn { material: ElementMaterial::Rock, mixed: false, .. }
+            );
+            if rock { int(-100, 100) } else { Err(format!("{id:?} is not a rock layer")) }
+        }
         // Answered above, before a layer is looked up.
         P::X | P::Y | P::Visible | P::Facing | P::Health => Err("not a layer property".into()),
     }
@@ -407,6 +422,7 @@ pub fn own_value(file: &AssetFile, p: &PropertySource) -> Option<ValueSource> {
         P::BeamSpread(_) => V::Int(i32::from(glow?.beam?.spread)),
         P::GlassOpacity(_) => V::Int(i32::from(e?.glass?.opacity)),
         P::GlassTint(_) => V::Int(i32::from(e?.glass?.tint)),
+        P::Conveyor(_) => V::Int(0),
     })
 }
 

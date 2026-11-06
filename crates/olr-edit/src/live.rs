@@ -128,6 +128,7 @@ fn target_of(p: &PropertySource, index: impl Fn(&str) -> Option<usize>) -> Optio
         P::BeamSpread(id) => T::BeamSpread(l(id)?),
         P::GlassOpacity(id) => T::GlassOpacity(l(id)?),
         P::GlassTint(id) => T::GlassTint(l(id)?),
+        P::Conveyor(id) => T::Conveyor(l(id)?),
     })
 }
 

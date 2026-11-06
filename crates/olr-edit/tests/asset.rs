@@ -929,10 +929,15 @@ fn offers_follow_the_design() {
     let own: Vec<_> =
         offers.iter().filter(|o| o.property.layer().is_none()).map(|o| o.property.clone()).collect();
     assert_eq!(own, [P::X, P::Y, P::Visible, P::Facing]);
-    // A rock layer: its place and visibility, no opacity.
+    // A rock layer: its place, visibility and belt speed, no opacity.
     assert_eq!(
         of("shade"),
-        [P::OffsetX("shade".into()), P::OffsetY("shade".into()), P::LayerVisible("shade".into())]
+        [
+            P::OffsetX("shade".into()),
+            P::OffsetY("shade".into()),
+            P::LayerVisible("shade".into()),
+            P::Conveyor("shade".into())
+        ]
     );
     // A dirt layer: none.
     assert!(of("mud").is_empty());

@@ -580,6 +580,11 @@ fn cup(id: &str, at: (i32, i32), size: (u32, u32)) -> LiveCopy {
 /// The cave of [`terrain`] with loose dirt (kind 1, the default material)
 /// in each box, no director.
 fn loose_world(copies: Vec<LiveCopy>, loose: &[(u32, u32, u32, u32)]) -> World {
+    loose_world_with(copies, loose, SimSettings::lx56())
+}
+
+/// [`loose_world`] with `settings`.
+fn loose_world_with(copies: Vec<LiveCopy>, loose: &[(u32, u32, u32, u32)], settings: SimSettings) -> World {
     let inside =
         |x: u32, y: u32| loose.iter().any(|&(x0, y0, x1, y1)| (x0..x1).contains(&x) && (y0..y1).contains(&y));
     let mut cells = vec![Material::Background; 200 * 200];
@@ -599,6 +604,7 @@ fn loose_world(copies: Vec<LiveCopy>, loose: &[(u32, u32, u32, u32)]) -> World {
         Terrain::from_grid(&MaterialGrid::from_cells(200, 200, cells).unwrap()).with_loose(kinds).unwrap();
     let mut s = setup(copies, None, None);
     s.terrain = terrain;
+    s.settings = settings;
     s.loose = crate::LooseLevel::new(vec![olr_data::level::LooseMaterial::DEFAULT]).map(Arc::new);
     World::build(s, Box::new(OracleMode))
 }
@@ -743,5 +749,109 @@ fn a_restore_mid_carry_re_steps_the_same() {
         }
         ticks(&mut w, 1);
         assert_eq!(w.checksum(), s, "tick {t} after the restore");
+    }
+}
+
+// Conveyors (the production line design).
+
+/// The belt's conveyor value.
+const CONVEYOR: u16 = 3;
+
+/// A still rock belt of `size` at `at` whose layer has a conveyor value
+/// (-100..=100 px/s, starting at 0).
+fn belt(id: &str, at: (i32, i32), size: (u32, u32)) -> LiveCopy {
+    let b = block(id, at, size, 1);
+    let mut props = b.props.clone();
+    props.push(LiveProp { name: None, target: LiveTarget::Conveyor(0), min: -100, max: 100, default: 0 });
+    LiveCopy::new(LiveCopySetup {
+        id: b.id.clone(),
+        at: b.at,
+        size: b.size,
+        props,
+        states: b.states.clone(),
+        pictures: b.pictures.clone(),
+        start_state: b.start_state,
+        start_values: b.start_values.clone(),
+        health: b.health,
+        scripts: b.scripts.clone(),
+        sounds: b.sounds.clone(),
+    })
+}
+
+#[test]
+fn conveyed_px_spreads_a_speed_over_the_ticks() {
+    assert_eq!((0..100).map(|t| conveyed_px(t, 50)).sum::<i64>(), 50);
+    assert_eq!((0..100).map(|t| conveyed_px(t, -37)).sum::<i64>(), -37);
+    assert!((0..1000).all(|t| conveyed_px(t, 100) == 1 && conveyed_px(t, 0) == 0));
+    assert!((0..1000).all(|t| (-1..=1).contains(&conveyed_px(t, 73))));
+}
+
+#[test]
+fn a_running_belt_carries_a_standing_worm_and_grains() {
+    let mut w = loose_world(vec![belt("belt", (50, 120), (100, 4))], &[(90, 119, 91, 120)]);
+    w.spawn_worm(70, 100);
+    ticks(&mut w, 150);
+    let (x0, y0) = at(&w);
+    assert_eq!(y0, 115, "standing on the belt");
+    w.set_live_value(0, CONVEYOR, 50).unwrap();
+    ticks(&mut w, 100);
+    let (x, y) = at(&w);
+    assert!((x - x0 - 50).abs() <= 1 && y == y0, "the worm rode from {x0} to {x}, row {y}");
+    assert_eq!(w.terrain().loose(140, 119), 1, "the grain rode 50 px");
+    assert_eq!(loose_count(&w), 1);
+    assert_eq!(rect(&w, 0), (50, 120, 100, 4), "the belt itself never moves");
+    w.set_live_value(0, CONVEYOR, 0).unwrap();
+    ticks(&mut w, 50);
+    assert_eq!(at(&w).0, x, "a stopped belt carries nothing");
+    assert_eq!(w.terrain().loose(140, 119), 1);
+}
+
+#[test]
+fn a_conveyed_worm_stops_at_a_wall() {
+    let wall = block("wall", (130, 100), (4, 20), 1);
+    let mut w = loose_world(vec![belt("belt", (50, 120), (100, 4)), wall], &[(100, 119, 101, 120)]);
+    w.spawn_worm(70, 100);
+    ticks(&mut w, 150);
+    w.set_live_value(0, CONVEYOR, 100).unwrap();
+    ticks(&mut w, 150);
+    assert_eq!(w.terrain().loose(129, 119), 1, "the grain stopped at the wall");
+    let (x, y) = at(&w);
+    assert!((122..=126).contains(&x) && y == 115, "the worm stopped short of it at ({x}, {y})");
+    assert_eq!(w.solid().flags(i64::from(x), i64::from(y)) & PX_ROCK, 0);
+}
+
+#[test]
+fn a_bonus_rides_the_belt() {
+    // Bonuses on, none spawned during the test.
+    let settings =
+        SimSettings { bonuses: true, bonus_frequency: 1000.0, bonus_life: 1000.0, ..SimSettings::lx56() };
+    let mut w = loose_world_with(vec![belt("belt", (50, 120), (100, 4))], &[], settings);
+    w.place_bonus(120, 100, crate::BonusItem::Health).unwrap();
+    ticks(&mut w, 150);
+    let b = *w.bonuses().iter().find(|b| b.used).expect("the bonus fell onto the belt");
+    w.set_live_value(0, CONVEYOR, -50).unwrap();
+    ticks(&mut w, 100);
+    let a = *w.bonuses().iter().find(|b| b.used).unwrap();
+    assert!(
+        (a.pos.x - (b.pos.x - 50.0)).abs() <= 1.0 && a.pos.y == b.pos.y,
+        "from {:?} to {:?}",
+        b.pos,
+        a.pos
+    );
+}
+
+#[test]
+fn a_level_wide_conveyor_stays_bounded() {
+    let mut w = loose_world(vec![belt("belt", (0, 120), (200, 4))], &[(0, 110, 200, 120)]);
+    w.set_live_value(0, CONVEYOR, 100).unwrap();
+    ticks(&mut w, 100);
+    assert_eq!(loose_count(&w), 2000, "every grain kept");
+    let t = w.terrain();
+    for y in 0..200 {
+        for x in 0..200 {
+            if t.loose(x, y) != 0 {
+                assert_eq!(w.solid().flags(x, y) & PX_ROCK, 0, "a grain in rock at ({x}, {y})");
+            }
+        }
     }
 }

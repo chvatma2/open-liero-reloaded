@@ -620,6 +620,7 @@ What a live copy's value drives: the asset's `PropertySource` with its layer map
 | `BeamSpread` | integer | Degrees 1 to 90: the layer's beam's half-angle. |
 | `GlassOpacity` | integer | Percent 1 to 99: a glass layer's opacity. |
 | `GlassTint` | integer | Percent 0 to 100: a glass layer's tint. |
+| `Conveyor` | integer | World pixels a second, -100 to 100, positive rightwards: a rock layer's belt speed (what rests on its top rides). |
 
 <a id="livepartfile"></a>
 

@@ -183,6 +183,7 @@ fn property_name(p: &PropertySource) -> &'static str {
         P::BeamSpread(_) => "Beam spread",
         P::GlassOpacity(_) => "Glass opacity",
         P::GlassTint(_) => "Glass tint",
+        P::Conveyor(_) => "Conveyor",
     }
 }
 

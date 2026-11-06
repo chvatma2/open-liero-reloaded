@@ -365,6 +365,7 @@ fn target(t: Target) -> LiveTarget {
         T::BeamSpread(l) => L::BeamSpread(l),
         T::GlassOpacity(l) => L::GlassOpacity(l),
         T::GlassTint(l) => L::GlassTint(l),
+        T::Conveyor(l) => L::Conveyor(l),
     }
 }
 

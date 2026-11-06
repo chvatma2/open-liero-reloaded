@@ -7525,6 +7525,16 @@ explosions damage the destructible ones.
   shown over dirt crushes nothing until it moves. On the factory only the
   press meets any (the dirt under its die); the lift, the mine cart and
   the forklift run through none.
+- **Conveyors (2026-11-06).** The production line design: a Rock
+  layer's `Conveyor` value (-100 to 100 px/s, positive rightwards; the
+  asset's `PropertySource::Conveyor`, `olr-cli asset expose …
+  <layer>.conveyor`) makes it a belt. Its rock never moves; each tick it
+  carries `floor((t+1)v/100) − floor(tv/100)` whole pixels (the tick the
+  server frame, so no new state and no protocol change) of what rests on
+  its top: worms standing on it where their body fits, loose grains with
+  the columns on them (leading end first, as a rising part carries
+  them), and resting bonuses where their box is clear. A blocked thing
+  stays; nothing is pushed or crushed by a belt.
 - **Spawning beside parts (#90).** `FindSpot` reads the query, so nothing
   spawns in a part; a worm's fixed spawn whose 6 × 6 square meets a part
   falls back to `FindSpot`. For that the copies start (values set, index

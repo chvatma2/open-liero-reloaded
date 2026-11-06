@@ -419,7 +419,8 @@ pub fn offers_of(file: &AssetFile) -> Vec<Offer> {
             P::BeamDirection(id.clone()),
             P::BeamSpread(id.clone()),
             P::GlassOpacity(id.clone()),
-            P::GlassTint(id),
+            P::GlassTint(id.clone()),
+            P::Conveyor(id),
         ]);
     }
     all.into_iter()

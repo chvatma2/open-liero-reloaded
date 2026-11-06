@@ -355,6 +355,7 @@ What a value sets. A layer property names an element id of the asset: an image o
 | `BeamSpread` | string | `Int`, degrees 1 to 90: a layer's beam's half-angle. |
 | `GlassOpacity` | string | `Int`, percent 1 to 99: a glass layer's opacity. |
 | `GlassTint` | string | `Int`, percent 0 to 100: a glass layer's tint. |
+| `Conveyor` | string | `Int`, world pixels a second -100 to 100, positive rightwards: a Rock layer's belt speed. The layer stays where it is; worms, loose grains and bonuses resting on its top ride along. 0 (its own value) is a still belt. |
 
 <a id="valuesource"></a>
 

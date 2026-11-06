@@ -714,7 +714,7 @@ type OfLayer = fn(String) -> PropertySource;
 
 /// The layer properties' names in the CLI's syntax (`<layer>.<name>`),
 /// with their variants.
-const LAYER_PROPERTIES: [(&str, OfLayer); 13] = [
+const LAYER_PROPERTIES: [(&str, OfLayer); 14] = [
     ("x", PropertySource::OffsetX),
     ("y", PropertySource::OffsetY),
     ("visible", PropertySource::LayerVisible),
@@ -728,6 +728,7 @@ const LAYER_PROPERTIES: [(&str, OfLayer); 13] = [
     ("beam-spread", PropertySource::BeamSpread),
     ("glass-opacity", PropertySource::GlassOpacity),
     ("glass-tint", PropertySource::GlassTint),
+    ("conveyor", PropertySource::Conveyor),
 ];
 
 /// The asset's own properties' names.
@@ -742,7 +743,7 @@ const ASSET_PROPERTIES: [(&str, PropertySource); 5] = [
 /// A property in the CLI's syntax: `x`, `y`, `visible`, `facing`,
 /// `health`, or `<layer>.<name>` (`x`, `y`, `visible`, `opacity`, `glow`,
 /// `glow-colour`, `light`, `reach`, `animation`, `beam-direction`,
-/// `beam-spread`, `glass-opacity`, `glass-tint`), split at the last dot (an
+/// `beam-spread`, `glass-opacity`, `glass-tint`, `conveyor`), split at the last dot (an
 /// element id may hold one: `door.left.visible` is layer `door.left`).
 pub fn parse_property(s: &str) -> Result<PropertySource, String> {
     let names = || {

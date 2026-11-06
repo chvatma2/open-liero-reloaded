@@ -17,11 +17,14 @@
 
 use olr_data::level::Material;
 use olr_math::Vec2;
-use olr_terrain::{PX_EMPTY, Terrain};
+use olr_terrain::{PX_DIRT, PX_EMPTY, PX_ROCK, Terrain};
 
 use crate::damage::injure_worm;
 use crate::events::{EventKind, TickEvents};
-use crate::live::{CRUSH_CHUNK, CRUSH_EVERY, LiveLevel, PUSH_OUT_PX, PartMover, PartStep};
+use crate::live::{
+    CRUSH_CHUNK, CRUSH_EVERY, LiveLevel, LiveTarget, MAX_PART_STEP, PUSH_OUT_PX, PartMover, PartStep,
+};
+use crate::projectile::c_int;
 use crate::solid::{MAX_LIVE_SOLID_PARTS, SolidIndex, SolidPart, covers};
 use crate::world::{MAX_WORMS, World};
 use crate::worm::Worm;
@@ -74,6 +77,13 @@ fn free(t: &Terrain, solids: &SolidIndex, level: &LiveLevel, pos: Vec2) -> bool 
 
 fn moved(pos: Vec2, d: (i32, i32)) -> Vec2 {
     Vec2::new(pos.x + d.0 as f32, pos.y + d.1 as f32)
+}
+
+/// Whether a worm at `pos` stands on part `p` at `at`: one of
+/// `check_on_ground`'s pixels is the part's.
+fn stands_on(level: &LiveLevel, p: &SolidPart, at: (i32, i32), pos: Vec2) -> bool {
+    let (px, py) = pixel(pos);
+    (1..=6).any(|y| covers(level, p, at, px - 2, py + y) || covers(level, p, at, px + 2, py + y))
 }
 
 /// Whether part `p` moving from `old` to `new` would enter ground rock,
@@ -261,6 +271,39 @@ fn crush_dirt(
     crushed
 }
 
+/// The whole pixels a belt running `speed` px/s carries in tick `tick`:
+/// the 100 Hz ticks share the speed out, so over 100 ticks it carries
+/// exactly `speed` px (one at most a tick while `|speed| <= 100`).
+pub(crate) fn conveyed_px(tick: u64, speed: i64) -> i64 {
+    let t = tick as i64;
+    (t + 1).saturating_mul(speed).div_euclid(100) - t.saturating_mul(speed).div_euclid(100)
+}
+
+/// Whether a bonus at `pos` rests on part `p`'s top (the row its fall
+/// stops on, `y + 2`, is the part's) and the column it rides into (`d`,
+/// one pixel) is clear of dirt, rock and parts inside the level.
+fn bonus_rides(
+    t: &Terrain,
+    solids: &SolidIndex,
+    level: &LiveLevel,
+    p: &SolidPart,
+    pos: Vec2,
+    d: i64,
+) -> bool {
+    let (x, y) = (i64::from(c_int(pos.x)), i64::from(c_int(pos.y)));
+    if !(x - 2..=x + 2).any(|bx| covers(level, p, p.at, bx, y + 2)) {
+        return false;
+    }
+    let bx = x + 3 * d;
+    let (w, h) = (i64::from(t.width()), i64::from(t.height()));
+    (y - 2..=y + 1).all(|by| {
+        (0..w).contains(&bx)
+            && (0..h).contains(&by)
+            && t.flags(bx, by) & (PX_DIRT | PX_ROCK) == 0
+            && !solids.rock(level, bx, by)
+    })
+}
+
 /// The world's side of a motion's step ([`PartMover`]).
 struct Mover<'a> {
     terrain: &'a mut Terrain,
@@ -336,13 +379,7 @@ impl PartMover for Mover<'_> {
             if !w.alive || pushed & (1 << j) != 0 {
                 continue;
             }
-            let (px, py) = pixel(w.pos);
-            let under = |i: usize| {
-                let p = &solids.parts()[i];
-                (1..=6).any(|y| {
-                    covers(level, p, old[i], px - 2, py + y) || covers(level, p, old[i], px + 2, py + y)
-                })
-            };
+            let under = |i: usize| stands_on(level, &solids.parts()[i], old[i], w.pos);
             if let Some(&(i, _)) = moves.iter().find(|&&(i, _)| under(i)) {
                 let to = moved(w.pos, delta[i]);
                 if free(t, solids, level, to) {
@@ -424,7 +461,51 @@ impl World {
         if !live.solids.is_empty() {
             push_out(&self.terrain, &live.solids, &live.level, &mut self.worms, &mut wedged);
         }
+        self.convey();
         self.crush(&wedged);
+    }
+
+    /// Conveying (the production line design): each shown rock part whose
+    /// layer has a running conveyor value ([`LiveTarget::Conveyor`])
+    /// carries what rests on its top [`conveyed_px`] this tick, a pixel at
+    /// a time, though the part stays: the worms standing on it where
+    /// free, the loose grains on it with their columns (leading end
+    /// first, [`carry_grains`]'s rule), and the resting bonuses where
+    /// their box is clear. A blocked thing stays. Each worm and bonus
+    /// rides one belt a pixel.
+    fn convey(&mut self) {
+        let tick = self.server_frame();
+        let World { live, terrain, worms, bonuses, draws, .. } = self;
+        let Some(live) = live else { return };
+        let (level, solids) = (&live.level, &live.solids);
+        for p in solids.parts() {
+            let Some(layer) = p.layer else { continue };
+            let Some(c) = level.copies.get(usize::from(p.copy)) else { continue };
+            let Some(speed) = c.value_of(live.values(p.copy), LiveTarget::Conveyor(layer)) else { continue };
+            let px = conveyed_px(tick, speed);
+            let d = px.signum();
+            for _ in 0..px.unsigned_abs().min(MAX_PART_STEP as u64) {
+                let (mut rode, mut rode_b) = (0u32, 0u32);
+                for (j, w) in worms.iter_mut().enumerate().take(MAX_WORMS) {
+                    if w.alive && rode & (1 << j) == 0 && stands_on(level, p, p.at, w.pos) {
+                        let to = moved(w.pos, (d as i32, 0));
+                        if free(terrain, solids, level, to) {
+                            w.pos = to;
+                            rode |= 1 << j;
+                        }
+                    }
+                }
+                if terrain.has_loose() {
+                    carry_grains(terrain, solids, level, p, p.at, (d, 0), &mut draws.events);
+                }
+                for (j, b) in bonuses.client.iter_mut().enumerate() {
+                    if b.used && rode_b & (1 << j) == 0 && bonus_rides(terrain, solids, level, p, b.pos, d) {
+                        b.pos.x += d as f32;
+                        rode_b |= 1 << j;
+                    }
+                }
+            }
+        }
     }
 
     /// Crushing (issue #90): a wedged worm's count goes up, any other's

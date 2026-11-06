@@ -709,6 +709,7 @@ mod tests {
             ("door.left.beam-spread", P::BeamSpread(l())),
             ("door.left.glass-opacity", P::GlassOpacity(l())),
             ("door.left.glass-tint", P::GlassTint(l())),
+            ("door.left.conveyor", P::Conveyor(l())),
         ];
         for (text, p) in &all {
             assert_eq!(parse_property(text).as_ref(), Ok(p), "{text}");
