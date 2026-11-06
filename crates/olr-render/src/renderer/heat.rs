@@ -54,6 +54,20 @@ const MAX_HEAT_LAYERS: usize = 64;
 /// The most boxes kept; past them the two closest are joined.
 const MAX_BOXES: usize = 8;
 
+/// The production line design: the most grain moves
+/// ([`super::Renderer::move_grains`]) waiting for a frame, composed; the
+/// moves of a call past them are dropped (those grains land cold, as
+/// before the design).
+pub const MAX_GRAIN_MOVES: usize = 16384;
+
+/// The most grain move batches waiting for a frame; past them a call's
+/// moves are dropped.
+const MAX_MOVE_BATCHES: usize = 64;
+
+/// A grain move's source that is none: its destination starts cold
+/// (`heat_move.wgsl`'s `COLD`).
+const COLD: u32 = u32::MAX;
+
 /// Steps a box is kept after its last deposit, however cool its bound:
 /// faint hits below the visible threshold may pile up (2 s).
 const HOLD_STEPS: u32 = 100;
@@ -410,6 +424,11 @@ pub(super) enum HeatOp {
     /// changed layer since the heat last saw them to zero (over the boxes
     /// within it), then the rectangle seen.
     Layer([u32; 4]),
+    /// The production line design: the frame's grain moves `[start,
+    /// end)` (`HeatSim::moves`, a gather of destination and source
+    /// pixels), each destination taking its source's heat as it was
+    /// before them, or none, and the solid map as now seen there.
+    Move(u32, u32),
 }
 
 impl HeatOp {
@@ -420,7 +439,7 @@ impl HeatOp {
             HeatOp::Deposit(..) => PassGroup::HeatDeposit,
             HeatOp::Step => PassGroup::HeatStep,
             HeatOp::Zero(_) => PassGroup::HeatZero,
-            HeatOp::Layer(_) => PassGroup::HeatLayer,
+            HeatOp::Layer(_) | HeatOp::Move(..) => PassGroup::HeatLayer,
         }
     }
 }
@@ -431,6 +450,8 @@ enum Waiting {
     Deposit(HeatDeposit),
     /// [`HeatSim::relayer`]'s world rectangle.
     Layer([i32; 4]),
+    /// [`HeatSim::move_grains`]' gather, `[start, end)` of `HeatSim::waiting_moves`.
+    Move(u32, u32),
 }
 
 /// The CPU side of a level's heat: the clock, the frame's deposits and the
@@ -457,6 +478,15 @@ pub(super) struct HeatSim {
     pub(super) ops: Vec<(HeatOp, std::ops::Range<usize>)>,
     pub(super) deposits: Vec<HeatDeposit>,
     pub(super) rects: Vec<[u32; 4]>,
+    /// The grain moves waiting, composed per call (destination x, y,
+    /// source x, y; [`COLD`] none), and the frame's, those whose source
+    /// or destination lies in a box, which [`HeatOp::Move`] ranges index.
+    waiting_moves: Vec<[u32; 4]>,
+    pub(super) moves: Vec<[u32; 4]>,
+    /// [`HeatSim::move_grains`]' composition: each touched pixel's source
+    /// so far, and the pixels in the order first touched (reused).
+    origin: std::collections::HashMap<u32, u32>,
+    touched: Vec<u32>,
 }
 
 impl HeatSim {
@@ -468,11 +498,15 @@ impl HeatSim {
             ms: 0,
             due: 0,
             done: 0,
-            pending: Vec::with_capacity(MAX_HEAT_DEPOSITS + MAX_HEAT_LAYERS),
+            pending: Vec::with_capacity(MAX_HEAT_DEPOSITS + MAX_HEAT_LAYERS + MAX_MOVE_BATCHES),
             clear: false,
             ops: Vec::new(),
             deposits: Vec::with_capacity(MAX_HEAT_DEPOSITS),
             rects: Vec::new(),
+            waiting_moves: Vec::new(),
+            moves: Vec::new(),
+            origin: std::collections::HashMap::new(),
+            touched: Vec::new(),
         }
     }
 
@@ -521,7 +555,7 @@ impl HeatSim {
         let next = matches!(self.pending.last(), Some(&(at, Waiting::Layer(_))) if at == due);
         let last = self.pending.iter_mut().rev().find_map(|(_, w)| match w {
             Waiting::Layer(l) => Some(l),
-            Waiting::Deposit(_) => None,
+            Waiting::Deposit(_) | Waiting::Move(..) => None,
         });
         if let Some(l) = last
             && (next || layers >= MAX_HEAT_LAYERS)
@@ -530,6 +564,51 @@ impl HeatSim {
             return;
         }
         self.pending.push((due, Waiting::Layer(r)));
+    }
+
+    /// Queues the production line design's grain moves (`(from, to)`
+    /// world pixel indices of a level `width` pixels wide, in the order the
+    /// colour map made them) as one gather in call order, as
+    /// [`HeatSim::relayer`] queues: each pixel they touched takes the heat
+    /// of the pixel its grain came from, the pixels left behind none.
+    /// Nothing while nothing may be hot; dropped past [`MAX_GRAIN_MOVES`]
+    /// or [`MAX_MOVE_BATCHES`].
+    pub(super) fn move_grains(&mut self, width: u32, moves: &[(u32, u32)]) {
+        let batches = self.pending.iter().filter(|(_, w)| matches!(w, Waiting::Move(..))).count();
+        if !self.active() || width == 0 || batches >= MAX_MOVE_BATCHES {
+            return;
+        }
+        self.origin.clear();
+        self.touched.clear();
+        for &(from, to) in moves {
+            if from == to {
+                continue;
+            }
+            let source = self.origin.get(&from).copied().unwrap_or(from);
+            for (cell, value) in [(to, source), (from, COLD)] {
+                if self.origin.insert(cell, value).is_none() {
+                    self.touched.push(cell);
+                }
+            }
+        }
+        let start = self.waiting_moves.len();
+        let (w, h) = (self.size.0.max(0) as u32, self.size.1.max(0) as u32);
+        let px = |i: u32| (i % width < w && i / width < h).then_some([i % width, i / width]);
+        for &cell in &self.touched {
+            let source = self.origin[&cell];
+            let Some([x, y]) = px(cell) else { continue };
+            if source == cell {
+                continue;
+            }
+            let [sx, sy] = if source == COLD { None } else { px(source) }.unwrap_or([COLD, COLD]);
+            self.waiting_moves.push([x, y, sx, sy]);
+        }
+        let end = self.waiting_moves.len();
+        if end > MAX_GRAIN_MOVES {
+            self.waiting_moves.truncate(start);
+        } else if end > start {
+            self.pending.push((self.due, Waiting::Move(start as u32, end as u32)));
+        }
     }
 
     /// Advances the match clock by `ms`.
@@ -547,6 +626,7 @@ impl HeatSim {
     pub(super) fn reset(&mut self) {
         self.boxes.clear();
         self.pending.clear();
+        self.waiting_moves.clear();
         (self.ms, self.due, self.done) = (0, 0, 0);
         self.clear = true;
     }
@@ -562,6 +642,7 @@ impl HeatSim {
         self.ops.clear();
         self.deposits.clear();
         self.rects.clear();
+        self.moves.clear();
         if std::mem::take(&mut self.clear) {
             self.push(HeatOp::Clear, false);
         }
@@ -584,6 +665,11 @@ impl HeatSim {
                     Waiting::Layer(r) => {
                         self.deposit_op(start);
                         self.layer(r);
+                        start = self.deposits.len();
+                    }
+                    Waiting::Move(a, b) => {
+                        self.deposit_op(start);
+                        self.move_op(a as usize..b as usize);
                         start = self.deposits.len();
                     }
                 }
@@ -620,7 +706,20 @@ impl HeatSim {
             self.done += 1;
             steps += 1;
         }
+        // The moves taken are the first waiting: the rest index from 0.
+        let taken = self.pending[..next].iter().rev().find_map(|(_, w)| match *w {
+            Waiting::Move(_, b) => Some(b),
+            _ => None,
+        });
         self.pending.drain(..next);
+        if let Some(taken) = taken {
+            self.waiting_moves.drain(..taken as usize);
+            for (_, w) in &mut self.pending {
+                if let Waiting::Move(a, b) = w {
+                    (*a, *b) = (*a - taken, *b - taken);
+                }
+            }
+        }
         if self.pending.is_empty() && self.boxes.is_empty() {
             self.done = self.due;
         }
@@ -652,6 +751,42 @@ impl HeatSim {
         }
         let rect = [r[0] as u32, r[1] as u32, (r[2] - r[0]) as u32, (r[3] - r[1]) as u32];
         self.ops.push((HeatOp::Layer(rect), start..self.rects.len()));
+    }
+
+    /// Records the waiting moves `range` as the frame's [`HeatOp::Move`]:
+    /// those whose source lies in a box (a box taking in a destination
+    /// outside every box) or whose destination does; a source outside
+    /// every box is cold.
+    fn move_op(&mut self, range: std::ops::Range<usize>) {
+        let inside = |r: [i32; 4], x: u32, y: u32| {
+            let (x, y) = (x as i32, y as i32);
+            x >= r[0] && x < r[2] && y >= r[1] && y < r[3]
+        };
+        let start = self.moves.len();
+        let mut grown = false;
+        for i in range {
+            let [dx, dy, sx, sy] = self.waiting_moves[i];
+            let held = if sx == COLD { None } else { self.boxes.iter().position(|b| inside(b.rect, sx, sy)) };
+            let lands = self.boxes.iter().any(|b| inside(b.rect, dx, dy));
+            match held {
+                Some(k) if !lands => {
+                    let d = [dx as i32, dy as i32, dx as i32 + 1, dy as i32 + 1];
+                    let b = &mut self.boxes[k];
+                    (b.rect, b.limit) = (union(b.rect, d), union(b.limit, d));
+                    grown = true;
+                }
+                None if !lands => continue,
+                _ => {}
+            }
+            let [sx, sy] = if held.is_some() { [sx, sy] } else { [COLD, COLD] };
+            self.moves.push([dx, dy, sx, sy]);
+        }
+        if grown {
+            self.join();
+        }
+        if self.moves.len() > start {
+            self.push(HeatOp::Move(start as u32, self.moves.len() as u32), true);
+        }
     }
 
     /// Records `op` with the boxes' rectangles when `boxes`.
@@ -794,6 +929,11 @@ pub(super) struct HeatPipelines {
     zero: wgpu::RenderPipeline,
     /// Issue #67's layer reset.
     layer: wgpu::RenderPipeline,
+    /// The production line design's grain moves: the heat's gather and
+    /// the seen map's (`heat_move.wgsl`, points).
+    move_layout: wgpu::BindGroupLayout,
+    move_heat: wgpu::RenderPipeline,
+    move_seen: wgpu::RenderPipeline,
     /// A level without heat's look bind group (the table's head off).
     pub(super) none: wgpu::BindGroup,
 }
@@ -939,6 +1079,32 @@ impl HeatPipelines {
             make("olr-render heat deposit", "vs_deposit", "fs_heat_deposit", &[Some(&step_layout)], true);
         let zero = make("olr-render heat zero", "vs_full", "fs_heat_zero", &[], false);
         let layer = make("olr-render heat layer", "vs_full", "fs_heat_layer", &[Some(&step_layout)], false);
+        let both = wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT;
+        let move_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("olr-render heat move"),
+            entries: &[entry(0, both, UINT), entry(1, both, UINT)],
+        });
+        let moves = wgpu::vertex_attr_array![0 => Uint32x4];
+        let move_buffers = [Some(wgpu::VertexBufferLayout {
+            array_stride: 16,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &moves,
+        })];
+        let moved = |label, vs, fs, format| {
+            pipeline(
+                device,
+                label,
+                include_str!("../look/heat_move.wgsl"),
+                (vs, fs),
+                &[Some(&move_layout)],
+                &move_buffers,
+                &[(format, None)],
+                wgpu::PrimitiveTopology::PointList,
+            )
+        };
+        let move_heat = moved("olr-render heat move", "vs_move_heat", "fs_move_heat", HEAT_FORMAT);
+        let move_seen =
+            moved("olr-render heat move seen", "vs_move_seen", "fs_move_seen", wgpu::TextureFormat::R8Uint);
         let tex = |label, format| {
             plain_texture(device, label, (1, 1), format, wgpu::TextureUsages::TEXTURE_BINDING)
         };
@@ -954,7 +1120,18 @@ impl HeatPipelines {
                 &view(&tex("olr-render no solid", wgpu::TextureFormat::R8Uint)),
             ],
         );
-        HeatPipelines { look_layout, step_layout, step, deposit, zero, layer, none }
+        HeatPipelines {
+            look_layout,
+            step_layout,
+            step,
+            deposit,
+            zero,
+            layer,
+            move_layout,
+            move_heat,
+            move_seen,
+            none,
+        }
     }
 }
 
@@ -968,6 +1145,13 @@ pub(super) struct HeatTextures {
     /// The surface texels (front, back; `Rg8Uint`), which the material
     /// soak reads too (issue #57: one copy of the map).
     pub(super) surface_view: wgpu::TextureView,
+    /// The surface texture, and its texels as uploaded (the production
+    /// line design: a moved grain's front byte goes with it; `w × h × 2`,
+    /// the texture's part the level covers), and the level's width.
+    surface: wgpu::Texture,
+    surface_texels: Vec<u8>,
+    surface_size: (u32, u32),
+    world_width: u32,
     /// A step's target, copied back over the boxes.
     scratch: wgpu::Texture,
     scratch_view: wgpu::TextureView,
@@ -976,6 +1160,11 @@ pub(super) struct HeatTextures {
     /// differs changed layer and starts cold ([`HeatOp::Layer`]).
     solid: wgpu::Texture,
     seen: wgpu::Texture,
+    seen_view: wgpu::TextureView,
+    /// The frame's grain moves (instances, [`MAX_GRAIN_MOVES`]) and what
+    /// their passes read: the scratch copy and the solid map.
+    moves: wgpu::Buffer,
+    move_bind: wgpu::BindGroup,
     params: wgpu::Buffer,
     /// The materials' colour ramps (`HeatLook`), rewritten by
     /// [`HeatTextures::set_tables`].
@@ -1024,14 +1213,18 @@ impl HeatTextures {
             size,
             U::TEXTURE_BINDING | U::RENDER_ATTACHMENT | U::COPY_DST | U::COPY_SRC,
         );
-        let scratch =
-            heat_texture(device, "olr-render heat scratch", size, U::RENDER_ATTACHMENT | U::COPY_SRC);
+        let scratch = heat_texture(
+            device,
+            "olr-render heat scratch",
+            size,
+            U::RENDER_ATTACHMENT | U::COPY_SRC | U::COPY_DST | U::TEXTURE_BINDING,
+        );
         let seen = plain_texture(
             device,
             "olr-render heat seen",
             (solid.width(), solid.height()),
             wgpu::TextureFormat::R8Uint,
-            U::TEXTURE_BINDING | U::COPY_DST,
+            U::TEXTURE_BINDING | U::COPY_DST | U::RENDER_ATTACHMENT,
         );
         let mut e = device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("olr-render heat seen") });
@@ -1043,10 +1236,15 @@ impl HeatTextures {
             "olr-render surface",
             size,
             wgpu::TextureFormat::Rg8Uint,
-            U::TEXTURE_BINDING | U::COPY_DST,
+            U::TEXTURE_BINDING | U::COPY_DST | U::COPY_SRC,
         );
         let (w, h) = (size.0.min(world.0), size.1.min(world.1));
+        let mut surface_texels = vec![0u8; w as usize * h as usize * 2];
         if w > 0 && h > 0 && surface.len() as u64 >= u64::from(world.0) * u64::from(world.1) * 2 {
+            for (y, row) in surface_texels.chunks_exact_mut(w as usize * 2).enumerate() {
+                let at = y * world.0 as usize * 2;
+                row.copy_from_slice(&surface[at..at + w as usize * 2]);
+            }
             queue.write_texture(
                 surface_tex.as_image_copy(),
                 surface,
@@ -1087,6 +1285,7 @@ impl HeatTextures {
             mapped_at_creation: false,
         });
         let (heat_view, scratch_view, surface_view) = (view(&heat), view(&scratch), view(&surface_tex));
+        let seen_view = view(&seen);
         let tv = wgpu::BindingResource::TextureView;
         let step_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("olr-render heat step"),
@@ -1097,7 +1296,7 @@ impl HeatTextures {
                 wgpu::BindGroupEntry { binding: 2, resource: tv(&surface_view) },
                 wgpu::BindGroupEntry { binding: 3, resource: tv(&solid_view) },
                 wgpu::BindGroupEntry { binding: 4, resource: deposits.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: tv(&view(&seen)) },
+                wgpu::BindGroupEntry { binding: 5, resource: tv(&seen_view) },
             ],
         });
         let look_bind = look_bind(
@@ -1106,14 +1305,35 @@ impl HeatTextures {
             &params,
             [&heat_view, &surface_view, &view(&ramp), &solid_view],
         );
+        let moves = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("olr-render heat moves"),
+            size: (MAX_GRAIN_MOVES * 16) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let move_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("olr-render heat move"),
+            layout: &pipes.move_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: tv(&scratch_view) },
+                wgpu::BindGroupEntry { binding: 1, resource: tv(&solid_view) },
+            ],
+        });
         HeatTextures {
             heat,
             heat_view,
             surface_view,
+            surface: surface_tex,
+            surface_texels,
+            surface_size: (w, h),
+            world_width: world.0,
             scratch,
             scratch_view,
             solid: solid.clone(),
+            seen_view,
             seen,
+            moves,
+            move_bind,
             params,
             ramp,
             table,
@@ -1164,6 +1384,10 @@ impl HeatTextures {
             self.table[2] = f32::from(u8::from(on));
             queue.write_buffer(&self.params, 0, bytemuck::cast_slice(&self.table[..4]));
         }
+        let m = self.sim.moves.len().min(MAX_GRAIN_MOVES);
+        if m > 0 {
+            queue.write_buffer(&self.moves, 0, bytemuck::cast_slice(&self.sim.moves[..m]));
+        }
         let n = self.sim.deposits.len().min(MAX_HEAT_DEPOSITS);
         if n > 0 {
             // On the stack: no allocation a frame.
@@ -1208,10 +1432,15 @@ impl HeatTextures {
             let (op, rects) = self.sim.ops[i].clone();
             let rects = &self.sim.rects[rects];
             self.passes += 1;
+            if let HeatOp::Move(a, b) = op {
+                self.encode_move(encoder, pipes, timer, rects, a..b, i == 0 && begins_frame);
+                self.passes += 1;
+                continue;
+            }
             let (target, load) = match op {
                 HeatOp::Clear => (&self.heat_view, wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)),
                 HeatOp::Zero(_) => (&self.heat_view, wgpu::LoadOp::Load),
-                HeatOp::Deposit(..) | HeatOp::Step | HeatOp::Layer(_) => {
+                HeatOp::Deposit(..) | HeatOp::Step | HeatOp::Layer(_) | HeatOp::Move(..) => {
                     (&self.scratch_view, wgpu::LoadOp::Load)
                 }
             };
@@ -1231,7 +1460,7 @@ impl HeatTextures {
                     multiview_mask: None,
                 });
                 match op {
-                    HeatOp::Clear => {}
+                    HeatOp::Clear | HeatOp::Move(..) => {}
                     HeatOp::Zero([x, y, w, h]) => {
                         pass.set_pipeline(&pipes.zero);
                         pass.set_scissor_rect(x, y, w, h);
@@ -1307,6 +1536,102 @@ impl HeatTextures {
                 }
             }
         }
+    }
+
+    /// A [`HeatOp::Move`]: the heat over the boxes `rects` copied into
+    /// the scratch, then each move's destination drawn from it (or cold),
+    /// then the solid map at each destination written as seen.
+    fn encode_move(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        pipes: &HeatPipelines,
+        timer: Option<&Timer>,
+        rects: &[[u32; 4]],
+        range: std::ops::Range<u32>,
+        first: bool,
+    ) {
+        for &[x, y, w, h] in rects {
+            let at = |texture| wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x, y, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            };
+            encoder.copy_texture_to_texture(
+                at(&self.heat),
+                at(&self.scratch),
+                wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            );
+        }
+        let passes = [(&self.heat_view, &pipes.move_heat), (&self.seen_view, &pipes.move_seen)];
+        for (k, (target, pipe)) in passes.into_iter().enumerate() {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("olr-render heat move"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: timer
+                    .and_then(|t| t.pass(PassGroup::HeatLayer, (k == 0 && first).then_some(0), None)),
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(pipe);
+            pass.set_bind_group(0, &self.move_bind, &[]);
+            pass.set_vertex_buffer(0, self.moves.slice(..));
+            pass.draw(0..1, range.clone());
+        }
+    }
+
+    /// The production line design's grain moves (`(from, to)` world pixel
+    /// indices, in the order made): each moved grain's front surface byte
+    /// goes with it, the place it left keeping no front (written now,
+    /// over the moves' rectangle), and its heat follows at the next frame
+    /// ([`HeatSim::move_grains`]).
+    pub(super) fn move_grains(&mut self, queue: &super::uploads::Queue, moves: &[(u32, u32)]) {
+        let (width, (w, h)) = (self.world_width, self.surface_size);
+        if width == 0 || w == 0 || h == 0 {
+            return;
+        }
+        let px = |i: u32| (i % width < w && i / width < h).then_some((i % width, i / width));
+        let mut r = [u32::MAX, u32::MAX, 0, 0];
+        let mut mark = |(x, y): (u32, u32)| r = [r[0].min(x), r[1].min(y), r[2].max(x + 1), r[3].max(y + 1)];
+        for &(from, to) in moves {
+            if from == to {
+                continue;
+            }
+            let from = px(from);
+            let front = from.map_or(0, |(x, y)| {
+                let i = (y * w + x) as usize * 2;
+                mark((x, y));
+                std::mem::take(&mut self.surface_texels[i])
+            });
+            if let Some((x, y)) = px(to) {
+                self.surface_texels[(y * w + x) as usize * 2] = front;
+                mark((x, y));
+            }
+        }
+        if r[2] > r[0] {
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.surface,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d { x: r[0], y: r[1], z: 0 },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &self.surface_texels,
+                wgpu::TexelCopyBufferLayout {
+                    offset: (u64::from(r[1]) * u64::from(w) + u64::from(r[0])) * 2,
+                    bytes_per_row: Some(w * 2),
+                    rows_per_image: Some(r[3] - r[1]),
+                },
+                wgpu::Extent3d { width: r[2] - r[0], height: r[3] - r[1], depth_or_array_layers: 1 },
+            );
+        }
+        self.sim.move_grains(width, moves);
     }
 
     /// The solid map of world rectangle `r` was just rewritten with
@@ -1446,6 +1771,19 @@ impl super::Renderer {
         level.into_iter().chain(self.distant.iter().filter_map(|d| d.heat.as_ref()))
     }
 
+    /// The production line design: the colour map moved loose grains
+    /// (`(from, to)` world pixel indices, in the order it moved them;
+    /// `ColorEdit::Move`), before the [`Renderer::update_terrain`] that
+    /// uploads them. Each grain's front surface material goes with it at
+    /// once, and its heat with the next frame's heat passes, in call
+    /// order with the deposits and layer resets: a grain lands as hot as
+    /// it left, the place it left cold. Without heat, nothing.
+    pub fn move_grains(&mut self, moves: &[(u32, u32)]) {
+        if let Some(h) = self.look.as_mut().and_then(|l| l.textures.as_mut()?.heat.as_mut()) {
+            h.move_grains(&self.queue, moves);
+        }
+    }
+
     /// Heat for the level at `deposit` (issue #39), landing before the
     /// next step: the next lit frame draws it. At most
     /// [`MAX_HEAT_DEPOSITS`] wait for a frame; the radius and amount are
@@ -1570,6 +1908,12 @@ impl super::Renderer {
     /// The heat texture (`R16Uint`, [`HEAT_SCALE`] a degree; tests).
     pub fn heat_texture(&self) -> Option<&wgpu::Texture> {
         self.heat_textures().map(|h| &h.heat)
+    }
+
+    /// The heat's surface texture (`Rg8Uint`: front, back; tests).
+    #[doc(hidden)]
+    pub fn heat_surface_texture(&self) -> Option<&wgpu::Texture> {
+        self.heat_textures().map(|h| &h.surface)
     }
 
     /// The active heat boxes' pixels and their count, the level's and the
@@ -1767,6 +2111,37 @@ mod tests {
         s.relayer([-10, -10, 0, 5]);
         s.plan();
         assert!(!s.ops.iter().any(|o| matches!(o.0, HeatOp::Layer(_))));
+    }
+
+    /// The production line design: a call's moves compose into one
+    /// gather (a chain lands from its first source), kept only where a box
+    /// holds its source or destination, a box taking in a hot grain's
+    /// destination.
+    #[test]
+    fn grain_moves_compose_into_one_gather() {
+        let at = |x: u32, y: u32| y * 200 + x;
+        let mut s = sim();
+        s.move_grains(200, &[(at(50, 50), at(50, 52))]);
+        assert!(s.pending.is_empty(), "nothing hot, nothing queued");
+        s.deposit(blast(50.0, 50.0));
+        s.advance(HEAT_STEP_MS);
+        s.plan();
+        let moves = [
+            (at(50, 50), at(50, 52)),
+            (at(50, 52), at(70, 52)),
+            (at(150, 10), at(150, 11)),
+            (at(100, 60), at(55, 55)),
+        ];
+        s.move_grains(200, &moves);
+        s.plan();
+        assert_eq!(s.ops.iter().map(|o| o.0).collect::<Vec<_>>(), [HeatOp::Move(0, 4)]);
+        assert_eq!(
+            s.moves,
+            [[50, 52, COLD, COLD], [50, 50, COLD, COLD], [70, 52, 50, 50], [55, 55, COLD, COLD]]
+        );
+        assert!(s.boxes.iter().any(|b| b.rect[0] <= 70 && 70 < b.rect[2]), "the box took in 70, 52");
+        assert!(!s.rects[s.ops[0].1.clone()].is_empty());
+        assert!(s.waiting_moves.is_empty());
     }
 
     #[test]

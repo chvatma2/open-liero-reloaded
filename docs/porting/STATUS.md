@@ -7541,6 +7541,22 @@ explosions damage the destructible ones.
   inside its rectangle, which follows `X` and `Y`, so the crane's cable
   pays out below its trolley. Only background (a solid layer out of
   sight would still be solid); a static copy draws it whole.
+- **Moved grains keep their heat (2026-11-06).** The production line
+  design (the user: falling dirt should keep its heat): the presentation
+  hands the renderer each grain the colour map moved since the last frame
+  (`GrainMoved`, then the loose dirt's moves, in order;
+  `Renderer::move_grains`) before the terrain upload. The front surface
+  byte goes with the grain at once (a CPU copy of the surface texels,
+  the moves' rectangle uploaded); the heat goes with the next frame's heat
+  passes as one gather per batch, composed on the CPU (a chain lands from
+  its first source), queued in call order with the deposits and layer
+  resets, kept where a box holds its source or destination (a box takes
+  in a hot grain's destination), the destination's `seen` written from
+  the solid map so issue #67's reset after it keeps the heat. At most
+  `MAX_GRAIN_MOVES` 16384 composed moves and 64 batches wait; past them a
+  batch is dropped and its grains land cold, as before. Without heat the
+  material soak's own front map stays the level's (it follows only through
+  the heat's surface texture). A rollback does not move a front byte back.
 - **Spawning beside parts (#90).** `FindSpot` reads the query, so nothing
   spawns in a part; a worm's fixed spawn whose 6 × 6 square meets a part
   falls back to `FindSpot`. For that the copies start (values set, index

@@ -686,7 +686,26 @@ on screen or offscreen.
   a submit of its own; a `HeatOp::Clear` copies it whole
   (`a_dug_pixel_loses_its_heat`, `new_dirt_starts_cold`,
   `a_fresh_craters_back_takes_its_slice`, `heat_stays_in_its_layer`,
-  `layer_resets_land_in_call_order`). The CPU
+  `layer_resets_land_in_call_order`). **A moved grain keeps its heat** (the production line
+  design): `move_grains(&[(from, to)])` (world cell indices, the colour
+  map's order, before the `update_terrain` that uploads them) moves each
+  grain's front surface byte at once (`HeatTextures::surface_texels`, a
+  CPU copy, the moves' rectangle uploaded; the material soak, which reads
+  that texture, follows) and, while `HeatSim::active`, queues the batch
+  composed into one gather (`HeatSim::move_grains`: each touched pixel's
+  first source, the pixels left `COLD`; at most `MAX_GRAIN_MOVES` 16384
+  and 64 batches waiting, past them dropped) in call order; `plan` keeps
+  the entries whose source or destination a box holds (a box takes in a
+  hot grain's destination, rect and limit, then `join`), a source outside
+  every box cold, as `HeatOp::Move`: the heat over the boxes copied into
+  the scratch (`TEXTURE_BINDING` now), a point pass per destination into
+  the heat (`heat_move.wgsl`'s `fs_move_heat`, instances `[dx, dy, sx,
+  sy]` `u32`), then one into `seen` (`RENDER_ATTACHMENT` now) writing the
+  solid map there, so the layer reset after it keeps the heat; timed in
+  `HeatLayer` (`a_moved_grain_keeps_its_heat_and_material`, unit
+  `grain_moves_compose_into_one_gather`). `heat_surface_texture()`
+  (hidden, tests). After a rollback a moved front byte stays where it
+  went. The CPU
   (`HeatSim`) keeps at most 8 boxes: a deposit's square, grown a pixel a
   step to `HEAT_SPREAD` (48) past it, overlapping ones joined; a box is
   zeroed and dropped once an upper bound of its temperature

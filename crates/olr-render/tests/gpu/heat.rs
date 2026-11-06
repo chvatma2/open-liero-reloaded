@@ -1552,3 +1552,38 @@ fn a_catch_up_frame_counts_the_passes_past_the_slots() {
     assert!(r.heat_steps() >= u64::from(MAX_HEAT_STEPS), "{}", r.heat_steps());
     assert!(t.passes[PassGroup::HeatStep as usize] > 0.0, "{t:?}");
 }
+
+/// The production line design: a grain the colour map moves takes its
+/// temperature and its surface material along (`Renderer::move_grains`):
+/// the place it left is cold, the place it lands as hot as it was, but
+/// for one step's cooling, though that open air named no material.
+#[test]
+fn a_moved_grain_keeps_its_heat_and_material() {
+    let Some(gpu) = offscreen() else { return };
+    let grain = |i: usize| (i % 120, i / 120) == (10, 10);
+    let cells = (0..120 * 90).map(|i| if grain(i) { Material::Dirt } else { Material::Background }).collect();
+    let mut map = level_of_cells(cells);
+    let mut maps = SurfaceMaps::empty((120, 90));
+    maps.front[10 * 120 + 10] = 1;
+    let mut r = lit(&gpu);
+    r.set_surface(&materials(), Some(&maps));
+    r.upload_terrain(&map);
+    map.take_dirty().for_each(drop);
+    r.deposit_heat(blast(10.5, 10.5, 4.0));
+    frame(&gpu, &mut r, &dark());
+    let hot = at(&temps(&gpu, &r), 10, 10);
+    assert!(hot > 100.0, "the grain is hot: {hot}");
+    map.move_grain((10, 10), (10, 14));
+    r.move_grains(&[(10 * 120 + 10, 14 * 120 + 10)]);
+    r.update_terrain(&mut map);
+    steps(&gpu, &mut r, 1);
+    let t = temps(&gpu, &r);
+    assert_eq!(at(&t, 10, 10), 0.0, "the place it left is cold");
+    let landed = at(&t, 10, 14);
+    let cooled = hot - (0.006 * hot + 0.05) - 1.0;
+    assert!((cooled..=hot).contains(&landed), "it landed at {landed}, was {hot}");
+    let surface = gpu.read_bytes(r.heat_surface_texture().unwrap());
+    let texel = |x: usize, y: usize| [surface[(y * 120 + x) * 2], surface[(y * 120 + x) * 2 + 1]];
+    assert_eq!(texel(10, 14), [1, 0], "its material went with it");
+    assert_eq!(texel(10, 10), [0, 0]);
+}

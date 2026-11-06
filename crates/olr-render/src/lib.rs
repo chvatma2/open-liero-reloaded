@@ -37,7 +37,7 @@ pub use offscreen::{
 };
 pub use renderer::{
     DIRT_HEAT_GAIN, DIRT_SKIN, DIRT_SKIN_WEIGHTS, GI_CELL_BUDGET, GpuTimes, HEAT_SCALE, HEAT_SKIN,
-    HEAT_SKIN_GAIN, HEAT_SKIN_WEIGHTS, HEAT_STEP_MS, HeatDeposit, HeatView, MAX_HEAT_AMOUNT,
+    HEAT_SKIN_GAIN, HEAT_SKIN_WEIGHTS, HEAT_STEP_MS, HeatDeposit, HeatView, MAX_GRAIN_MOVES, MAX_HEAT_AMOUNT,
     MAX_HEAT_DEPOSITS, MAX_HEAT_RADIUS, MAX_HEAT_STEPS, MAX_PROBE_PASSES, MAX_PROBE_TAPS, MAX_SPRITE_SCALE,
     MIN_SCALE, PASS_GROUPS, PassGroup, PassSpan, Probe, RenderSettings, Renderer, Uploads, ViewDraw,
     WORLD_FORMAT, Workload, gi_cell, gpu_times, pass_ms,

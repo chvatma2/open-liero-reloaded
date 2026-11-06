@@ -186,3 +186,35 @@ fn the_blood_amount_reaches_the_entities() {
     assert!(shown(100) > 0, "the scenario bleeds");
     assert_eq!(shown(0), 0);
 }
+
+/// The production line design: the grains a tick moved (a live part's
+/// `GrainMoved`, then the loose dirt's moves) wait for the next upload in
+/// the order the colour map made them, as world cell indices, for
+/// `Renderer::move_grains`.
+#[test]
+fn grain_moves_reach_the_renderer_in_order() {
+    let Some(content) = content() else { return };
+    let (sc, trace) = olr_scenario::load_fixture(&fixtures(), "dig").unwrap();
+    let p = packs(&content, &sc);
+    let world = olr_scenario::load_world(&content, &sc, &trace).unwrap();
+    let mut pr = Presentation::new(&setup(&content, &p), &world);
+    let w = world.terrain().width();
+    let events = [olr_sim::Event {
+        substep: 0,
+        death: false,
+        kind: olr_sim::EventKind::GrainMoved { from: (10, 20), to: (11, 20) },
+    }];
+    let loose = [(30 * w + 5, 31 * w + 5), (31 * w + 5, 32 * w + 5)];
+    let tick = |loose_moves| FxTick {
+        events: &events,
+        substeps: 1,
+        dt: world.settings().lx56_physics_dt(),
+        lost: None,
+        material: world.terrain(),
+        loose_moves,
+    };
+    pr.step_fx(&tick(&loose));
+    pr.step_fx(&tick(&[]));
+    let grain = (20 * w + 10, 20 * w + 11);
+    assert_eq!(pr.grain_moves(), [grain, loose[0], loose[1], grain]);
+}

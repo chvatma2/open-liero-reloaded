@@ -173,6 +173,14 @@ wired in the frame loop's order **once**, so each mode that draws a world
     open heats nothing.
   - `step_fx(&FxTick)`: `on_tick`'s entities and colour part for a tick
     described by hand (online play).
+  - **Moved grains** (the production line design): `step_fx` keeps each
+    tick's moved grains (its `GrainMoved` events as world cell indices,
+    then its `loose_moves`, in the colour map's order; at most
+    `olr_render::MAX_GRAIN_MOVES`, reserved at the first) and `upload`
+    hands them to `Renderer::move_grains` right before `update_terrain`
+    (a whole upload drops them), so a grain's heat and surface material
+    go with it. `grain_moves()` (tests,
+    `grain_moves_reach_the_renderer_in_order`).
   - `restart(&world, &level, &theme)` for the same worms on a new world;
     `state_loaded(&world)` for a loaded state in online play (scene
     restarts, entities go; the colour map is repainted by the load's

@@ -40,7 +40,7 @@ use olr_fx::{Fx, FxAssets, FxImages, FxTick, default_dirt_colour};
 use olr_look::{LevelLook, LookFrame, ModLook};
 use olr_render::{HeatView, MAX_HEAT_DEPOSITS, MAX_HEAT_STEPS, Renderer};
 use olr_scene::{Camera, DrawList, Scene, SceneAssets, SceneOptions, ShadeRules, Viewport};
-use olr_sim::{TickEvents, World};
+use olr_sim::{EventKind, TickEvents, World};
 use olr_terrain::{ColorMap, LiveFrame};
 
 /// OLX's default worm colours for the first worms (`Profiles.cpp`): red,
@@ -113,6 +113,11 @@ pub struct Presentation {
     /// The renderer's heat clears with the next upload (a loaded state or
     /// a seek).
     heat_reset: bool,
+    /// The production line design: the grains the ticks since the last
+    /// upload moved, `(from, to)` world cell indices in the colour map's
+    /// order, for `Renderer::move_grains` (at most
+    /// `olr_render::MAX_GRAIN_MOVES`; the rest land cold).
+    grain_moves: Vec<(u32, u32)>,
     /// The world states shown so far: one more for each tick presented
     /// ([`Presentation::step_fx`]), loaded state and restart; the look's
     /// [`LookFrame::step`] (the glow light once a tick).
@@ -204,6 +209,7 @@ impl Presentation {
             heat_now: world.time().0,
             heat_clock: world.time().0,
             heat_reset: false,
+            grain_moves: Vec::new(),
             step: 0,
             live: LiveFrame::default(),
             live_light: live_light(s.level),
@@ -398,6 +404,7 @@ impl Presentation {
     /// advance, filtered when they are re-simulated.
     pub fn step_fx(&mut self, tick: &FxTick) {
         self.step = self.step.wrapping_add(1);
+        self.note_grain_moves(tick);
         self.fx.step_tick(tick, &mut self.color, &self.fx_assets);
     }
 
@@ -612,9 +619,39 @@ impl Presentation {
             renderer.upload_terrain(&self.color);
             renderer.set_distant(&self.distant);
         } else {
+            // The production line design: the moved grains' heat and
+            // surface material go with them, before the layer resets.
+            renderer.move_grains(&self.grain_moves);
             renderer.update_terrain(&mut self.color);
         }
+        self.grain_moves.clear();
         self.upload_heat(renderer);
+    }
+
+    /// The grains `tick` moves on the colour map, in its order (its
+    /// `GrainMoved` events, then its loose dirt's moves), kept for the
+    /// next upload.
+    fn note_grain_moves(&mut self, tick: &FxTick) {
+        let w = tick.material.width();
+        let cell = |(x, y): (i32, i32)| {
+            let (x, y) = (u32::try_from(x).ok()?, u32::try_from(y).ok()?);
+            (x < w).then(|| y.checked_mul(w)?.checked_add(x)).flatten()
+        };
+        let moved = tick.events.iter().filter_map(|e| match e.kind {
+            EventKind::GrainMoved { from, to } => Some((cell(from)?, cell(to)?)),
+            _ => None,
+        });
+        let room = olr_render::MAX_GRAIN_MOVES.saturating_sub(self.grain_moves.len());
+        if room > 0 && self.grain_moves.capacity() == 0 {
+            self.grain_moves.reserve(olr_render::MAX_GRAIN_MOVES);
+        }
+        self.grain_moves.extend(moved.chain(tick.loose_moves.iter().copied()).take(room));
+    }
+
+    /// The grains moved since the last upload (the production line
+    /// design; tests).
+    pub fn grain_moves(&self) -> &[(u32, u32)] {
+        &self.grain_moves
     }
 
     /// [`Presentation::upload`]'s heat, after the terrain: deposits land
