@@ -81,11 +81,11 @@ pub fn event_keys(tick: u32, events: &[Event]) -> Vec<Option<EventKey>> {
 }
 
 /// The hash of `kind`'s identity (`next` is the event after it), `None`
-/// for a terrain edit.
+/// for a terrain edit (a grain a part moved too).
 fn class(kind: &EventKind, next: Option<&EventKind>) -> Option<u64> {
     let mut h = Fnv::new();
     match *kind {
-        EventKind::TerrainEdit { .. } => return None,
+        EventKind::TerrainEdit { .. } | EventKind::GrainMoved { .. } => return None,
         EventKind::Sound { id, .. } => match next {
             Some(&EventKind::SpawnCosmetic { kind: CosmeticKind::Gib { worm }, .. })
                 if SoundId::DEATH.contains(&id) =>
@@ -150,6 +150,8 @@ fn class(kind: &EventKind, next: Option<&EventKind>) -> Option<u64> {
         // Issue #94: by its copy (not its amount, which a correction may
         // change).
         EventKind::LiveDamaged { copy, .. } => h.words(&[17, copy.into()]),
+        // The production line: by its copy (not its count).
+        EventKind::DirtCrushed { copy, .. } => h.words(&[18, copy.into()]),
     }
     Some(h.0)
 }

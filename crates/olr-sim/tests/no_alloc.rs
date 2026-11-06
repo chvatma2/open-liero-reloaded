@@ -468,3 +468,67 @@ fn moving_rock_parts_push_and_crush_without_allocating() {
     crushed += run(&mut c, &keys[300..], &mut out);
     assert!(crushed > 0, "the slab crushed nobody");
 }
+
+/// The production line design: a cup of rock going down into loose dirt
+/// and up again (pushing grains, crushing those with nowhere to go,
+/// carrying its bowlful) ticks without allocating once warm (a loose
+/// world's scratch is filled by its first steps).
+#[test]
+fn a_part_pushing_and_carrying_grains_ticks_without_allocating() {
+    let (w, h) = (40u32, 30u32);
+    let cup = LiveCopy::new(LiveCopySetup {
+        id: "cup".into(),
+        at: (100, 150),
+        size: (w, h),
+        props: vec![LiveProp { name: None, target: LiveTarget::Y, min: 0, max: 110, default: 0 }],
+        states: vec![LiveState {
+            name: "On".into(),
+            values: Vec::new(),
+            parts: vec![LivePart {
+                kind: LivePartKind::Rock,
+                layer: None,
+                at: (0, 0),
+                picture: 0,
+                glow_strength: 100,
+            }],
+            enter_sound: None,
+            loop_sound: None,
+        }],
+        pictures: vec![LiveSolid::new((w, h), true, move |x, y| y == h - 1 || x == 0 || x == w - 1)],
+        start_state: 0,
+        start_values: Vec::new(),
+        health: None,
+        scripts: Vec::new(),
+        sounds: Vec::new(),
+    });
+    let mut world =
+        synthetic::world_live_loose(2, 400, 300, Arc::new(LiveLevel::new(vec![cup], Vec::new(), None, 0)));
+    let keys = vec![Keys(0); 2];
+    let mut out = TickEvents::new();
+    let (mut crushed, mut moved) = (0, 0);
+    let step = |world: &mut World, out: &mut TickEvents, crushed: &mut u32, moved: &mut u32| {
+        let y = world.live().unwrap().copy(0).unwrap().values()[0];
+        if !world.live().unwrap().copy(0).unwrap().motions()[0].moving() {
+            let to = if y > 0 { 0 } else { 110 };
+            world.move_live_value_for_test(0, 0, to * LIVE_SUBPIXELS, LIVE_SUBPIXELS).unwrap();
+        }
+        world.tick(&keys, out);
+        for e in out.iter() {
+            match e.kind {
+                olr_sim::EventKind::DirtCrushed { cells, .. } => *crushed += cells,
+                olr_sim::EventKind::GrainMoved { .. } => *moved += 1,
+                _ => {}
+            }
+        }
+    };
+    for _ in 0..1200 {
+        step(&mut world, &mut out, &mut crushed, &mut moved);
+    }
+    let info = allocation_counter::measure(|| {
+        for _ in 0..600 {
+            step(&mut world, &mut out, &mut crushed, &mut moved);
+        }
+    });
+    assert_eq!(info.count_total, 0, "a tick pushing and carrying grains allocated");
+    assert!(crushed > 0 && moved > 0, "the cup crushed {crushed} and moved {moved} grains");
+}

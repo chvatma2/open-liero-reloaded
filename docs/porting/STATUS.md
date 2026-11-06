@@ -7502,15 +7502,26 @@ explosions damage the destructible ones.
   (`LiveCommand::Hurt`, 1 to `MAX_HURT` 1000) deals the rest by nobody
   once the script phase's runs are over; the press's script deals 1000,
   so a wedged worm dies in the tick of its first chunk.
-- **Parts crush dirt (2026-11-06).** A moving rock part crushes the dirt
-  it moves into, loose or not (the user's playtest: Liero Factory
-  Reloaded's press came down through the dirt on its belt and left it):
-  each taken step makes the dirt its new footprint covers and its old one
-  did not background, a `TerrainOp::Crush` edit a row run for the colour
-  map. Dirt never stops a part, as before; a part shown over dirt crushes
-  nothing until it moves. On the factory only the press meets any (the
-  dirt under its die, rows 346-350, on its first stroke); the lift, the
-  mine cart and the forklift run through none.
+- **Parts push, carry and crush dirt (2026-11-06).** A moving rock part
+  crushes the plain dirt it moves into (the user's playtest: Liero Factory
+  Reloaded's press came down through the dirt on its belt and left it),
+  and treats loose grains much as worms (the production line design,
+  `2026-11-06-factory-production-line-design.md`): a grain resting on the
+  part (the pixel under it in the old footprint, not the new) moves with
+  it, the column stacked on it too; a run of grains in the new footprint
+  is pushed a pixel the part's way when the cell past its end is free
+  (inside the level, background, under no part; at most `MAX_PUSH_CHAIN`
+  64 grains a run, rows last-first along the motion so a column moves as
+  one); a grain with nowhere to go is crushed as plain dirt is. Each
+  taken step's crushed cells are one `EventKind::DirtCrushed { copy,
+  cells }`; each moved grain an `EventKind::GrainMoved { from, to }`, an
+  edit event in order with the tick's carves (the live step runs before
+  them, and `World::loose_moves`, which the colour map replays after the
+  edits, would bring back a grain a blast then carved). Crushes stay
+  `TerrainOp::Crush` row runs. Dirt never stops a part, as before; a part
+  shown over dirt crushes nothing until it moves. On the factory only the
+  press meets any (the dirt under its die); the lift, the mine cart and
+  the forklift run through none.
 - **Spawning beside parts (#90).** `FindSpot` reads the query, so nothing
   spawns in a part; a worm's fixed spawn whose 6 × 6 square meets a part
   falls back to `FindSpot`. For that the copies start (values set, index

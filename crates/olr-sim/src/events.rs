@@ -235,6 +235,17 @@ pub enum EventKind {
     /// before the chunk's [`EventKind::Damage`] (`by` -1, nobody): bots and
     /// the HUD read it, never `by`. No OLX counterpart.
     Crushed { worm: i32, copy: u16 },
+    /// A live rock part moved a loose grain (the factory's production line
+    /// design, 2026-11-06): pushed it, carried it or a conveyor slid it,
+    /// from cell `from` to the free cell `to` (world pixels), in the order
+    /// made among the tick's other edits, which a colour map replays alike
+    /// (`ColorEdit::Move`). A terrain edit: dropped, both cells join the
+    /// lost area. No OLX counterpart.
+    GrainMoved { from: (i32, i32), to: (i32, i32) },
+    /// One step of live copy `copy`'s parts crushed `cells` cells of dirt,
+    /// plain or loose (after its `TerrainOp::Crush` edits): its script's
+    /// `crushed_dirt`. No OLX counterpart.
+    DirtCrushed { copy: u16, cells: u32 },
     /// Live copy `copy` plays sound `sound` (an index into the level's
     /// sounds) once at its centre: a script's `this.play` (issue #92).
     /// A cosmetic event: it counts against the sounds' and cosmetics'
@@ -258,7 +269,7 @@ impl EventKind {
             EventKind::SpawnCosmetic { .. } | EventKind::Sound { .. } | EventKind::LiveSound { .. } => {
                 Class::Cosmetic
             }
-            EventKind::TerrainEdit { .. } => Class::Edit,
+            EventKind::TerrainEdit { .. } | EventKind::GrainMoved { .. } => Class::Edit,
             _ => Class::Gameplay,
         }
     }
@@ -453,6 +464,16 @@ impl TickEvents {
             let (w, h) = (w.min(i32::MAX as u32) as i32, h.min(i32::MAX as u32) as i32);
             let (x0, y0) = (x.saturating_sub(w / 2), y.saturating_sub(h / 2));
             self.add_lost(LostArea { x0, y0, x1: x0.saturating_add(w), y1: y0.saturating_add(h) });
+        }
+    }
+
+    /// A grain a live part moved ([`EventKind::GrainMoved`]). A dropped
+    /// one's two cells join [`lost_area`](Self::lost_area).
+    pub(crate) fn grain_moved(&mut self, from: (i32, i32), to: (i32, i32)) {
+        if !self.push(EventKind::GrainMoved { from, to }) {
+            for (x, y) in [from, to] {
+                self.add_lost(LostArea { x0: x, y0: y, x1: x.saturating_add(1), y1: y.saturating_add(1) });
+            }
         }
     }
 

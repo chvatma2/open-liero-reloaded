@@ -35,6 +35,10 @@ impl LoadedLevel {
 /// A [`EventKind::TerrainEdit`] as the colour map replays it; `None` for
 /// other events (and for a stamp the op never uses).
 pub fn color_edit(kind: &EventKind) -> Option<ColorEdit> {
+    if let EventKind::GrainMoved { from, to } = *kind {
+        let cell = |(x, y): (i32, i32)| Some((u32::try_from(x).ok()?, u32::try_from(y).ok()?));
+        return Some(ColorEdit::Move { from: cell(from)?, to: cell(to)? });
+    }
     let EventKind::TerrainEdit { op, stamp, x, y } = *kind else { return None };
     match (op, stamp) {
         (TerrainOp::Carve | TerrainOp::Beam, StampId::Hole(hole)) => Some(ColorEdit::Carve { hole, x, y }),

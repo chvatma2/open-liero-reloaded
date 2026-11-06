@@ -2,9 +2,12 @@
 //! copies' motions step their rock parts a whole pixel at a time, pushing,
 //! carrying and wedging worms and taking the ropes hooked to them; then a
 //! part that appeared over a worm pushes it out or wedges it; then the
-//! wedged worms are crushed. A part moving into dirt crushes it: the dirt
-//! its new footprint covers and its old one did not is background, a
-//! [`crate::TerrainOp::Crush`] edit a row run. No OLX counterpart.
+//! wedged worms are crushed. A part moving into loose dirt pushes and
+//! carries its grains where they have room (the factory's production line
+//! design, 2026-11-06), each a [`EventKind::GrainMoved`]; the dirt left in
+//! its new footprint, plain or loose, is crushed: background, a
+//! [`crate::TerrainOp::Crush`] edit a row run, counted in an
+//! [`EventKind::DirtCrushed`] per step. No OLX counterpart.
 //!
 //! A worm's body here is the pixels `move_and_check_collision` reads, but
 //! its lowest (`y + 5`), which rests inside the ground while it stands:
@@ -103,9 +106,131 @@ fn blocked(
     false
 }
 
+/// The most loose grains a push shifts at once, or a carry lifts in a
+/// column: past it the grain in the part's way is crushed.
+pub const MAX_PUSH_CHAIN: usize = 64;
+
+/// Whether a loose grain may move to `(x, y)`: inside the level,
+/// background, and under no shown rock part.
+fn grain_free(t: &Terrain, solids: &SolidIndex, level: &LiveLevel, x: i64, y: i64) -> bool {
+    t.material(x, y) == Some(Material::Background) && solids.covering(level, x, y) == 0
+}
+
+/// Moves the loose grain at `from` to `to`, reported.
+fn shift(t: &mut Terrain, events: &mut TickEvents, from: (i64, i64), to: (i64, i64)) {
+    let w = i64::from(t.width());
+    t.shove_grain((from.1 * w + from.0) as u32, (to.1 * w + to.0) as u32);
+    events.grain_moved((from.0 as i32, from.1 as i32), (to.0 as i32, to.1 as i32));
+}
+
+/// Pushes the run of loose grains from `(x, y)` one pixel by `d` when the
+/// cell past it (at most [`MAX_PUSH_CHAIN`] grains) is free, farthest
+/// first.
+fn push_run(
+    t: &mut Terrain,
+    solids: &SolidIndex,
+    level: &LiveLevel,
+    events: &mut TickEvents,
+    x: i64,
+    y: i64,
+    d: (i64, i64),
+) {
+    let at = |j: i64| (x + j * d.0, y + j * d.1);
+    let mut n = 1;
+    while n < MAX_PUSH_CHAIN as i64 && t.loose(at(n).0, at(n).1) != 0 {
+        n += 1;
+    }
+    if !grain_free(t, solids, level, at(n).0, at(n).1) {
+        return;
+    }
+    for j in (0..n).rev() {
+        shift(t, events, at(j), at(j + 1));
+    }
+}
+
+/// Pushes the loose grains in part `p`'s fresh cells (those of its new
+/// place its `old` one lacks; it moved by `d`) out of its way where they
+/// have room: row by row (the last row first moving down), each row
+/// farthest along `d` first.
+fn push_grains(
+    t: &mut Terrain,
+    solids: &SolidIndex,
+    level: &LiveLevel,
+    p: &SolidPart,
+    old: (i32, i32),
+    d: (i64, i64),
+    events: &mut TickEvents,
+) {
+    let (w, h) = (i64::from(p.size.0), i64::from(p.size.1));
+    let new = p.at;
+    for r in 0..h {
+        let ly = if d.1 > 0 { h - 1 - r } else { r };
+        let y = i64::from(new.1) + ly;
+        for k in 0..w {
+            let lx = if d.0 > 0 { w - 1 - k } else { k };
+            let x = i64::from(new.0) + lx;
+            if t.loose(x, y) != 0 && covers(level, p, new, x, y) && !covers(level, p, old, x, y) {
+                push_run(t, solids, level, events, x, y, d);
+            }
+        }
+    }
+}
+
+/// Carries the loose grains resting on part `p` at its `old` place (and
+/// the column stacked on each) by its move `d`, where free; a part
+/// rising pushes them instead ([`push_grains`]).
+fn carry_grains(
+    t: &mut Terrain,
+    solids: &SolidIndex,
+    level: &LiveLevel,
+    p: &SolidPart,
+    old: (i32, i32),
+    d: (i64, i64),
+    events: &mut TickEvents,
+) {
+    if d.1 < 0 {
+        return;
+    }
+    let (w, h) = (i64::from(p.size.0), i64::from(p.size.1));
+    for k in 0..w {
+        let lx = if d.0 > 0 { w - 1 - k } else { k };
+        let x = i64::from(old.0) + lx;
+        for ly in 0..h {
+            let y = i64::from(old.1) + ly;
+            // A top cell of the old footprint with a grain on it, the grain
+            // not in the new footprint.
+            if !covers(level, p, old, x, y) || covers(level, p, old, x, y - 1) {
+                continue;
+            }
+            if t.loose(x, y - 1) == 0 || covers(level, p, p.at, x, y - 1) {
+                continue;
+            }
+            for j in 1..=MAX_PUSH_CHAIN as i64 {
+                let from = (x, y - j);
+                if t.loose(from.0, from.1) == 0 {
+                    break;
+                }
+                let to = (from.0 + d.0, from.1 + d.1);
+                if !grain_free(t, solids, level, to.0, to.1) {
+                    break;
+                }
+                shift(t, events, from, to);
+            }
+        }
+    }
+}
+
 /// Crushes the dirt part `p` (at its new place) covers and covered not at
-/// `old`, a [`crate::TerrainOp::Crush`] edit for each row run that held some.
-fn crush_dirt(t: &mut Terrain, level: &LiveLevel, p: &SolidPart, old: (i32, i32), events: &mut TickEvents) {
+/// `old`, a [`crate::TerrainOp::Crush`] edit for each row run that held
+/// some; how many cells.
+fn crush_dirt(
+    t: &mut Terrain,
+    level: &LiveLevel,
+    p: &SolidPart,
+    old: (i32, i32),
+    events: &mut TickEvents,
+) -> u32 {
+    let mut crushed = 0;
     let new = p.at;
     let w = i64::from(p.size.0);
     for ly in 0..i64::from(p.size.1) {
@@ -121,8 +246,10 @@ fn crush_dirt(t: &mut Terrain, level: &LiveLevel, p: &SolidPart, old: (i32, i32)
                     let mut x0 = x0;
                     while x0 < x {
                         let n = (x - x0).min(i64::from(u16::MAX));
-                        if t.crush_row(x0 as i32, y as i32, n as u32) > 0 {
+                        let c = t.crush_row(x0 as i32, y as i32, n as u32);
+                        if c > 0 {
                             events.crush(x0 as i32, y as i32, n as u16);
+                            crushed += c;
                         }
                         x0 += n;
                     }
@@ -131,6 +258,7 @@ fn crush_dirt(t: &mut Terrain, level: &LiveLevel, p: &SolidPart, old: (i32, i32)
             }
         }
     }
+    crushed
 }
 
 /// The world's side of a motion's step ([`PartMover`]).
@@ -235,8 +363,23 @@ impl PartMover for Mover<'_> {
                 r.pos = moved(r.pos, delta[i]);
             }
         }
+        // Loose grains: carried, then pushed; what is left in the new
+        // footprints is crushed.
+        let unit = |i: usize| (i64::from(delta[i].0.signum()), i64::from(delta[i].1.signum()));
+        if self.terrain.has_loose() {
+            for &(i, _) in moves {
+                carry_grains(self.terrain, solids, level, &solids.parts()[i], old[i], unit(i), events);
+            }
+            for &(i, _) in moves {
+                push_grains(self.terrain, solids, level, &solids.parts()[i], old[i], unit(i), events);
+            }
+        }
+        let mut crushed = 0;
         for &(i, _) in moves {
-            crush_dirt(self.terrain, level, &solids.parts()[i], old[i], events);
+            crushed += crush_dirt(self.terrain, level, &solids.parts()[i], old[i], events);
+        }
+        if crushed > 0 {
+            events.push(EventKind::DirtCrushed { copy, cells: crushed });
         }
         PartStep::Taken
     }

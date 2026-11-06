@@ -57,6 +57,9 @@ pub enum ColorEdit {
     /// A live rock part crushed the dirt of the `n` cells from `(x, y)`
     /// rightwards (`TerrainOp::Crush`, [`Terrain::crush_row`]).
     Crush { x: i32, y: i32, n: u16 },
+    /// A live part moved a loose grain (`EventKind::GrainMoved`), replayed
+    /// in order with the other edits ([`ColorMap::move_grain`]).
+    Move { from: (u32, u32), to: (u32, u32) },
 }
 
 /// A rectangle of the colour image, in art pixels.
@@ -708,6 +711,7 @@ impl ColorMap {
     pub fn apply(&mut self, edit: ColorEdit) {
         match edit {
             ColorEdit::Crush { x, y, n } => self.crush(x, y, n),
+            ColorEdit::Move { from, to } => self.move_grain(from, to),
             ColorEdit::Carve { hole, x, y } => self.carve(hole as usize, x, y),
             ColorEdit::Dirt { hole, x, y } => self.place_dirt(hole as usize, x, y),
             ColorEdit::GreenDirt { x, y } => self.place_green_dirt(x, y),

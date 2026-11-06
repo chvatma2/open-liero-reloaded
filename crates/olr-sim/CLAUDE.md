@@ -279,14 +279,23 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   `Blocked` (ground rock, another part or the edge: the motion ends,
   `LiveBlocked { copy, prop }`), `Wait` (a pushed worm wedged: the part
   stays, the motion goes on) or `Taken` (worms pushed, standing worms
-  carried, ropes hooked to the ground in the part moved, and last the
-  dirt its new footprint covers and its old one did not crushed,
-  loose or not: `Terrain::crush_row` a row run, each run that held some
+  carried, ropes hooked to the ground in the part moved; in a world
+  with loose dirt, the loose grains resting on it carried, their columns
+  too (`carry_grains`, not when it moves down), then the runs of grains
+  in its new footprint pushed a pixel its way where the cell past a run
+  is free (`push_grains`, `MAX_PUSH_CHAIN` 64, background under no part
+  inside the level; `Terrain::shove_grain`, each move an
+  `EventKind::GrainMoved { from, to }` of the `Edit` class, in order with
+  the carves; dropped, both cells join the lost area); and last the
+  dirt its new footprint covers and its old one did not crushed, plain
+  or a grain left there: `Terrain::crush_row` a row run, each run that held some
   an `EventKind::TerrainEdit { op: TerrainOp::Crush, stamp:
   StampId::Row(n), x, y }` (`TickEvents::crush`; dropped, its cells join
   the lost area), which the colour map replays (`ColorEdit::Crush`);
   2026-11-06, the user's playtest: the factory's press left the dirt
-  under its die; `a_moving_part_crushes_the_dirt_it_moves_into`). Then
+  under its die; `a_moving_part_crushes_the_dirt_it_moves_into`); a
+  step that crushed any emits `EventKind::DirtCrushed { copy, cells }`
+  (gameplay class; the production line design). Then
   `push_out` (a part over a worm: up, left, right, down within
   `PUSH_OUT_PX` 8, else wedged), then `crush`: `LiveWorld::crush` counts
   per worm slot (`World::crush_count`), a chunk of `CRUSH_CHUNK` on the
@@ -308,7 +317,13 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   worm, a rope following, projectiles and beams stopped, an explosion
   carving only the ground, no spawn inside a part, the step through a
   restore and a transfer, more than 64 parts refused) and
-  `tests/no_alloc.rs`' `moving_rock_parts_push_and_crush_without_allocating`.
+  `tests/no_alloc.rs`' `moving_rock_parts_push_and_crush_without_allocating`;
+  grains: `a_part_pushes_a_loose_row_as_one`,
+  `a_grain_pushed_against_rock_or_the_edge_is_crushed`,
+  `a_rising_cup_carries_its_grains`, `part_edits_replay_in_order`,
+  `a_restore_mid_carry_re_steps_the_same` and `no_alloc.rs`'
+  `a_part_pushing_and_carrying_grains_ticks_without_allocating` (warm
+  first: a loose world's buffers grow to their peak).
 - **Reach** (issue #91, for the bots): `LiveReach { copy, layer, rect }`,
   computed once in `LiveLevel::new` (`LiveLevel::reach`,
   `LiveView::reach_rects`; setup data, in no checksum or transfer): per

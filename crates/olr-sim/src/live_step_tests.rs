@@ -569,3 +569,179 @@ fn a_moving_part_crushes_the_dirt_it_moves_into() {
     w.restore(&snap).unwrap();
     assert_eq!(w.terrain().material(100, 112), Some(Material::Dirt), "a restore puts it back");
 }
+
+/// [`block`] shaped as a cup: its bottom row and its two side columns.
+fn cup(id: &str, at: (i32, i32), size: (u32, u32)) -> LiveCopy {
+    let mut c = block(id, at, size, 1);
+    c.pictures = vec![LiveSolid::new(size, true, move |x, y| y == size.1 - 1 || x == 0 || x == size.0 - 1)];
+    c
+}
+
+/// The cave of [`terrain`] with loose dirt (kind 1, the default material)
+/// in each box, no director.
+fn loose_world(copies: Vec<LiveCopy>, loose: &[(u32, u32, u32, u32)]) -> World {
+    let inside =
+        |x: u32, y: u32| loose.iter().any(|&(x0, y0, x1, y1)| (x0..x1).contains(&x) && (y0..y1).contains(&y));
+    let mut cells = vec![Material::Background; 200 * 200];
+    let mut kinds = vec![0u8; 200 * 200];
+    for y in 0..200u32 {
+        for x in 0..200u32 {
+            let i = (y * 200 + x) as usize;
+            if y >= 180 {
+                cells[i] = Material::Rock;
+            } else if inside(x, y) {
+                cells[i] = Material::Dirt;
+                kinds[i] = 1;
+            }
+        }
+    }
+    let terrain =
+        Terrain::from_grid(&MaterialGrid::from_cells(200, 200, cells).unwrap()).with_loose(kinds).unwrap();
+    let mut s = setup(copies, None, None);
+    s.terrain = terrain;
+    s.loose = crate::LooseLevel::new(vec![olr_data::level::LooseMaterial::DEFAULT]).map(Arc::new);
+    World::build(s, Box::new(OracleMode))
+}
+
+fn loose_count(w: &World) -> usize {
+    let t = w.terrain();
+    (0..t.height() as i64).map(|y| (0..t.width() as i64).filter(|&x| t.loose(x, y) != 0).count()).sum()
+}
+
+fn dirt_crushed(e: &TickEvents) -> u32 {
+    e.iter()
+        .map(|e| match e.kind {
+            EventKind::DirtCrushed { cells, .. } => cells,
+            _ => 0,
+        })
+        .sum()
+}
+
+#[test]
+fn a_part_pushes_a_loose_row_as_one() {
+    // A 20 × 10 block on the floor at (90, 170); loose grains x 110..115 on
+    // the floor's row 179, against its right side.
+    let mut w = loose_world(vec![block("pusher", (90, 170), (20, 10), 1)], &[(110, 179, 115, 180)]);
+    move_to(&mut w, 0, X, 2, 1);
+    ticks(&mut w, 4);
+    assert_eq!(rect(&w, 0).0, 92);
+    for x in 112..117 {
+        assert_eq!(w.terrain().loose(x, 179), 1, "({x}, 179)");
+    }
+    assert_eq!(loose_count(&w), 5, "none crushed");
+}
+
+#[test]
+fn a_grain_pushed_against_rock_or_the_edge_is_crushed() {
+    // Down onto 10 full rows of loose grains lying on the rock at 180,
+    // wider than it (their corners slide at the repose).
+    let mut w = loose_world(vec![block("press", (90, 160), (20, 10), 1)], &[(70, 170, 130, 180)]);
+    move_to(&mut w, 0, Y, 5, 1);
+    let mut crushed = 0;
+    for _ in 0..8 {
+        crushed += dirt_crushed(&w.tick_new(&[]));
+    }
+    assert_eq!(rect(&w, 0).1, 165);
+    assert_eq!(crushed, 100, "20 × 5 crushed, reported");
+    assert_eq!(loose_count(&w), 500);
+    // At the level's left edge a pushed grain is crushed, never moved out.
+    let mut w = loose_world(vec![block("wall", (10, 170), (10, 10), 1)], &[(0, 179, 10, 180)]);
+    move_to(&mut w, 0, X, -10, 1);
+    ticks(&mut w, 12);
+    assert_eq!(rect(&w, 0).0, 0);
+    assert_eq!(loose_count(&w), 0);
+}
+
+#[test]
+fn a_rising_cup_carries_its_grains() {
+    // A 12 × 8 cup at (94, 150), its inside (10 × 7) full of grains.
+    let mut w = loose_world(vec![cup("claw", (94, 150), (12, 8))], &[(95, 150, 105, 157)]);
+    ticks(&mut w, 5);
+    assert_eq!(loose_count(&w), 70, "they rest in it");
+    move_to(&mut w, 0, Y, -30, 1);
+    ticks(&mut w, 40);
+    assert_eq!(rect(&w, 0).1, 120);
+    assert_eq!(loose_count(&w), 70, "all kept");
+    for y in 120..127 {
+        for x in 95..105 {
+            assert_eq!(w.terrain().loose(x, y), 1, "({x}, {y})");
+        }
+    }
+    move_to(&mut w, 0, X, 20, 1);
+    ticks(&mut w, 30);
+    assert_eq!(rect(&w, 0).0, 114);
+    assert_eq!(loose_count(&w), 70, "carried sideways too");
+    for y in 120..127 {
+        for x in 115..125 {
+            assert_eq!(w.terrain().loose(x, y), 1, "({x}, {y})");
+        }
+    }
+}
+
+/// Replays a tick's edits on `t` as a colour map does: its events in order
+/// (a crushed run, a grain a part moved), then its loose moves.
+fn replay(t: &mut Terrain, events: &TickEvents, moves: &[(u32, u32)]) {
+    let wd = t.width() as i32;
+    for e in events.iter() {
+        match e.kind {
+            EventKind::TerrainEdit { op: TerrainOp::Crush, stamp: StampId::Row(n), x, y } => {
+                t.crush_row(x, y, u32::from(n));
+            }
+            EventKind::GrainMoved { from, to } => {
+                t.move_grain((from.1 * wd + from.0) as u32, (to.1 * wd + to.0) as u32);
+            }
+            EventKind::TerrainEdit { .. } => panic!("no other edit here: {:?}", e.kind),
+            _ => {}
+        }
+    }
+    for &(from, to) in moves {
+        t.move_grain(from, to);
+    }
+}
+
+#[test]
+fn part_edits_replay_in_order() {
+    // The cup carrying, a row pushed and grains crushed, all in one world.
+    let mut w = loose_world(
+        vec![cup("claw", (94, 150), (12, 8)), block("press", (30, 160), (20, 10), 1)],
+        &[(95, 150, 105, 157), (30, 170, 50, 180), (50, 179, 56, 180)],
+    );
+    let mut t = w.terrain().clone();
+    move_to(&mut w, 0, Y, -20, 1);
+    move_to(&mut w, 1, Y, 5, 1);
+    for tick in 0..60 {
+        if tick == 25 {
+            move_to(&mut w, 0, X, 15, 1);
+            move_to(&mut w, 1, X, 4, 1);
+        }
+        let e = w.tick_new(&[]);
+        replay(&mut t, &e, w.loose_moves());
+        assert_eq!(&t, w.terrain(), "tick {tick}");
+    }
+    assert!(loose_count(&w) > 70, "something survived");
+}
+
+#[test]
+fn a_restore_mid_carry_re_steps_the_same() {
+    let mut w = loose_world(vec![cup("claw", (94, 150), (12, 8))], &[(95, 150, 105, 157)]);
+    w.enable_rollback();
+    move_to(&mut w, 0, Y, -30, 1);
+    ticks(&mut w, 10);
+    let snap = w.save();
+    let mut sums = Vec::new();
+    for t in 0..30 {
+        if t == 15 {
+            move_to(&mut w, 0, X, 10, 1);
+        }
+        ticks(&mut w, 1);
+        sums.push(w.checksum());
+    }
+    w.restore(&snap).unwrap();
+    for (t, &s) in sums.iter().enumerate() {
+        if t == 15 {
+            move_to(&mut w, 0, X, 10, 1);
+        }
+        ticks(&mut w, 1);
+        assert_eq!(w.checksum(), s, "tick {t} after the restore");
+    }
+}

@@ -163,6 +163,10 @@ and the colour image that follows it (`ColorMap`).
   kind of 0 hashes as before: `kinds_of_zero_hash_as_before`). Every cell
   a carve or dirt edit changes loses its kind (`set_cell`). `move_grain(from,
   to)` (cell indices, journaled) moves a grain with its kind;
+  `shove_grain(from, to)` (the production line design: a live rock part
+  pushing or carrying it) is that and both cells touched, so the loose
+  step wakes them, and `ColorEdit::Move { from, to }` replays it in order
+  with the tick's other edits (`ColorMap::move_grain`);
   `crush_row(x, y, n)` (2026-11-06: a live rock part moved into dirt;
   clipped, journaled, its rectangle touched) makes the run's dirt
   background, loose or not, and `ColorEdit::Crush { x, y, n }` replays it

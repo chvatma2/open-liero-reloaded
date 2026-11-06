@@ -518,8 +518,8 @@ impl LooseWorld {
                     self.wake(x0 - 1, y0 - 1, x0 + i64::from(size.0), y0 + i64::from(size.1));
                 }
             }
-            self.state.parts.clear();
-            self.state.parts.extend_from_slice(new);
+            // The buffers swap places, so neither is ever dropped.
+            self.state.parts = now;
             self.scratch.parts = old;
         } else {
             self.scratch.parts = now;

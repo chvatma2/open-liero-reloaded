@@ -164,6 +164,24 @@ impl Terrain {
         self.set_value(f, Material::Background as u8);
     }
 
+    /// [`Terrain::move_grain`] for a grain something else moved (a live
+    /// part, the factory's production line design): both cells are noted
+    /// touched ([`Terrain::take_touched`]), so the loose dirt there wakes.
+    pub fn shove_grain(&mut self, from: u32, to: u32) {
+        let n = self.cells.len() as u32;
+        if from >= n || to >= n || from == to {
+            return;
+        }
+        self.move_grain(from, to);
+        if self.loose.is_some() {
+            let w = self.width;
+            for c in [from, to] {
+                let (x, y) = ((c % w) as i32, (c / w) as i32);
+                journal::note_restored(&mut self.touched, Area { x0: x, y0: y, x1: x + 1, y1: y + 1 });
+            }
+        }
+    }
+
     /// The rectangles carves and dirt edits wrote since the last call (a
     /// terrain with a loose layer only: loose dirt wakes there), at most
     /// [`Terrain::MAX_RESTORED`], merged into their bounding box beyond.

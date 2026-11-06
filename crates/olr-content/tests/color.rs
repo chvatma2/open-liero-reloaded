@@ -22,6 +22,9 @@ fn color_edit_converts_every_terrain_op() {
     assert_eq!(edit(TerrainOp::GreenDirt, StampId::Hole(1)), None);
     assert_eq!(edit(TerrainOp::Crush, StampId::Row(12)), Some(ColorEdit::Crush { x: -3, y: 7, n: 12 }));
     assert_eq!(edit(TerrainOp::Crush, StampId::Hole(1)), None);
+    let moved = |from, to| color_edit(&EventKind::GrainMoved { from, to });
+    assert_eq!(moved((3, 4), (3, 5)), Some(ColorEdit::Move { from: (3, 4), to: (3, 5) }));
+    assert_eq!(moved((-1, 4), (0, 4)), None);
     assert_eq!(color_edit(&EventKind::Spawned { worm: 0 }), None);
     assert_eq!(
         olr_content::lost_area(olr_sim::LostArea { x0: -1, y0: 2, x1: 3, y1: 4 }),

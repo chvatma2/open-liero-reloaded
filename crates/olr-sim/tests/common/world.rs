@@ -98,6 +98,20 @@ pub fn world_live(worms: usize, w: u32, h: u32, live: Arc<olr_sim::LiveLevel>) -
     World::new(setup, Box::new(OracleMode)).expect("the live world")
 }
 
+/// [`world_live`] with every dirt pixel loose dirt of the default
+/// material (the production line design).
+pub fn world_live_loose(worms: usize, w: u32, h: u32, live: Arc<olr_sim::LiveLevel>) -> World {
+    let mut setup = setup_with(worms, w, h, ActionKind::Carve, SimSettings::lx56());
+    let t = &setup.terrain;
+    let kinds = (0..w * h)
+        .map(|i| u8::from(t.material((i % w).into(), (i / w).into()) == Some(Material::Dirt)))
+        .collect();
+    setup.terrain = setup.terrain.clone().with_loose(kinds).expect("loose kinds");
+    setup.loose = olr_sim::LooseLevel::new(vec![olr_data::level::LooseMaterial::DEFAULT]).map(Arc::new);
+    setup.live = Some(live);
+    World::new(setup, Box::new(OracleMode)).expect("the loose live world")
+}
+
 /// [`world_live`] with the director `director` running its scripts
 /// (issue #88).
 pub fn world_directed(
