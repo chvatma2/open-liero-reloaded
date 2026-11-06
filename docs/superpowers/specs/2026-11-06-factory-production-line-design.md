@@ -69,10 +69,13 @@ worm:
 press therefore still destroys the loose dirt under it: the belt's rock
 below leaves it nowhere to go.
 
-Every grain a part pushes or carries is a move of the tick's loose moves
-(`World::loose_moves`), in the order made, so the colour map (and the
-heat, below) follows it exactly. Crushed grains stay `TerrainOp::Crush`
-edits. Dirt still never stops a part.
+Every grain a part pushes, carries or crushes is reported in order with
+the tick's other terrain edits, so the colour map (and the heat, below)
+follows it exactly. *(My call, at planning: as edit events, not in
+`World::loose_moves`, which the colour map replays after the tick's
+edits: the live step runs before the tick's explosions, and a pushed
+grain a blast then carved would come back in the picture.)* Crushed
+grains stay `TerrainOp::Crush` edits. Dirt still never stops a part.
 
 ### Worms and the claw
 
