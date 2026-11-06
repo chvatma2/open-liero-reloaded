@@ -32,7 +32,7 @@ use olr_format::look::{GlowGroupSource, MAX_GROUPS};
 use olr_format::materials::MaterialSource;
 
 use crate::asset::{
-    ADDED_LIGHTING, Asset, AssetError, Piece, PosedPiece, decode, decode_own, live_refusal, posed,
+    ADDED_LIGHTING, Asset, AssetError, Piece, PieceRef, PosedPiece, decode, decode_own, live_refusal, posed,
 };
 use crate::compose::{Decoded, GlowMasks, PaintedSurfaces, Rect, bake_elements_with_opacity};
 use crate::level::{refresh_thumb, rescale_art};
@@ -333,7 +333,9 @@ pub fn lay_copy(c: &PlacedCopy, asset: &Asset, s: u32) -> Result<LaidCopy, Place
         .pieces
         .iter()
         .filter_map(|pp| {
-            let (e, decoded, [glow_mask, surface_map, back_surface_map]) = lay(pp, &frame)?;
+            let (e, decoded, maps) = lay(pp, &frame)?;
+            let (e, decoded, [glow_mask, surface_map, back_surface_map]) =
+                if e.clip { clipped(e, &decoded, &maps, &frame)? } else { (e, decoded, maps) };
             let mut element = crate::folders::fold(&folders, &e);
             element.folder = None;
             element.id = format!("{}.{}", c.id, element.id);
@@ -351,6 +353,30 @@ pub fn lay_copy(c: &PlacedCopy, asset: &Asset, s: u32) -> Result<LaidCopy, Place
         })
         .collect();
     Ok(LaidCopy { pieces, groups: p.groups, materials: p.materials, loose: p.loose })
+}
+
+/// Laid clipped piece `e` (the production line design, `Element::clip`)
+/// cut to its copy's rectangle, as play draws it: its pixels there as a
+/// drawn layer, its maps re-laid; `None` when none are left.
+fn clipped(e: Element, decoded: &Decoded, maps: &Maps, f: &Frame) -> Option<(Element, Decoded, Maps)> {
+    let (x0, y0) = (i64::from(f.at.0).max(0), i64::from(f.at.1).max(0));
+    let x1 = (i64::from(f.at.0) + i64::from(f.to.0)).clamp(0, i64::from(u32::MAX));
+    let y1 = (i64::from(f.at.1) + i64::from(f.to.1)).clamp(0, i64::from(u32::MAX));
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    let rect = Rect { x: x0 as u32, y: y0 as u32, w: (x1 - x0) as u32, h: (y1 - y0) as u32 };
+    let piece = PieceRef {
+        element: &e,
+        decoded,
+        original: None,
+        glow_mask: maps[0].as_ref(),
+        surface_map: maps[1].as_ref(),
+        back_surface_map: maps[2].as_ref(),
+    };
+    let cut = crate::asset::as_drawn(piece, Some(rect), (x1 as u32, y1 as u32), f.s)?;
+    let element = Element { visible: e.visible, locked: e.locked, folder: e.folder.clone(), ..cut.element };
+    Some((element, cut.decoded, [cut.glow_mask, cut.surface_map, cut.back_surface_map]))
 }
 
 /// How one copy's glow groups and materials are named in the level

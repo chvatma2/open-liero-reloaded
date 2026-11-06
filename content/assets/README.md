@@ -198,44 +198,83 @@ is gone.
   The script keeps the lenses at the claw's offset and turns the beacon
   while `Moving`. The plant works (2026-11-04): `Off` (as `Idle`, for a
   power cut: the claw stops where it is until it is Idle again).
+  The production line design (2026-11-06): the claw is parts of its
+  own under the trolley (`trolley`, rows 272-284 of After Dark's rock,
+  the beacon's housing and dome on it, its glow and `halo_glow`,
+  `halo_light` now `trolley`'s): `cable` (Background, drawn on the
+  backdrop and extracted from it, so it lies under the rock: two grey strands
+  at x 785 and 787 drawn paid out from row 285 to 428 and `clip`ped to
+  the copy's rectangle, so only what lies below the rail shows), `hub`
+  (dark red, a crossbar whose top, row 301, x 776-797, is the shoulders
+  a worm rides) and, a row below it, `jaw-l` and `jaw-r` (red, metal:
+  each a wall and a floor falling 45° to the middle, their tips meeting
+  at x 786 | 787, a grab bucket 20 px wide that opens 9 px a side, wider
+  than its inside, so its open floors pass through nothing it closes
+  on), all drawn by `factory_works.make_art`'s `crane-*` masks. The box grows to 114 × 200 (rows 269-468), down to
+  the claw's lowest place. Exposed in step order: `claw_x`
+  (`trolley.x`), `cable_x`, `cable_y` (−130 to 0, −130 drawn up),
+  `hub_x`, `hub_y` (0 to 130), `jaw_r_x` (to 84), `jaw_r_y`, `jaw_l_x`
+  (from −19), `jaw_l_y`; the script (`crane.rhai`) moves them together,
+  the round: over the hole, jaws open, down, closed, up, over the
+  reservoir, open, a wait, back.
 
-      olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 762,272,114,47 --name Claw
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark backdrop --mask tools/levels/factory/art/crane-cable-mask.png --tile tools/levels/factory/art/crane-cable-tile.png
+      olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark backdrop --mask tools/levels/factory/art/crane-cable-mask.png --name Cable
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark cable --clip true --surface metal
+      olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 762,272,114,13 --name Trolley
       olr-cli level element extract content/reloaded/olr-level-liero-factory-after-dark rock --rect 762,269,114,3 --name Rail
       olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark rail --rect 775,269,23,1 --colour 737373
       olr-cli level element erase content/reloaded/olr-level-liero-factory-after-dark rail --rect 775,270,23,1
       olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark rail --rect 775,271,23,1 --colour 737373
-      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark claw --rect 776,272,21,1 --colour 2c2c2c
-      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark claw --rect 783,282,7,1 --colour 3e3e3e
-      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark claw --rect 783,283,7,1 --colour 2c2c2c
-      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark claw --rect 785,284,3,1 --colour 7a3a14
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark trolley --rect 776,272,21,1 --colour 2c2c2c
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark trolley --rect 783,282,7,1 --colour 3e3e3e
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark trolley --rect 783,283,7,1 --colour 2c2c2c
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark trolley --rect 785,284,3,1 --colour 7a3a14
       olr-cli level group add content/reloaded/olr-level-liero-factory-after-dark halo --colour ff6a10 --intensity 0 --reach 60
       olr-cli level group add content/reloaded/olr-level-liero-factory-after-dark beacon --colour ff6a10 --intensity 400 --reach 360
-      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark claw --glow 100 --glow-group halo
-      olr-cli level element glow content/reloaded/olr-level-liero-factory-after-dark claw --rect 762,272,114,47 --strength 0
-      olr-cli level element glow content/reloaded/olr-level-liero-factory-after-dark claw --rect 785,284,3,1 --strength 100
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark trolley --glow 100 --glow-group halo
+      olr-cli level element glow content/reloaded/olr-level-liero-factory-after-dark trolley --rect 762,272,114,13 --strength 0
+      olr-cli level element glow content/reloaded/olr-level-liero-factory-after-dark trolley --rect 785,284,3,1 --strength 100
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material rock --name Hub
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark hub --mask tools/levels/factory/art/crane-hub-mask.png --tile tools/levels/factory/art/crane-hub-tile.png
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark hub --surface metal
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material rock --name "Jaw L"
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark jaw-l --mask tools/levels/factory/art/crane-jaw-l-mask.png --tile tools/levels/factory/art/crane-jaw-l-tile.png
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark jaw-l --surface metal
+      olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material rock --name "Jaw R"
+      olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark jaw-r --mask tools/levels/factory/art/crane-jaw-r-mask.png --tile tools/levels/factory/art/crane-jaw-r-tile.png
+      olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark jaw-r --surface metal
       olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name Lens
       olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark lens --rect 788,284,2,1 --colour ff9a40
       olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark lens --glow 100 --glow-group beacon --glow-beam 0,10
       olr-cli level element add-layer content/reloaded/olr-level-liero-factory-after-dark --material background --name "Lens B"
       olr-cli level element draw content/reloaded/olr-level-liero-factory-after-dark lens-b --rect 783,284,2,1 --colour ff9a40
       olr-cli level element set content/reloaded/olr-level-liero-factory-after-dark lens-b --glow 100 --glow-group beacon --glow-beam 180,10
-      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 762,269,114,50 --layers rail,claw,lens,lens-b --name Crane --out content/assets/crane
+      olr-cli asset save content/reloaded/olr-level-liero-factory-after-dark --rect 762,269,114,200 --layers cable,rail,trolley,hub,jaw-l,jaw-r,lens,lens-b --name Crane --out content/assets/crane
       olr-cli asset state set content/assets/crane Normal --name Idle
       olr-cli asset state add content/assets/crane Moving
-      olr-cli asset expose content/assets/crane claw_x claw.x --default 0 --min -10 --max 75
+      olr-cli asset expose content/assets/crane claw_x trolley.x --default 0 --min -10 --max 75
+      olr-cli asset expose content/assets/crane cable_x cable.x --default 0 --min -10 --max 75
+      olr-cli asset expose content/assets/crane cable_y cable.y --default -130 --min -130 --max 0
+      olr-cli asset expose content/assets/crane hub_x hub.x --default 0 --min -10 --max 75
+      olr-cli asset expose content/assets/crane hub_y hub.y --default 0 --min 0 --max 130
+      olr-cli asset expose content/assets/crane jaw_r_x jaw-r.x --default 0 --min -10 --max 84
+      olr-cli asset expose content/assets/crane jaw_r_y jaw-r.y --default 0 --min 0 --max 130
+      olr-cli asset expose content/assets/crane jaw_l_x jaw-l.x --default 0 --min -19 --max 75
+      olr-cli asset expose content/assets/crane jaw_l_y jaw-l.y --default 0 --min 0 --max 130
       olr-cli asset expose content/assets/crane lens_x lens.x --default 0 --min -10 --max 75
       olr-cli asset expose content/assets/crane lens_b_x lens-b.x --default 0 --min -10 --max 75
       olr-cli asset expose content/assets/crane beam_spread lens.beam-spread --default 10 --min 1 --max 90
       olr-cli asset expose content/assets/crane beam_spread_b lens-b.beam-spread --default 10 --min 1 --max 90
       olr-cli asset expose content/assets/crane reach lens.reach --default 360 --min 1 --max 360
       olr-cli asset expose content/assets/crane light lens.light --default 400 --min 0 --max 400
-      olr-cli asset expose content/assets/crane halo_glow claw.glow --default 0 --min 0 --max 100
-      olr-cli asset expose content/assets/crane halo_light claw.light --default 0 --min 0 --max 400
+      olr-cli asset expose content/assets/crane halo_glow trolley.glow --default 0 --min 0 --max 100
+      olr-cli asset expose content/assets/crane halo_light trolley.light --default 0 --min 0 --max 400
       olr-cli asset state value content/assets/crane Idle lens.glow 0
       olr-cli asset state value content/assets/crane Idle lens-b.glow 0
       olr-cli asset state value content/assets/crane Idle lens.light 0
-      olr-cli asset state value content/assets/crane Idle claw.glow 0
-      olr-cli asset state value content/assets/crane Idle claw.light 0
+      olr-cli asset state value content/assets/crane Idle trolley.glow 0
+      olr-cli asset state value content/assets/crane Idle trolley.light 0
       olr-cli asset sound add content/assets/crane tools/levels/factory/sounds/hum.wav
       olr-cli asset state set content/assets/crane Moving --loop-sound hum.wav
       olr-cli asset state add content/assets/crane Off --from Idle

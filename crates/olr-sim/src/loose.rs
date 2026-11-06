@@ -389,11 +389,12 @@ impl LooseWorld {
     ) {
         self.moves.clear();
         for a in terrain.take_touched() {
-            wake_in(
-                &mut self.state.next,
-                (self.cols, self.rows),
-                (i64::from(a.x0) - 1, i64::from(a.y0) - 1, i64::from(a.x1), i64::from(a.y1)),
-            );
+            let r = (i64::from(a.x0) - 1, i64::from(a.y0) - 1, i64::from(a.x1), i64::from(a.y1));
+            wake_in(&mut self.state.next, (self.cols, self.rows), r);
+            // A grain a live part moved there may have come into a chunk
+            // that held none (the production line design): `holds` only
+            // ever says "may hold", so a touched chunk is one.
+            wake_in(&mut self.holds, (self.cols, self.rows), r);
         }
         for w in worms.iter().filter(|w| w.alive) {
             let (x, y) = (w.pos.x as i64, w.pos.y as i64);

@@ -555,7 +555,8 @@ The headless command-line tool. Its commands:
   Issue #97's `factory-crane.png` (`factory_crane`): idle bots on Liero
   Factory Reloaded, seed 1, tick 275 (the claw a quarter through its
   first crossing, the terminal in `Alarm`; issue #99: the warning beacon
-  end-on, flaring), `--at 870,300`. Issue #99's (`factory_golden`):
+  end-on, flaring; the production line design: the claw lowering into
+  the shaft on its cable, its jaws open), `--at 870,300`. Issue #99's (`factory_golden`):
   `factory-screen.png` (tick 300, `--at 930,110`: the security screen on
   `Crane`) and `factory-beacon-side.png` (tick 340, `--at 870,300`: the
   beacon nearly side-on, both beams). The plant works' (2026-11-04):

@@ -138,7 +138,33 @@ CAB_GLOW = 60
 SPOIL = [("Press heap", "spoil-heap.png", (820, 320, 90, 50)),
          ("Mine spoil", "spoil-mine.png", (590, 370, 380, 110))]
 SPOIL_REPOSE, SPOIL_TICKS, SPOIL_MOVED = 35, 300, 2.0
+# The production line design: the mine's floor under the shaft filled
+# level with the pile beside it (its top row), x from MINE_FILL[0] for
+# MINE_FILL[2] columns, each column down to what is not open; the dirt's
+# art the pile's MINE_FILL_FROM columns to its left.
+MINE_FILL = (773, 436, 46)
+MINE_FILL_FROM = 46
 DIRT = (139, 90, 43)  # `material.png`'s dirt
+
+# The production line design: the Crane's claw as parts (closed, `claw_x`
+# 0, `claw_y` 0): a hub (dark red, a crossbar whose top, row 301, is the
+# shoulders a worm rides) under the trolley, and below it, a row apart
+# (`CLAW_GAP`), two jaws (red): each a wall and a floor falling 45 degrees
+# to the middle, where their tips meet (left x <= 786, right >= 787), a
+# grab bucket, which the script opens wider than it is (each jaw 9 px out
+# for its 8 px inside) so its open floors pass through nothing it closes
+# on; the cable (grey, two strands under the trolley's) drawn
+# paid out as far as `CLAW_DROP` and pulled up by its offset.
+CLAW_HUB = [(299, 784, 788), (300, 782, 790), (301, 776, 797), (302, 776, 797), (303, 776, 797),
+            (304, 777, 796)]
+CLAW_GAP = 305
+CLAW_WALL = (777, 778, 306, 312)  # x0, x1, y0, y1 (inclusive), the left jaw's
+CLAW_FLOOR = (777, 310, 10, 3)  # from (x, y) down-right: 10 columns, 3 thick
+CLAW_SEAM = 786  # the left jaw's last column; the right jaw mirrors it
+CLAW_STRANDS = (785, 787)
+CLAW_CABLE_TOP = 285
+CLAW_DROP = 130
+CLAW_RED, CLAW_DARK, CLAW_CABLE = (255, 17, 17), (128, 0, 0), (115, 115, 115)
 
 # The Strip light's broken tube: its unlit grey, the middle shattered.
 STRIP_OFF = (150, 150, 156)
@@ -427,6 +453,25 @@ def make_strip_art(front):
     png(os.path.join(ART, "strip-broken.png"), 29, 2, rows, True)
 
 
+def claw_jaw():
+    """The left jaw's pixels, closed (the right one mirrors them)."""
+    x0, x1, y0, y1 = CLAW_WALL
+    out = {(x, y) for y in range(y0, y1 + 1) for x in range(x0, x1 + 1)}
+    fx, fy, n, thick = CLAW_FLOOR
+    out |= {(fx + i, fy + i + k) for i in range(n) for k in range(thick)}
+    return out
+
+
+def make_crane_art():
+    paint("crane-hub", {(x, y): CLAW_DARK if 783 <= x <= 789 or y == 299 else CLAW_RED
+                        for y, a, b in CLAW_HUB for x in range(a, b + 1)})
+    left = claw_jaw()
+    paint("crane-jaw-l", {p: CLAW_RED for p in left})
+    paint("crane-jaw-r", {(2 * CLAW_SEAM + 1 - x, y): CLAW_RED for x, y in left})
+    bottom = CLAW_HUB[0][0] - 1 + CLAW_DROP
+    paint("crane-cable", {(x, y): CLAW_CABLE for x in CLAW_STRANDS for y in range(CLAW_CABLE_TOP, bottom + 1)})
+
+
 def make_art():
     os.makedirs(ART, exist_ok=True)
     rock, dirt, glass, rim = layer("rock"), layer("dirt"), layer("glass"), layer("glass-rim")
@@ -439,6 +484,7 @@ def make_art():
     make_lab_art(dirt)
     make_pane_art(glass, rim)
     make_strip_art(front)
+    make_crane_art()
 
 
 # --- the ground -----------------------------------------------------------
@@ -525,6 +571,20 @@ def ground(run, out):
        "--tile", os.path.join(SCRATCH, "crate-tile.png"))
     el("set", out, box, "--surface", "wood")
     new.append(box)
+    # The production line design: the dip under the shaft filled, so the
+    # crane's claw bites a full pile.
+    _, _, mat = decode(os.path.join(out, "material.png"))
+    fx, fy, fw = MINE_FILL
+    fill = {}
+    for x in range(fx, fx + fw):
+        y = fy
+        while mat[y][x][:3] == (0, 0, 0):
+            src = dirt[y][x - MINE_FILL_FROM]
+            fill[(x, y)] = src[:3] if src[3] else DIRT
+            y += 1
+    paint("mine-fill", fill, SCRATCH)
+    el("draw", out, "dirt", "--mask", os.path.join(SCRATCH, "mine-fill-mask.png"),
+       "--tile", os.path.join(SCRATCH, "mine-fill-tile.png"))
     # The loose dirt design: the press heap and the mine's floor seam are
     # spoil, each on a dirt layer of its own.
     run("level", "loose", "add", out, "--id", "spoil", "--name", "Mine spoil", "--repose", str(SPOIL_REPOSE))

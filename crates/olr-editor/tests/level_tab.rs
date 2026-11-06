@@ -1119,7 +1119,7 @@ fn liero_factory_reloaded_opens_with_its_copies() {
     assert_eq!(doc.copy_origin("sky"), Some(AssetOrigin::Own));
     assert_eq!(doc.copy_origin("crane"), Some(AssetOrigin::Builtin("crane".into())));
     assert_eq!(doc.copy_origin("strip-7"), Some(AssetOrigin::Builtin("strip-light".into())));
-    assert_eq!(doc.copy_box("crane"), Some(((762, 269), (114, 50))));
+    assert_eq!(doc.copy_box("crane"), Some(((762, 269), (114, 200))));
     let pack = olr_edit::pack::load(&level).unwrap();
     let olr_edit::pack::Source::Level(stored) = &pack.source else { panic!() };
     // Issue #97: the crane and the terminal (issue #100; the console

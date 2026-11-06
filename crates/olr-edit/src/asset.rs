@@ -264,7 +264,7 @@ fn main_material(cells: &[Material]) -> ElementMaterial {
 /// and then to what it covers: its element (a drawn layer of its material),
 /// decoded data and glow mask re-laid on the new box; `None` when nothing
 /// is left. A glow whose mask is all zero there is dropped.
-fn as_drawn(piece: PieceRef, within: Option<Rect>, size: (u32, u32), s: u32) -> Option<Piece> {
+pub(crate) fn as_drawn(piece: PieceRef, within: Option<Rect>, size: (u32, u32), s: u32) -> Option<Piece> {
     let e = plain(piece.element);
     let p = drawn::placed(&e, piece.decoded, size, s)?;
     let p = match within {

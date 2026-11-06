@@ -1,7 +1,18 @@
 (
     name: "Crane",
-    size: (114, 50),
+    size: (114, 200),
     elements: [
+        (
+            id: "cable",
+            name: "Cable",
+            kind: Drawn(
+                material: Background,
+                at: (23, 16),
+                size: (3, 144),
+            ),
+            surface: "metal",
+            clip: true,
+        ),
         (
             id: "rail",
             name: "Rail",
@@ -13,12 +24,12 @@
             surface: "stone",
         ),
         (
-            id: "claw",
-            name: "Claw",
+            id: "trolley",
+            name: "Trolley",
             kind: Drawn(
                 material: Rock,
-                at: (10, 3),
-                size: (29, 47),
+                at: (13, 3),
+                size: (23, 13),
             ),
             glow: (
                 strength: 100,
@@ -26,7 +37,36 @@
                 mask: true,
             ),
             surface: "stone",
-            surface_map: true,
+        ),
+        (
+            id: "hub",
+            name: "Hub",
+            kind: Drawn(
+                material: Rock,
+                at: (14, 30),
+                size: (22, 6),
+            ),
+            surface: "metal",
+        ),
+        (
+            id: "jaw-l",
+            name: "Jaw L",
+            kind: Drawn(
+                material: Rock,
+                at: (15, 37),
+                size: (10, 16),
+            ),
+            surface: "metal",
+        ),
+        (
+            id: "jaw-r",
+            name: "Jaw R",
+            kind: Drawn(
+                material: Rock,
+                at: (25, 37),
+                size: (10, 16),
+            ),
+            surface: "metal",
         ),
         (
             id: "lens",
@@ -117,11 +157,11 @@
                     value: Int(0),
                 ),
                 (
-                    property: GlowStrength("claw"),
+                    property: GlowStrength("trolley"),
                     value: Int(0),
                 ),
                 (
-                    property: LightIntensity("claw"),
+                    property: LightIntensity("trolley"),
                     value: Int(0),
                 ),
             ],
@@ -146,11 +186,11 @@
                     value: Int(0),
                 ),
                 (
-                    property: GlowStrength("claw"),
+                    property: GlowStrength("trolley"),
                     value: Int(0),
                 ),
                 (
-                    property: LightIntensity("claw"),
+                    property: LightIntensity("trolley"),
                     value: Int(0),
                 ),
             ],
@@ -159,10 +199,66 @@
     exposed: [
         (
             name: "claw_x",
-            property: OffsetX("claw"),
+            property: OffsetX("trolley"),
             default: Int(0),
             min: -10,
             max: 75,
+        ),
+        (
+            name: "cable_x",
+            property: OffsetX("cable"),
+            default: Int(0),
+            min: -10,
+            max: 75,
+        ),
+        (
+            name: "cable_y",
+            property: OffsetY("cable"),
+            default: Int(-130),
+            min: -130,
+            max: 0,
+        ),
+        (
+            name: "hub_x",
+            property: OffsetX("hub"),
+            default: Int(0),
+            min: -10,
+            max: 75,
+        ),
+        (
+            name: "hub_y",
+            property: OffsetY("hub"),
+            default: Int(0),
+            min: 0,
+            max: 130,
+        ),
+        (
+            name: "jaw_r_x",
+            property: OffsetX("jaw-r"),
+            default: Int(0),
+            min: -10,
+            max: 84,
+        ),
+        (
+            name: "jaw_r_y",
+            property: OffsetY("jaw-r"),
+            default: Int(0),
+            min: 0,
+            max: 130,
+        ),
+        (
+            name: "jaw_l_x",
+            property: OffsetX("jaw-l"),
+            default: Int(0),
+            min: -19,
+            max: 75,
+        ),
+        (
+            name: "jaw_l_y",
+            property: OffsetY("jaw-l"),
+            default: Int(0),
+            min: 0,
+            max: 130,
         ),
         (
             name: "lens_x",
@@ -208,14 +304,14 @@
         ),
         (
             name: "halo_glow",
-            property: GlowStrength("claw"),
+            property: GlowStrength("trolley"),
             default: Int(0),
             min: 0,
             max: 100,
         ),
         (
             name: "halo_light",
-            property: LightIntensity("claw"),
+            property: LightIntensity("trolley"),
             default: Int(0),
             min: 0,
             max: 400,

@@ -81,7 +81,9 @@ byte for byte, and running one again changes nothing.
   into `tools/levels/factory/art/` from After Dark's layers (level-sized
   `<name>-mask.png`/`<name>-tile.png` pairs for `level element draw
   --mask … --tile …`, level-sized grey `<name>-glow.png` masks, and state
-  pictures the size of their layer's box); `ground(run, out)` edits the
+  pictures the size of their layer's box; the production line design: the
+  Crane's `crane-hub`, `crane-jaw-l`, `crane-jaw-r` and `crane-cable`
+  pairs, `CLAW_*`, which its README block draws); `ground(run, out)` edits the
   ground while it is alone (the belt's stripe, the drive's casing,
   `DRIVE`, and the incline's painted dirt balls, which the Dirt-ball line
   takes; the line's end crate, `CRATE`, its dirt moved onto a Rock layer
@@ -96,7 +98,10 @@ byte for byte, and running one again changes nothing.
   regions of `SPOIL`'s boxes, the press heap's and the mine's, that
   `level loose probe` moves under 2 % in 300 ticks (the heap and the
   mine's floor seam; the seams over the tunnel would fall), each box's
-  extracted from `dirt` onto a layer of its own set `--loose spoil`);
+  extracted from `dirt` onto a layer of its own set `--loose spoil`;
+  the production line design: first the dip in the mine's floor under
+  the crane's shaft filled with dirt level with the pile, `MINE_FILL`,
+  its art the pile's 46 px to its left);
   `place(run, out, assets)` places the Lift, the Mine cart and the
   Forklift. `factory_assets.py` makes the Dirt-ball line, Lift, Mine cart,
   Forklift, Generator, Siren, Lab flask and Window pane by their blocks

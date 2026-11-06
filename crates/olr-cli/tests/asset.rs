@@ -221,7 +221,8 @@ fn a_block_making_another_asset_fails_naming_its_folder() {
 
 /// The three assets issue #96 adds (and issue #100's Terminal) check, and
 /// are what the README says (issue #99: the Crane's warning beacon's two
-/// lenses beside its rail and claw).
+/// lenses beside its rail and claw; the production line design: the
+/// claw's parts).
 #[test]
 fn the_factorys_new_assets_check() {
     let dirs = ["crane", "console", "gauge", "terminal"].map(|f| assets_dir().join(f));
@@ -233,8 +234,11 @@ fn the_factorys_new_assets_check() {
         let a = olr_edit::asset::load_dir(&assets_dir().join(f)).unwrap();
         (a.size, a.pieces.iter().map(|p| p.element.id.clone()).collect::<Vec<_>>())
     };
-    let crane = ["rail", "claw", "lens", "lens-b"].map(String::from).to_vec();
-    assert_eq!(layers("crane"), ((114, 50), crane));
+    // The production line design: the claw as parts, its box down to its
+    // lowest place.
+    let crane =
+        ["cable", "rail", "trolley", "hub", "jaw-l", "jaw-r", "lens", "lens-b"].map(String::from).to_vec();
+    assert_eq!(layers("crane"), ((114, 200), crane));
     assert_eq!(layers("console"), ((33, 64), vec!["rock".to_string(), "rock-disp".into()]));
     assert_eq!(layers("gauge"), ((48, 27), vec!["rock".to_string(), "rock-scr".into(), "rock-disp".into()]));
     assert_eq!(layers("terminal"), ((15, 14), vec!["rock".to_string(), "rock-bcn".into()]));

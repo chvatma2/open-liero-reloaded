@@ -360,3 +360,9 @@
   fixtures/matches-live/classic-live-test-4chaos.ron
 2026-11-06 bless-render: a moving live rock part crushes the dirt it moves into (the factory's press flattens the dirt under its die)
   fixtures/render/factory-line.png
+2026-11-06 bless-regression: the crane's round: it grabs the mine's dirt and drops it into the reservoir
+  fixtures/matches-live/classic-factory-live-4dm.ron
+2026-11-06 bless-render: the crane's round: the claw's jaws and cable, the mine's dirt dropped into the reservoir
+  fixtures/render/factory-beacon-side.png
+  fixtures/render/factory-crane.png
+  fixtures/render/factory-line.png

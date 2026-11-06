@@ -690,6 +690,23 @@ fn a_rising_cup_carries_its_grains() {
     }
 }
 
+/// The production line design: grains a part carries into chunks that
+/// held no loose dirt are still the loose step's: once their cup has gone
+/// (it rose 30 px into empty chunks, then appears far away), they fall.
+#[test]
+fn grains_carried_into_empty_chunks_fall_when_their_cup_goes() {
+    let mut w = loose_world(vec![cup("claw", (94, 150), (12, 8))], &[(95, 150, 105, 157)]);
+    ticks(&mut w, 5);
+    move_to(&mut w, 0, Y, -30, 1);
+    ticks(&mut w, 40);
+    assert_eq!(rect(&w, 0).1, 120);
+    w.set_live_value(0, X, 150 * PX).unwrap();
+    ticks(&mut w, 60);
+    assert_eq!(loose_count(&w), 70, "none lost");
+    let up = (120..127).flat_map(|y| (95..105).map(move |x| (x, y)));
+    assert!(up.into_iter().all(|(x, y)| w.terrain().loose(x, y) == 0), "they fell");
+}
+
 /// Replays a tick's edits on `t` as a colour map does: its events in order
 /// (a crushed run, a grain a part moved), then its loose moves.
 fn replay(t: &mut Terrain, events: &TickEvents, moves: &[(u32, u32)]) {

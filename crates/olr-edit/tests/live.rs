@@ -333,6 +333,26 @@ fn a_clipped_layer_is_a_clipped_part_of_its_own() {
     );
 }
 
+/// The production line design: a clipped layer is drawn only inside its
+/// copy's rectangle wherever a copy is laid (the editor's canvas draws a
+/// Live copy so, as play does; a static copy bakes so). A cable a pixel
+/// wide and 3 tall, pulled 2 up by its offset, at the top of a copy at
+/// (1, 2): only its lowest pixel, inside the copy, is drawn.
+#[test]
+fn a_clipped_layer_is_drawn_only_inside_its_copy() {
+    let mut cable = piece("cable", ElementMaterial::Background, (0, 0), (1, 3), 1, |_, _| RED);
+    cable.element.clip = true;
+    let mut a = Asset::new("Crane", 1, (2, 3), vec![cable], vec![], vec![]);
+    a.exposed = vec![ExposedSource {
+        min: Some(-3),
+        max: Some(0),
+        ..exposed("cable_y", PropertySource::OffsetY("cable".into()), Some(ValueSource::Int(-2)))
+    }];
+    let l = baked(&blank((4, 6), 1), &placement(vec![("a", &a)], vec![PlacedCopy::new("c", "a", (1, 2))]));
+    let red: Vec<_> = (0..6).filter(|&y| l.back.get(1, y) == RED).collect();
+    assert_eq!(red, vec![2], "the cable inside the copy only");
+}
+
 #[test]
 fn a_state_shares_its_unpainted_pictures() {
     let mut a = two_layers();

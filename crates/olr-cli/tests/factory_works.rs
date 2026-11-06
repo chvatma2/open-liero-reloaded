@@ -436,3 +436,85 @@ fn the_spoil_stays_put_in_an_empty_match() {
     let gone = moved.iter().filter(|&&m| m).count();
     assert!(gone * 50 < loose, "{gone} of {loose} grains moved");
 }
+
+/// The production line design's mine and reservoir boxes: the grains the
+/// crane may bite (the mine spoil under the hall) and where it drops them
+/// (the press heap's box).
+const RESERVOIR: (u32, u32, u32, u32) = (820, 320, 90, 50);
+
+/// An empty match of the factory (no worms), its scripts running.
+fn empty_world(content: &Content) -> World {
+    let setup = olr_content::SandboxSetup {
+        mod_id: CLASSIC.into(),
+        level_id: FACTORY.into(),
+        seed: 1,
+        settings: olr_sim::SimSettings::lx56(),
+        worms: Vec::new(),
+        restrictions: olr_content::DEFAULT_PRESET.into(),
+    };
+    content.new_world(&setup).unwrap()
+}
+
+/// The production line design: the crane's rounds carry real loose dirt
+/// from the mine to the reservoir. Each grain is followed from its start
+/// through the tick's `GrainMoved` events (the parts' pushes and carries)
+/// and then its loose moves; after two rounds, at least 100 grains that
+/// started in the mine lie in the reservoir's box.
+#[test]
+fn the_crane_carries_the_mines_dirt_to_the_reservoir() {
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    let mut w = empty_world(&content);
+    let width = i64::from(w.terrain().width());
+    let cells = w.terrain().loose_cells().expect("the factory has loose dirt").len();
+    // `grain[cell]`: the starting cell of the grain there now.
+    let mut grain: Vec<u32> = (0..cells as u32).collect();
+    run(&mut w, 4000, |w, ev| {
+        for e in ev.iter() {
+            if let EventKind::GrainMoved { from, to } = e.kind {
+                let (f, t) = (
+                    i64::from(from.1) * width + i64::from(from.0),
+                    i64::from(to.1) * width + i64::from(to.0),
+                );
+                grain[t as usize] = grain[f as usize];
+            }
+        }
+        for &(from, to) in w.loose_moves() {
+            grain[to as usize] = grain[from as usize];
+        }
+    });
+    let t = w.terrain();
+    let carried = (0..cells as i64)
+        .filter(|&c| {
+            let (x, y) = (c % width, c / width);
+            let g = grain[c as usize] as i64;
+            let at = |v: i64| v as u32;
+            t.loose(x, y) != 0
+                && within(RESERVOIR, at(x), at(y))
+                && within(MINE, at(g % width), at(g / width))
+        })
+        .count();
+    assert!(carried >= 100, "{carried} of the mine's grains in the reservoir");
+}
+
+/// The production line design: the claw keeps the engine's rules for
+/// worms. A worm standing on the pile under the shaft is pinned by the
+/// claw coming down and slowly crushed (`CRUSH_CHUNK` 5 every
+/// `CRUSH_EVERY` 10 ticks): its first two chunks leave it alive at 90,
+/// and the crane deals no `hurt` of its own.
+#[test]
+fn the_claw_crushes_a_worm_slowly_against_the_dirt() {
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    let mut w = super::reloaded::factory_world(&content, (795, 440));
+    let mut ev = TickEvents::new();
+    let mut chunks = 0;
+    for _ in 0..1500 {
+        w.tick(&[Keys(0), Keys(0)], &mut ev);
+        chunks += ev.iter().filter(|e| matches!(e.kind, EventKind::Crushed { worm: 0, .. })).count();
+        if chunks >= 2 {
+            break;
+        }
+    }
+    let wm = &w.worms()[0];
+    assert_eq!(chunks, 2, "pinned and crushed: at {:?}, health {}", wm.pos, wm.health);
+    assert!(wm.alive && wm.health == 90.0, "two chunks, no more: {}", wm.health);
+}

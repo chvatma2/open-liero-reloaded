@@ -47,8 +47,8 @@ fn goldens(c: &Content, dir: &str, at_least: usize, check: bool) {
                 run.coverage.events[i]
             };
             // Issue #97: the factory's crane arrives 5 times in 3000
-            // ticks (a rest of 2 s, then a crossing of 3 s or 3.4 s:
-            // issue #100 halved its speed).
+            // ticks (the production line design: its round's steps, each
+            // value's motion arriving).
             assert!(
                 count("LiveState") > 20 && count("LiveArrived") >= 5,
                 "{name}: {:?}",

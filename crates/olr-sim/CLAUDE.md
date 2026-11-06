@@ -475,8 +475,10 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   Reloaded the spoil cost 30 µs a tick before): a row of chunks none of
   them both awake and in `holds` (not state: a bit per chunk that may
   hold a loose pixel, set from the layer at the start and on a state
-  load, `LooseWorld::load`, and by every move; a snapshot brings its
-  own) costs one look at their bits (`any_in`), and an awake chunk
+  load, `LooseWorld::load`, by every move and, the production line
+  design, over the tick's touched areas, where a live part may have
+  shoved a grain into a chunk that held none; a snapshot brings its
+  own; `grains_carried_into_empty_chunks_fall_when_their_cup_goes`) costs one look at their bits (`any_in`), and an awake chunk
   outside `holds` is not scanned, so the worms' and parts' wakes
   change only the hashed bits (`chunks_without_loose_dirt_are_not_scanned`,
   `LooseWorld::scanned`).

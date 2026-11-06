@@ -605,11 +605,15 @@ const WORKS_ART: [Box4; 4] = [(43, 405, 1, 2), (175, 404, 2, 2), (1186, 456, 12,
 /// the rails and (2026-11-05) the Dirt-ball line's end crate, After Dark's
 /// dirt (`factory_works.py`'s `CRATE`).
 const WORKS_ROCK: [Box4; 3] = [(1186, 456, 12, 3), (10, 473, 181, 1), (1053, 330, 60, 35)];
+/// The production line design (2026-11-06): the dip in the mine's floor
+/// under the crane's shaft filled with dirt level with the pile
+/// (`factory_works.py`'s `MINE_FILL`), its art and material new.
+const MINE_FILL: Box4 = (773, 436, 46, 30);
 /// The truck's cab window, glowing dimly in `cab`.
 const CAB_BOX: Box4 = (50, 378, 23, 16);
 
 fn works_art(x: u32, y: u32) -> bool {
-    WORKS_ART.iter().any(|&b| in_box(b, x, y))
+    WORKS_ART.iter().any(|&b| in_box(b, x, y)) || in_box(MINE_FILL, x, y)
 }
 
 /// The red duct's elbow, whose red rock glows in the night shift's `flue`.
@@ -669,7 +673,9 @@ fn the_new_factory_bakes_as_after_dark() {
                     inside += usize::from(a.get(x, y) != b.get(x, y));
                 } else if file != "material.png" && (night_art(x, y) || works_art(x, y)) {
                     night += usize::from(!alike(x, y));
-                } else if file == "material.png" && WORKS_ROCK.iter().any(|&r| in_box(r, x, y)) {
+                } else if file == "material.png"
+                    && (WORKS_ROCK.iter().any(|&r| in_box(r, x, y)) || in_box(MINE_FILL, x, y))
+                {
                     continue;
                 } else {
                     assert!(alike(x, y), "{file} at ({x}, {y}) differs from After Dark's");
@@ -915,7 +921,7 @@ fn the_new_factory_is_made_of_assets() {
         ("desk", "d", "control-desk", (903, 119), (30, 11)),
         ("siren", "w", "siren", (951, 45), (62, 28)),
         ("terminal", "e", "terminal", (723, 351), (15, 14)),
-        ("crane", "k", "crane", (762, 269), (114, 50)),
+        ("crane", "k", "crane", (762, 269), (114, 200)),
         ("line", "o", "ball-line", (909, 269), (150, 88)),
         ("sign", "t", "lit-sign", (934, 299), (31, 21)),
         ("generator", "r", "generator", (1046, 146), (72, 25)),
@@ -1135,14 +1141,14 @@ fn the_live_factory_has_its_live_copies() {
 }
 
 /// Issue #97: in a 2800-tick match of two idle bots spawned away from the
-/// crane, its claw rests 200 ticks, crosses to 75 in 300 ticks (±2), and
-/// then goes on resting 200 and crossing the whole rail (85 px) in 340
-/// (±2; issue #100 halved its speed): 75, −10, 75 and on. The crane is
-/// `Moving` while `claw_x` changes and `Idle` while it rests (2 ticks'
-/// slack at each end), and the terminal (issue #100; the console before
-/// it) is in `Alarm` while the crane moves, `Normal` otherwise, at
-/// most 2 ticks behind it (ruling R8: the level script reads the crane's
-/// state change the tick after).
+/// crane, its claw (the production line design: its round) travels over
+/// the mine's hole (9) in 36 ticks (±2), then, its bite taken, to the
+/// reservoir (75) in 264, and back to the hole in 264: 9, 75, 9. The
+/// crane is `Moving` while `claw_x` changes and rests `Idle` over the
+/// reservoir, and the terminal (issue #100; the console before it) is in
+/// `Alarm` while the crane moves, `Normal` otherwise, at most 2 ticks
+/// behind it (ruling R8: the level script reads the crane's state change
+/// the tick after).
 #[test]
 fn the_crane_crosses_and_the_terminal_alarms() {
     use olr_cli::runner::{Match, Options};
@@ -1163,10 +1169,9 @@ fn the_crane_crosses_and_the_terminal_alarms() {
             spawned = true;
             for wm in w.worms() {
                 let (x, y) = (wm.pos.x, wm.pos.y);
-                assert!(
-                    !(700.0..1000.0).contains(&x) || !(230.0..380.0).contains(&y),
-                    "a bot by the crane: {x}, {y}"
-                );
+                let deck = (700.0..1000.0).contains(&x) && (230.0..380.0).contains(&y);
+                let shaft = (760.0..830.0).contains(&x) && (380.0..480.0).contains(&y);
+                assert!(!deck && !shaft, "a bot by the crane: {x}, {y}");
             }
         }
         rows.push((
@@ -1193,25 +1198,21 @@ fn the_crane_crosses_and_the_terminal_alarms() {
     }
     let px = |t: usize| rows[t].0.div_euclid(olr_sim::LIVE_SUBPIXELS);
     let ends: Vec<i64> = moves.iter().map(|&(_, e)| px(e)).collect();
-    assert!(
-        ends.len() >= 5 && ends[..5] == [75, -10, 75, -10, 75],
-        "the claw's ends: {ends:?}, moves {moves:?}"
-    );
+    assert!(ends.len() >= 3 && ends[..3] == [9, 75, 9], "the claw's ends: {ends:?}, moves {moves:?}");
     let near = |got: usize, want: usize| got.abs_diff(want) <= 2;
-    for (i, &(s, e)) in moves.iter().enumerate() {
-        let (len, want) = (e - s + 1, if i == 0 { 300 } else { 340 });
+    for (i, &(s, e)) in moves.iter().enumerate().take(3) {
+        let (len, want) = (e - s + 1, if i == 0 { 36 } else { 264 });
         assert!(near(len, want), "move {i} took {len} ticks, not {want}: {moves:?}");
-        let rest = if i == 0 { s - 1 } else { s - moves[i - 1].1 - 1 };
-        assert!(near(rest, 200), "the rest before move {i} was {rest} ticks: {moves:?}");
     }
-    // Moving while it moves, Idle while it rests.
+    // Moving while it travels, and resting Idle over the reservoir.
     let moving_at = |t: usize| moves.iter().any(|&(s, e)| (s..=e).contains(&t));
     let by_an_end = |t: usize| moves.iter().any(|&(s, e)| s.abs_diff(t) <= 2 || e.abs_diff(t) <= 2);
     for (t, row) in rows.iter().enumerate().skip(1) {
-        if !by_an_end(t) {
-            assert_eq!(row.1, moving_at(t), "tick {t}: the crane Moving");
+        if moving_at(t) && !by_an_end(t) {
+            assert!(row.1, "tick {t}: the crane Moving");
         }
     }
+    assert!((moves[1].1..moves[2].0).any(|t| !rows[t].1), "it rests Idle over the reservoir");
     // The terminal follows the crane, at most 2 ticks behind.
     for t in 2..rows.len() {
         let crane = [rows[t - 2].1, rows[t - 1].1, rows[t].1];
@@ -1324,55 +1325,70 @@ fn live_states_keep_their_solid_pixels() {
     }
 }
 
-/// Issue #97: the crane carries and pushes worms by #90's rules, and as
-/// drawn crushes nobody. A worm standing on the hook's shoulders (their
-/// top at y 301) rides along the rail to the claw's far end, unhurt; a
-/// worm in the air in the claw's path, hanging on its rope from the rail,
-/// is pushed aside as the claw goes by, unhurt.
+/// Issue #97: the crane carries and pushes worms by #90's rules. A worm
+/// standing on the hub's left shoulder (its crossbar's top at y 301)
+/// rides the claw's round (the production line design: over the hole,
+/// down the shaft, up and over to the reservoir) and keeps its place on
+/// it, unhurt; a worm hanging on its rope from the rail at the cable's
+/// height is passed by (the cable is background), unhurt.
 #[test]
-fn the_crane_carries_and_pushes_a_worm() {
+fn the_crane_carries_a_worm_and_its_cable_passes_a_hanging_one() {
     use olr_sim::{EventKind, Keys, TickEvents};
     let content = Content::open_bundled(&packs_dir()).unwrap();
-    // Carried: on the left shoulder (x 776-780 at the start).
+    let to_dump =
+        |w: &mut olr_sim::World, ev: &mut TickEvents, crushed: &mut usize, k: &dyn Fn(u32) -> u16| {
+            for t in 0..3000u32 {
+                w.tick(&[Keys(k(t)), Keys(0)], ev);
+                *crushed +=
+                    ev.iter().filter(|e| matches!(e.kind, EventKind::Crushed { worm: 0, .. })).count();
+                if claw_x(w) == 75 {
+                    return t;
+                }
+            }
+            panic!("the claw never reached the reservoir");
+        };
+    // Carried: on the left shoulder (x 774-780 at the start).
     let mut w = factory_world(&content, (778, 296));
     let mut ev = TickEvents::new();
     let mut crushed = 0;
-    for _ in 0..150 {
+    for _ in 0..40 {
         w.tick(&[Keys(0), Keys(0)], &mut ev);
     }
     let wm = &w.worms()[0];
     assert!(wm.alive && wm.on_ground && (wm.pos.y - 296.0).abs() < 1.0, "on the shoulder: {:?}", wm.pos);
-    let x0 = wm.pos.x;
-    for _ in 0..400 {
-        w.tick(&[Keys(0), Keys(0)], &mut ev);
-        crushed += ev.iter().filter(|e| matches!(e.kind, EventKind::Crushed { worm: 0, .. })).count();
-    }
+    let x0 = wm.pos.x - claw_x(&w) as f32;
+    to_dump(&mut w, &mut ev, &mut crushed, &|_| 0);
     let wm = &w.worms()[0];
-    assert_eq!(claw_x(&w), 75, "the claw crossed");
-    assert!((wm.pos.x - x0 - 75.0).abs() < 1.5, "carried 75 px: from {x0} to {}", wm.pos.x);
-    assert!(wm.alive && wm.on_ground && wm.health == 100.0 && crushed == 0, "unhurt: {wm:?}");
-    // Pushed: from the dirt under the claw's travel (x 845), the worm aims
-    // up, ropes onto the rail above and hangs in the claw's path.
+    assert!((wm.pos.x - claw_x(&w) as f32 - x0).abs() < 1.5, "carried with the claw: {} at 75", wm.pos.x);
+    assert!(
+        wm.alive && wm.on_ground && wm.health == 100.0 && crushed == 0,
+        "unhurt: {:?} {}",
+        wm.pos,
+        wm.health
+    );
+    // Passed by: from the dirt under the claw's travel (x 845), the worm
+    // aims up, ropes onto the rail above and hangs at the cable's height
+    // (between the trolley and the hub); the cable, background since the
+    // production line design, goes by it.
     let mut w = factory_world(&content, (845, 300));
-    let mut hung = None;
-    for t in 0..560u32 {
-        let k = match t {
-            50..110 => Keys::UP,
-            110..112 => Keys::ROPE,
-            _ => 0,
-        };
-        w.tick(&[Keys(k), Keys(0)], &mut ev);
+    let k = |t: u32| match t {
+        50..110 => Keys::UP,
+        110..112 => Keys::ROPE,
+        _ => 0,
+    };
+    for t in 0..200u32 {
+        w.tick(&[Keys(k(t)), Keys(0)], &mut ev);
         crushed += ev.iter().filter(|e| matches!(e.kind, EventKind::Crushed { worm: 0, .. })).count();
-        if t == 200 {
-            hung = Some(w.worms()[0].pos);
-        }
     }
-    let (hung, wm) = (hung.unwrap(), &w.worms()[0]);
+    let hung = w.worms()[0].pos;
+    to_dump(&mut w, &mut ev, &mut crushed, &|_| 0);
+    let wm = &w.worms()[0];
     assert!(wm.rope.attached && (wm.rope.pos.y - 270.0).abs() < 2.0, "roped to the rail: {:?}", wm.rope.pos);
-    assert!((hung.x - 845.0).abs() < 1.0 && (272.0..319.0).contains(&hung.y), "in the claw's path: {hung:?}");
-    assert_eq!(claw_x(&w), 75, "the claw crossed, not stopped");
-    assert!(wm.pos.x >= hung.x + 15.0, "pushed aside: from {} to {}", hung.x, wm.pos.x);
-    assert!(wm.alive && wm.health == 100.0 && crushed == 0, "unhurt: {wm:?}");
+    assert!(
+        (hung.x - 845.0).abs() < 1.0 && (285.0..299.0).contains(&hung.y),
+        "at the cable's height: {hung:?}"
+    );
+    assert!(wm.alive && wm.health == 100.0 && crushed == 0, "unhurt: {:?} {}", wm.pos, wm.health);
 }
 
 /// Issue #100's playtest: a laser sight stopped by a live part is no
@@ -1454,20 +1470,44 @@ fn live_snapshot(w: &olr_sim::World) -> (Vec<bool>, Vec<(u16, Vec<i64>)>) {
 /// before it), between ticks of a match of two idle bots: the copies'
 /// solid pixels, states and values are unchanged, and the ground changes
 /// where the same explosions change After Dark's (outside the live
-/// copies' boxes, whose rock is the copies' here).
+/// copies' boxes, whose rock is the copies' here). The production line
+/// design: the hits come when the claw first rests over the reservoir
+/// (its round's wait, `Idle` at 75), on its right jaw's wall where it is.
 #[test]
 fn explosions_leave_the_factorys_live_copies_alone() {
     use olr_cli::runner::{Match, Options};
     use olr_cli::spec::{MatchSpec, Personality};
     use olr_math::Vec2;
     let content = Content::open_bundled(&packs_dir()).unwrap();
-    // The claw resting at its far end (x 847-875): its right arm's tip;
-    // the dirt pile beside it; the terminal's foot.
-    let hits = [Vec2::new(869.5, 319.5), Vec2::new(876.5, 328.5), Vec2::new(730.5, 363.5)];
+    let start = |level: &str| {
+        let spec = MatchSpec { personality: Personality::Idle, ..MatchSpec::new(CLASSIC, level, 2, 1, 4000) };
+        Match::new(&content, &spec, &Options::default()).unwrap()
+    };
+    // A tick the claw rests over the reservoir the first time, and its
+    // right jaw's wall then (x 795-796 at `jaw_r_x` 0, rows 306-312).
+    let (ticks, jaw) = {
+        let mut m = start(FACTORY);
+        let mut t = 0;
+        while !(claw_x(m.world()) == 75 && live_copy(m.world(), "crane").state_name() == "Idle") {
+            assert!(m.step());
+            t += 1;
+            assert!(t < 3000, "the claw never rests over the reservoir");
+        }
+        // Near the wait's end (`crane.rhai`'s DUMP 100), the dropped
+        // dirt settled.
+        for _ in 0..90 {
+            assert!(m.step());
+            t += 1;
+        }
+        assert_eq!(live_copy(m.world(), "crane").state_name(), "Idle", "still resting");
+        let jr = live_copy(m.world(), "crane").value("jaw_r_x").unwrap().div_euclid(olr_sim::LIVE_SUBPIXELS);
+        (t, 795.5 + jr as f32)
+    };
+    // Its right jaw's wall; the dirt pile beside it; the terminal's foot.
+    let hits = [Vec2::new(jaw, 309.5), Vec2::new(876.5, 328.5), Vec2::new(730.5, 363.5)];
     let blast = |level: &str| {
-        let spec = MatchSpec { personality: Personality::Idle, ..MatchSpec::new(CLASSIC, level, 2, 1, 2000) };
-        let mut m = Match::new(&content, &spec, &Options::default()).unwrap();
-        for _ in 0..600 {
+        let mut m = start(level);
+        for _ in 0..ticks {
             assert!(m.step());
         }
         let mut w = m.world().clone();
@@ -1478,13 +1518,7 @@ fn explosions_leave_the_factorys_live_copies_alone() {
         for &at in &hits {
             w.explode_for_test(at, 4.0);
         }
-        let mut ev = olr_sim::TickEvents::new();
-        w.tick(&[olr_sim::Keys(0), olr_sim::Keys(0)], &mut ev);
-        calm.tick(&[olr_sim::Keys(0), olr_sim::Keys(0)], &mut ev);
-        if w.live().is_some() {
-            assert_eq!(claw_x(&w), 75, "at rest at its far end");
-            assert!(live_snapshot(&w) == live_snapshot(&calm), "{level}: an explosion changed a live copy");
-        }
+        // What the explosions dug, before loose grains fall into it.
         let mut dug = BTreeSet::new();
         for y in 0..before.height() {
             for x in 0..before.width() {
@@ -1495,9 +1529,23 @@ fn explosions_leave_the_factorys_live_copies_alone() {
                 }
             }
         }
-        dug
+        let mut ev = olr_sim::TickEvents::new();
+        w.tick(&[olr_sim::Keys(0), olr_sim::Keys(0)], &mut ev);
+        calm.tick(&[olr_sim::Keys(0), olr_sim::Keys(0)], &mut ev);
+        if w.live().is_some() {
+            assert_eq!(claw_x(&w), 75, "at rest over the reservoir");
+            assert!(live_snapshot(&w) == live_snapshot(&calm), "{level}: an explosion changed a live copy");
+        }
+        (dug, before)
     };
-    let (ours, theirs) = (blast(FACTORY), blast(AFTER_DARK));
+    let ((ours, before), (theirs, after_dark)) = (blast(FACTORY), blast(AFTER_DARK));
+    // Compared where the ground was After Dark's before the hits: not on
+    // the dirt the crane dropped into the reservoir, nor on what it took
+    // from the mine.
+    let alike =
+        |&&(x, y): &&(u32, u32)| before.flags(x.into(), y.into()) == after_dark.flags(x.into(), y.into());
+    let ours: BTreeSet<_> = ours.iter().filter(alike).collect();
+    let theirs: BTreeSet<_> = theirs.iter().filter(alike).collect();
     assert!(!theirs.is_empty(), "the hits dig After Dark's dirt");
     assert!(ours == theirs, "dug {} pixels, After Dark {}", ours.len(), theirs.len());
 }

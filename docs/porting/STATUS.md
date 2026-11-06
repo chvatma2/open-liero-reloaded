@@ -7540,7 +7540,32 @@ explosions damage the destructible ones.
   <id> --clip true` before `asset save`): a live copy draws it only
   inside its rectangle, which follows `X` and `Y`, so the crane's cable
   pays out below its trolley. Only background (a solid layer out of
-  sight would still be solid); a static copy draws it whole.
+  sight would still be solid); a static copy and the editor's canvas
+  draw it clipped too (`placed::lay_copy`), as play does.
+- **The crane's round (2026-11-06).** The production line design: Liero
+  Factory Reloaded's crane carries real loose dirt from the mine to the
+  press's reservoir. Its claw is parts of its own (`trolley`, a clipped
+  background `cable` drawn paid out 130 px and pulled up by its offset,
+  `hub`, and two jaws `jaw-l`, `jaw-r`: a 20-px grab bucket whose floors
+  fall 45° to tips meeting in the middle), each moved by its own values;
+  `crane.rhai` moves them together, at one speed, in the same ticks: over
+  the hole, jaws open (9 px a side, wider than the bucket's inside, so the
+  open floors pass through nothing it then closes on: a bucket lowered
+  closed, or open less, crushes its own bite on the way down), down 130
+  px (the hub stops just above the pile), closed, up, right to the
+  reservoir (a closed claw only travels right: the values step right jaw
+  first), open, 1 s, back over the hole with its jaws open. Where
+  something stops the descent the whole claw settles there, so its parts
+  stay together (the left jaw on the mine's rock once caught on the hub
+  and left the bucket open). The dip in the mine's floor under the
+  shaft is filled level with the pile beside it (`MINE_FILL`, part of
+  the spoil), so a bite is about 140 grains. Deviations from the plan:
+  one value per part's axis instead of one `claw_x` for all (a value
+  drives one layer's offset); the cable, background, pushes no worm (a
+  worm hanging at its height is passed by; issue #97's push test now
+  checks that). The loose step's `holds` bits now cover the tick's
+  touched areas: grains a part carried into chunks that held none were
+  never scanned again and stayed in the open jaws.
 - **Moved grains keep their heat (2026-11-06).** The production line
   design (the user: falling dirt should keep its heat): the presentation
   hands the renderer each grain the colour map moved since the last frame
